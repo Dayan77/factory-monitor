@@ -1,0 +1,20 @@
+# Protocols
+asyncua==1.1.5          # OPC UA
+pymodbus==3.6.9         # Modbus TCP
+paho-mqtt==2.1.0        # MQTT client
+
+# Data / Async
+asyncio-mqtt==0.16.2
+aiohttp==3.9.5
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Security
+cryptography==42.0.8    # AES-256 encryption
+
+# Persistence / Buffer
+aiosqlite==0.20.0       # Local SQLite buffer when offline
+
+# Observability
+structlog==24.2.0
+prometheus-client==0.20.0

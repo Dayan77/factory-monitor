@@ -1,0 +1,40 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# Database
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+influxdb-client[async]==1.43.0
+
+# Auth / Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==42.0.8
+
+# MQTT
+aiomqtt==2.0.1
+
+# Config
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# AI / LLM
+openai==1.30.1
+langchain==0.2.1
+langchain-openai==0.1.7
+
+# Notifications
+sendgrid==6.11.0
+httpx==0.27.0
+
+# Observability
+structlog==24.2.0
+prometheus-fastapi-instrumentator==7.0.0
+
+# Tests
+pytest==8.2.0
+pytest-asyncio==0.23.7
+httpx==0.27.0
