@@ -7,10 +7,14 @@ from alembic import context
 
 from src.models.base import Base
 import src.models  # noqa: F401 — ensure all models are registered
+from src.config import settings
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+# Override alembic.ini URL with runtime settings (picks up env vars like POSTGRES_HOST)
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 target_metadata = Base.metadata
 
