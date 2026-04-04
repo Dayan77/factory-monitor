@@ -1,5 +1,8 @@
 version: "3.9"
 
+# Usa o Traefik já instalado pelo Easypanel para roteamento.
+# Os containers server e web são expostos via labels do Traefik na rede easypanel.
+
 services:
   # ── Databases ─────────────────────────────────────────────────────
   postgres:
@@ -49,6 +52,8 @@ services:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
+    ports:
+      - "1883:1883"
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health -m ping -q 0 || exit 1"]
       interval: 10s
@@ -56,7 +61,7 @@ services:
       retries: 5
     networks: [fm-net]
 
-  # ── Backend ───────────────────────────────────────────────────────
+  # ── Backend (FastAPI) ─────────────────────────────────────────────
   server:
     image: factory-monitor-server:latest
     build:
@@ -76,9 +81,19 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_healthy
-    networks: [fm-net]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.routers.fm-api.rule=Host(`factoryconnect.tech`) && PathPrefix(`/api`, `/ws`, `/metrics`)"
+      - "traefik.http.routers.fm-api.entrypoints=https"
+      - "traefik.http.routers.fm-api.tls=true"
+      - "traefik.http.routers.fm-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fm-api.loadbalancer.server.port=8000"
+    networks:
+      - fm-net
+      - easypanel
 
-  # ── Frontend ──────────────────────────────────────────────────────
+  # ── Frontend (React/Nginx) ────────────────────────────────────────
   web:
     image: factory-monitor-web:latest
     build:
@@ -87,46 +102,31 @@ services:
       target: prod
     container_name: fm_web
     restart: always
-    networks: [fm-net]
-
-  # ── Reverse Proxy + SSL ───────────────────────────────────────────
-  nginx:
-    image: nginx:alpine
-    container_name: fm_nginx
-    restart: always
-    depends_on:
-      - server
-      - web
-    volumes:
-      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
-      - certbot-www:/var/www/certbot:ro
-      - certbot-certs:/etc/letsencrypt:ro
-    ports:
-      - "80:80"
-      - "443:443"
-    networks: [fm-net]
-
-  certbot:
-    image: certbot/certbot:latest
-    container_name: fm_certbot
-    volumes:
-      - certbot-www:/var/www/certbot
-      - certbot-certs:/etc/letsencrypt
-    entrypoint: >
-      /bin/sh -c "trap exit TERM;
-      while :; do
-        certbot renew --webroot -w /var/www/certbot --quiet;
-        sleep 12h & wait $${!};
-      done"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.routers.fm-web.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web.entrypoints=https"
+      - "traefik.http.routers.fm-web.tls=true"
+      - "traefik.http.routers.fm-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.fm-web.loadbalancer.server.port=80"
+      # Redirecionar HTTP → HTTPS
+      - "traefik.http.routers.fm-web-http.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web-http.entrypoints=http"
+      - "traefik.http.routers.fm-web-http.middlewares=redirect-https"
+      - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
+    networks:
+      - fm-net
+      - easypanel
 
 networks:
   fm-net:
     driver: bridge
+  easypanel:
+    external: true
 
 volumes:
   postgres-data:
   influxdb-data:
   mosquitto-data:
   mosquitto-log:
-  certbot-www:
-  certbot-certs:
