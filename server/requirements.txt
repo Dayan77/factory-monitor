@@ -7,7 +7,7 @@ python-multipart==0.0.9
 sqlalchemy[asyncio]==2.0.30
 asyncpg==0.29.0
 alembic==1.13.1
-influxdb-client[async]==1.43.0
+influxdb-client[async]==1.44.0
 
 # Auth / Security
 python-jose[cryptography]==3.3.0
@@ -23,8 +23,8 @@ pydantic-settings==2.2.1
 
 # AI / LLM
 openai==1.30.1
-langchain==0.2.1
-langchain-openai==0.1.7
+langchain==0.2.16
+langchain-openai==0.1.20
 
 # Notifications
 sendgrid==6.11.0
