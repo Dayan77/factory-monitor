@@ -4,13 +4,15 @@ export interface Machine {
   id: string;
   name: string;
   model?: string;
+  serial_number?: string;
   status: MachineStatus;
   line_id: string;
-  line_name: string;
-  oee: number;          // 0–100
-  availability: number; // 0–100
-  performance: number;  // 0–100
-  quality: number;      // 0–100
+  line_name?: string;   // joined on backend or from mock
+  // OEE fields — computed by backend or mock
+  oee?: number;
+  availability?: number;
+  performance?: number;
+  quality?: number;
   updated_at: string;
 }
 
@@ -26,20 +28,23 @@ export interface Line {
 
 export interface SensorReading {
   tag_id: string;
-  tag_name: string;
+  tag_name?: string;
   value: number;
-  unit: string;
+  unit?: string;
   timestamp: string;
 }
 
 export interface AlertEvent {
   id: string;
-  rule_name: string;
-  machine_name: string;
+  rule_id: string;
+  rule_name?: string;    // populated via join or mock
+  machine_name?: string; // populated via join or mock
   severity: "info" | "warning" | "critical";
-  message: string;
+  message?: string;
   triggered_at: string;
   resolved_at?: string;
+  value_at_trigger?: number;
+  notified?: boolean;
 }
 
 export interface OeeSnapshot {
