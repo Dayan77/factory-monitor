@@ -58,7 +58,7 @@ services:
 
   # ── Backend ───────────────────────────────────────────────────────
   server:
-    image: ghcr.io/${GITHUB_REPO}/factory-monitor-server:${IMAGE_TAG:-latest}
+    image: factory-monitor-server:latest
     build:
       context: ../server
       dockerfile: Dockerfile
@@ -80,7 +80,7 @@ services:
 
   # ── Frontend ──────────────────────────────────────────────────────
   web:
-    image: ghcr.io/${GITHUB_REPO}/factory-monitor-web:${IMAGE_TAG:-latest}
+    image: factory-monitor-web:latest
     build:
       context: ../web
       dockerfile: Dockerfile
