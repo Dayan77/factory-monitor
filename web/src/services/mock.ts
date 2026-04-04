@@ -25,10 +25,10 @@ export const MOCK_MACHINES: Machine[] = [
 ];
 
 export const MOCK_ALERTS: AlertEvent[] = [
-  { id: "a1", rule_name: "Temp. Forno Alta",   machine_name: "Forno Cura F-01",  severity: "critical", message: "Temperatura atingiu 312°C (limite: 280°C)", triggered_at: new Date(Date.now() - 8 * 60000).toISOString() },
-  { id: "a2", rule_name: "Cabine Pintura Off", machine_name: "Cabine Pintura A", severity: "warning",  message: "Máquina parada há mais de 15 minutos",       triggered_at: new Date(Date.now() - 22 * 60000).toISOString() },
-  { id: "a3", rule_name: "Pressão Baixa",      machine_name: "Compressor AR-02", severity: "warning",  message: "Pressão em 5.2 bar (mínimo: 6.0 bar)",       triggered_at: new Date(Date.now() - 45 * 60000).toISOString() },
-  { id: "a4", rule_name: "Manutenção Prev.",   machine_name: "Paletizador P-01", severity: "info",     message: "Manutenção preventiva agendada (2500h)",      triggered_at: new Date(Date.now() - 2 * 3600000).toISOString(), resolved_at: new Date(Date.now() - 3600000).toISOString() },
+  { id: "a1", rule_id: "r1", rule_name: "Temp. Forno Alta",   machine_name: "Forno Cura F-01",  severity: "critical", message: "Temperatura atingiu 312°C (limite: 280°C)", triggered_at: new Date(Date.now() - 8 * 60000).toISOString() },
+  { id: "a2", rule_id: "r2", rule_name: "Cabine Pintura Off", machine_name: "Cabine Pintura A", severity: "warning",  message: "Máquina parada há mais de 15 minutos",       triggered_at: new Date(Date.now() - 22 * 60000).toISOString() },
+  { id: "a3", rule_id: "r3", rule_name: "Pressão Baixa",      machine_name: "Compressor AR-02", severity: "warning",  message: "Pressão em 5.2 bar (mínimo: 6.0 bar)",       triggered_at: new Date(Date.now() - 45 * 60000).toISOString() },
+  { id: "a4", rule_id: "r4", rule_name: "Manutenção Prev.",   machine_name: "Paletizador P-01", severity: "info",     message: "Manutenção preventiva agendada (2500h)",      triggered_at: new Date(Date.now() - 2 * 3600000).toISOString(), resolved_at: new Date(Date.now() - 3600000).toISOString() },
 ];
 
 /** Generate a 24h OEE trend with slight variation */

@@ -1,5 +1,3 @@
-import clsx from "clsx";
-
 interface Props {
   value: number; // 0–100
   size?: "sm" | "md" | "lg";
