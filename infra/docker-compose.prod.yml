@@ -90,11 +90,6 @@ services:
       - "traefik.http.routers.fm-api.tls=true"
       - "traefik.http.routers.fm-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.fm-api.loadbalancer.server.port=8000"
-      - "traefik.http.routers.fm-api-http.rule=Host(`factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`) || PathPrefix(`/metrics`))"
-      - "traefik.http.routers.fm-api-http.priority=200"
-      - "traefik.http.routers.fm-api-http.entrypoints=http"
-      - "traefik.http.routers.fm-api-http.middlewares=redirect-to-https@docker"
-      - "traefik.http.routers.fm-api-http.service=fm-api"
     networks:
       - fm-net
       - easypanel
