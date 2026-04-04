@@ -1,9 +1,10 @@
 """
-AI Chat route — natural language queries over factory data via LangChain + OpenAI.
+AI Chat route — natural language queries over factory data via OpenAI SDK.
 """
 
 from typing import Annotated
 from fastapi import APIRouter, Depends
+from openai import AsyncOpenAI
 
 from ...config import settings
 from ...models import User
@@ -26,7 +27,6 @@ OEE acima de 85% é considerado excelente; abaixo de 65% é crítico.
 @router.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest, user: CurrentUser):
     if not settings.openai_api_key:
-        # Graceful fallback without API key
         return ChatResponse(
             reply=(
                 "O módulo de IA não está configurado. "
@@ -34,19 +34,13 @@ async def chat(body: ChatRequest, user: CurrentUser):
             )
         )
 
-    from langchain_openai import ChatOpenAI          # lazy import
-    from langchain.schema import HumanMessage, SystemMessage  # lazy import
-
-    llm = ChatOpenAI(
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    completion = await client.chat.completions.create(
         model="gpt-4o",
         temperature=0.3,
-        openai_api_key=settings.openai_api_key,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": body.message},
+        ],
     )
-
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=body.message),
-    ]
-
-    response = await llm.ainvoke(messages)
-    return ChatResponse(reply=response.content)
+    return ChatResponse(reply=completion.choices[0].message.content)
