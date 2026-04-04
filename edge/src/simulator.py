@@ -119,7 +119,8 @@ class ApiClient:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        self._session = aiohttp.ClientSession()
+        connector = aiohttp.TCPConnector(ssl=False)
+        self._session = aiohttp.ClientSession(connector=connector)
         return self
 
     async def __aexit__(self, *args):
@@ -133,24 +134,27 @@ class ApiClient:
         async with self._session.post(
             f"{self._base}/api/auth/login",
             json={"email": email, "password": password},
-            ssl=False,
         ) as r:
             r.raise_for_status()
             data = await r.json()
             self._token = data["access_token"]
-            # decode tenant_id from JWT payload (middle part)
             import base64
             payload_b64 = self._token.split(".")[1]
             payload_b64 += "=" * (4 - len(payload_b64) % 4)
             payload = json.loads(base64.b64decode(payload_b64))
             self._tenant_id = payload["tenant_id"]
+            # Rebuild session with auth header baked in (survives redirects)
+            await self._session.close()
+            connector = aiohttp.TCPConnector(ssl=False)
+            self._session = aiohttp.ClientSession(
+                connector=connector,
+                headers={"Authorization": f"Bearer {self._token}"},
+            )
             log.info("api.logged_in", tenant_id=self._tenant_id)
             return self._tenant_id
 
     async def get_or_create_line(self, name: str) -> str:
-        async with self._session.get(
-            f"{self._base}/api/lines", headers=self._headers(), ssl=False
-        ) as r:
+        async with self._session.get(f"{self._base}/api/lines/") as r:
             r.raise_for_status()
             lines = await r.json()
 
@@ -159,17 +163,15 @@ class ApiClient:
                 return line["id"]
 
         async with self._session.post(
-            f"{self._base}/api/lines",
-            headers=self._headers(),
+            f"{self._base}/api/lines/",
             json={"name": name, "description": "Linha criada pelo simulador demo", "location": "Planta A"},
-            ssl=False,
         ) as r:
             r.raise_for_status()
             return (await r.json())["id"]
 
     async def get_or_create_machine(self, line_id: str, name: str, model: str) -> str:
         async with self._session.get(
-            f"{self._base}/api/machines?line_id={line_id}", headers=self._headers(), ssl=False
+            f"{self._base}/api/machines/?line_id={line_id}"
         ) as r:
             r.raise_for_status()
             machines = await r.json()
@@ -179,10 +181,8 @@ class ApiClient:
                 return m["id"]
 
         async with self._session.post(
-            f"{self._base}/api/machines",
-            headers=self._headers(),
+            f"{self._base}/api/machines/",
             json={"line_id": line_id, "name": name, "model": model, "serial_number": f"SIM-{random.randint(1000,9999)}"},
-            ssl=False,
         ) as r:
             r.raise_for_status()
             return (await r.json())["id"]
@@ -190,7 +190,7 @@ class ApiClient:
     async def get_or_create_tag(self, machine_id: str, sensor_type: str) -> str:
         profile = SENSOR_PROFILES[sensor_type]
         async with self._session.get(
-            f"{self._base}/api/tags?machine_id={machine_id}", headers=self._headers(), ssl=False
+            f"{self._base}/api/tags/?machine_id={machine_id}"
         ) as r:
             r.raise_for_status()
             tags = await r.json()
@@ -200,8 +200,7 @@ class ApiClient:
                 return t["id"]
 
         async with self._session.post(
-            f"{self._base}/api/tags",
-            headers=self._headers(),
+            f"{self._base}/api/tags/",
             json={
                 "machine_id": machine_id,
                 "name": profile.name,
@@ -213,7 +212,6 @@ class ApiClient:
                 "max_value": profile.max_val,
                 "poll_interval_ms": 1000,
             },
-            ssl=False,
         ) as r:
             r.raise_for_status()
             return (await r.json())["id"]
