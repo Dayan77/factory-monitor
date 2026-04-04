@@ -6,6 +6,7 @@ services:
     image: postgres:16-alpine
     container_name: fm_postgres
     restart: unless-stopped
+    env_file: ../.env
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -28,10 +29,10 @@ services:
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: admin
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_TOKEN}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-factory-monitor}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-sensors}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-dev-token-change-me}
     volumes:
       - influxdb-data:/var/lib/influxdb2
     ports:
@@ -40,7 +41,7 @@ services:
       test: ["CMD", "influx", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   # ── MQTT Broker ───────────────────────────────────────────────────
   mosquitto:
@@ -53,7 +54,12 @@ services:
       - mosquitto-log:/mosquitto/log
     ports:
       - "1883:1883"
-      - "9001:9001"   # WebSocket
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health -m ping -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Backend (FastAPI) ─────────────────────────────────────────────
   server:
@@ -72,26 +78,13 @@ services:
         condition: service_healthy
       influxdb:
         condition: service_healthy
+      mosquitto:
+        condition: service_healthy
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
       - ../server:/app
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-
-  # ── Edge Gateway ──────────────────────────────────────────────────
-  edge:
-    build:
-      context: ../edge
-      dockerfile: Dockerfile
-    container_name: fm_edge
-    restart: unless-stopped
-    env_file: ../.env
-    environment:
-      MQTT_BROKER_HOST: mosquitto
-    depends_on:
-      - mosquitto
-    volumes:
-      - ../edge:/app
 
   # ── Frontend (React) ──────────────────────────────────────────────
   web:
@@ -102,7 +95,7 @@ services:
     container_name: fm_web
     restart: unless-stopped
     environment:
-      VITE_API_URL: http://localhost:${APP_PORT:-8000}
+      VITE_API_URL: ""
     depends_on:
       - server
     ports:
