@@ -234,27 +234,42 @@ async def run_simulator(
         tenant_id = await api.login(email, password)
         line_id = await api.get_or_create_line("Linha Demo (Simulador)")
 
-        # Build tag registry: tag_id → SensorState
-        tag_states: dict[str, SensorState] = {}
+        # Build tag registry: tag_id → {state, machine_name, sensor_name, unit}
+        tag_states: dict[str, dict] = {}
+        # Group by machine for display: machine_name → list of tag info
+        machine_tags: dict[str, list] = {}
         for machine_cfg in DEMO_MACHINES:
             machine_id = await api.get_or_create_machine(
                 line_id, machine_cfg["name"], machine_cfg["model"]
             )
+            machine_tags[machine_cfg["name"]] = []
             for sensor_type in machine_cfg["sensors"]:
                 tag_id = await api.get_or_create_tag(machine_id, sensor_type)
                 profile = SENSOR_PROFILES[sensor_type]
-                tag_states[tag_id] = SensorState(profile=profile)
-                log.info("simulator.tag_ready", tag=profile.name, id=tag_id[:8])
+                tag_states[tag_id] = {
+                    "state": SensorState(profile=profile),
+                    "machine": machine_cfg["name"],
+                    "sensor": profile.name,
+                    "unit": profile.unit,
+                }
+                machine_tags[machine_cfg["name"]].append(tag_id)
 
     log.info("simulator.ready", tags=len(tag_states), tenant_id=tenant_id)
-    print(f"\n{'='*55}")
+    W = 62
+    print(f"\n{'═'*W}")
     print(f"  Factory Monitor — Demo Simulator")
-    print(f"  Tenant:  {tenant_id}")
-    print(f"  Tags:    {len(tag_states)}")
-    print(f"  Broker:  {broker_host}:{broker_port}")
-    print(f"  Server:  {server_url}")
-    print(f"{'='*55}")
-    print(f"  Publicando dados a cada {interval}s. Ctrl+C para parar.\n")
+    print(f"  Servidor: {server_url}")
+    print(f"  Broker:   {broker_host}:{broker_port}")
+    print(f"  Tenant:   {tenant_id[:18]}...")
+    print(f"{'─'*W}")
+    for machine_name, tag_ids in machine_tags.items():
+        print(f"  🔩 {machine_name}")
+        for tid in tag_ids:
+            info = tag_states[tid]
+            print(f"     📡 {info['sensor']:<18} ({info['unit']})")
+    print(f"{'═'*W}")
+    print(f"  Publicando {len(tag_states)} sensores a cada {interval}s. Ctrl+C para parar.")
+    print(f"{'─'*W}\n")
 
     # 2. Connect to MQTT and publish indefinitely
     reconnect_delay = 2
@@ -273,24 +288,28 @@ async def run_simulator(
                     dt = now - last
                     last = now
 
-                    for tag_id, state in tag_states.items():
-                        value = state.tick(dt)
+                    tick_count = getattr(tick_count, '__add__', lambda x: x)(1) if hasattr(locals(), 'tick_count') else 1
+                    for tag_id, info in tag_states.items():
+                        value = info["state"].tick(dt)
                         topic = f"factory/{tenant_id}/sensors/{tag_id}"
                         payload = json.dumps({
                             "value": round(value, 3),
-                            "unit": state.profile.unit,
+                            "unit": info["unit"],
                             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         })
                         await client.publish(topic, payload.encode())
 
-                    # Print compact status every 10 ticks
-                    if random.random() < 0.1:
-                        sample = list(tag_states.items())[:3]
-                        status = " | ".join(
-                            f"{s.profile.name}: {s.value:.1f}{s.profile.unit}"
-                            for _, s in sample
-                        )
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] {status}")
+                    # Print grouped status every ~5s
+                    if random.random() < (interval / 5.0):
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        print(f"\n[{ts}]")
+                        cur_machine = None
+                        for tag_id, info in tag_states.items():
+                            if info["machine"] != cur_machine:
+                                cur_machine = info["machine"]
+                                print(f"  🔩 {cur_machine}")
+                            v = info["state"].value
+                            print(f"     {info['sensor']:<18} {v:>9.2f} {info['unit']}")
 
                     await asyncio.sleep(interval)
 

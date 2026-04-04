@@ -6,6 +6,10 @@ aiomqtt==2.0.1          # MQTT async client
 # HTTP (simulator API calls)
 aiohttp==3.9.5
 
+# Local config app
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
 # Data / Config
 pydantic==2.7.1
 pydantic-settings==2.2.1

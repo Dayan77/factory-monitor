@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Factory Monitor — Edge Config</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { brand: { 400:'#38bdf8', 500:'#0ea5e9' } } } }
+    }
+  </script>
+  <style>
+    [x-cloak]{display:none!important}
+    .ring-brand { --tw-ring-color: #0ea5e9; }
+    ::-webkit-scrollbar{width:4px;height:4px}
+    ::-webkit-scrollbar-track{background:#1f2937}
+    ::-webkit-scrollbar-thumb{background:#374151;border-radius:2px}
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen" x-data="edgeApp()" x-init="init()">
+
+<!-- Header -->
+<header class="border-b border-gray-800 bg-gray-900 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <span class="flex size-8 items-center justify-center rounded-lg bg-brand-500">
+      <svg viewBox="0 0 24 24" fill="currentColor" class="size-5 text-white"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    </span>
+    <div>
+      <p class="text-sm font-semibold">Factory Monitor</p>
+      <p class="text-xs text-gray-500">Edge Config App</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1.5 text-xs" :class="status.connected ? 'text-green-400' : 'text-gray-500'">
+      <span class="size-2 rounded-full" :class="status.connected ? 'bg-green-400 animate-pulse' : 'bg-gray-600'"></span>
+      <span x-text="status.connected ? 'Conectado' : 'Desconectado'"></span>
+    </div>
+    <div class="flex items-center gap-1.5 text-xs" :class="status.simulator_running ? 'text-brand-400' : 'text-gray-500'">
+      <span class="size-2 rounded-full" :class="status.simulator_running ? 'bg-brand-400 animate-pulse' : 'bg-gray-600'"></span>
+      <span x-text="status.simulator_running ? 'Simulando' : 'Parado'"></span>
+    </div>
+  </div>
+</header>
+
+<!-- Tabs -->
+<div class="border-b border-gray-800 bg-gray-900 px-6">
+  <nav class="flex gap-1">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button @click="activeTab=tab.id"
+        class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+        :class="activeTab===tab.id ? 'border-brand-500 text-brand-400' : 'border-transparent text-gray-500 hover:text-gray-300'">
+        <span x-text="tab.label"></span>
+      </button>
+    </template>
+  </nav>
+</div>
+
+<main class="max-w-5xl mx-auto p-6 space-y-6">
+
+  <!-- ── Tab: Configuração ─────────────────────────────────────── -->
+  <div x-show="activeTab==='config'" x-cloak>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4">
+        <h2 class="text-sm font-semibold text-gray-300">Servidor Online</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">URL do Servidor</label>
+            <input x-model="config.server_url" type="text" placeholder="https://factoryconnect.tech"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">E-mail</label>
+            <input x-model="config.email" type="email"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Senha</label>
+            <input x-model="config.password" type="password" placeholder="••••••••"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+        </div>
+      </div>
+      <div class="bg-gray-900 rounded-xl border border-gray-800 p-5 space-y-4">
+        <h2 class="text-sm font-semibold text-gray-300">Broker MQTT</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Host</label>
+            <input x-model="config.mqtt_host" type="text" placeholder="factoryconnect.tech"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Porta</label>
+            <input x-model.number="config.mqtt_port" type="number"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Intervalo do simulador (segundos)</label>
+            <input x-model.number="config.simulator_interval" type="number" min="0.5" step="0.5"
+              class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="flex gap-3 mt-4">
+      <button @click="saveConfig()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors">
+        Salvar Configurações
+      </button>
+      <button @click="testConnect()" :disabled="connecting"
+        class="px-4 py-2 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors">
+        <span x-text="connecting ? 'Conectando...' : 'Testar Conexão'"></span>
+      </button>
+    </div>
+    <div x-show="connectResult" x-cloak class="mt-4 p-4 rounded-lg border"
+      :class="connectResult?.server && connectResult?.mqtt ? 'bg-green-900/30 border-green-700' : 'bg-red-900/30 border-red-700'">
+      <div class="space-y-1 text-sm">
+        <div class="flex items-center gap-2">
+          <span x-text="connectResult?.server ? '✅' : '❌'"></span>
+          <span>API do Servidor</span>
+          <span x-show="connectResult?.tenant_id" class="text-xs text-gray-500" x-text="'tenant: ' + connectResult?.tenant_id?.slice(0,8) + '...'"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span x-text="connectResult?.mqtt ? '✅' : '❌'"></span>
+          <span>Broker MQTT</span>
+        </div>
+        <div x-show="connectResult?.error" class="text-red-400 text-xs mt-1" x-text="connectResult?.error"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tab: Linhas ────────────────────────────────────────────── -->
+  <div x-show="activeTab==='lines'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold text-gray-300">Linhas de Produção</h2>
+      <button @click="showNewLine=true" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 rounded-lg text-xs font-medium text-white">
+        + Nova Linha
+      </button>
+    </div>
+    <div x-show="showNewLine" x-cloak class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4 flex gap-3 items-end">
+      <div class="flex-1 space-y-2">
+        <input x-model="newLine.name" placeholder="Nome da linha" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        <div class="flex gap-2">
+          <input x-model="newLine.location" placeholder="Localização (ex: Planta A)" class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+          <input x-model="newLine.description" placeholder="Descrição" class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="createLine()" class="px-3 py-2 bg-brand-500 hover:bg-brand-400 rounded-lg text-sm font-medium text-white">Criar</button>
+        <button @click="showNewLine=false" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm">Cancelar</button>
+      </div>
+    </div>
+    <div class="space-y-2">
+      <template x-for="line in lines" :key="line.id">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between hover:border-gray-700 cursor-pointer"
+          @click="selectLine(line)">
+          <div>
+            <p class="text-sm font-medium" x-text="line.name"></p>
+            <p class="text-xs text-gray-500 mt-0.5" x-text="[line.location, line.description].filter(Boolean).join(' — ')"></p>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-gray-500" x-text="line.id.slice(0,8) + '...'"></span>
+            <button @click.stop="deleteLine(line.id)" class="text-gray-600 hover:text-red-400 transition-colors">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5z" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+        </div>
+      </template>
+      <p x-show="lines.length===0" class="text-sm text-gray-600 text-center py-8">Nenhuma linha cadastrada. Clique em "+ Nova Linha" para começar.</p>
+    </div>
+  </div>
+
+  <!-- ── Tab: Máquinas ─────────────────────────────────────────── -->
+  <div x-show="activeTab==='machines'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-3">
+        <h2 class="text-sm font-semibold text-gray-300">Máquinas</h2>
+        <select x-model="filterLineId" @change="loadMachines()" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <option value="">Todas as linhas</option>
+          <template x-for="line in lines" :key="line.id">
+            <option :value="line.id" x-text="line.name"></option>
+          </template>
+        </select>
+      </div>
+      <button @click="showNewMachine=true" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 rounded-lg text-xs font-medium text-white">
+        + Nova Máquina
+      </button>
+    </div>
+    <div x-show="showNewMachine" x-cloak class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4 space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Linha</label>
+          <select x-model="newMachine.line_id" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="">Selecione a linha</option>
+            <template x-for="line in lines" :key="line.id">
+              <option :value="line.id" x-text="line.name"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Nome</label>
+          <input x-model="newMachine.name" placeholder="Ex: Fresadora CNC #1" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Modelo</label>
+          <input x-model="newMachine.model" placeholder="Ex: HAAS VF-2" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Número de Série</label>
+          <input x-model="newMachine.serial_number" placeholder="Ex: SN-2024-001" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="createMachine()" class="px-3 py-2 bg-brand-500 hover:bg-brand-400 rounded-lg text-sm font-medium text-white">Criar Máquina</button>
+        <button @click="showNewMachine=false" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm">Cancelar</button>
+      </div>
+    </div>
+    <div class="space-y-2">
+      <template x-for="m in machines" :key="m.id">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between hover:border-gray-700 cursor-pointer"
+          @click="selectMachine(m)">
+          <div class="flex items-center gap-3">
+            <div class="size-9 rounded-lg bg-gray-800 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-5 text-gray-400"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+            </div>
+            <div>
+              <p class="text-sm font-medium" x-text="m.name"></p>
+              <p class="text-xs text-gray-500" x-text="[m.model, m.serial_number].filter(Boolean).join(' · ')"></p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-xs px-2 py-0.5 rounded-full border"
+              :class="{
+                'border-green-700 text-green-400 bg-green-900/20': m.status==='running',
+                'border-gray-700 text-gray-500': m.status==='stopped',
+                'border-yellow-700 text-yellow-400 bg-yellow-900/20': m.status==='maintenance',
+                'border-red-700 text-red-400 bg-red-900/20': m.status==='error'
+              }"
+              x-text="{running:'Operando',stopped:'Parado',maintenance:'Manutenção',error:'Falha',unknown:'Desconhecido'}[m.status]||m.status">
+            </span>
+            <button @click.stop="deleteMachine(m.id)" class="text-gray-600 hover:text-red-400 transition-colors">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5z" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+        </div>
+      </template>
+      <p x-show="machines.length===0" class="text-sm text-gray-600 text-center py-8">Nenhuma máquina. Selecione uma linha ou crie uma nova máquina.</p>
+    </div>
+  </div>
+
+  <!-- ── Tab: Sensores ─────────────────────────────────────────── -->
+  <div x-show="activeTab==='tags'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-3">
+        <h2 class="text-sm font-semibold text-gray-300">Sensores / Tags</h2>
+        <select x-model="filterMachineId" @change="loadTags()" class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+          <option value="">Todas as máquinas</option>
+          <template x-for="m in machines" :key="m.id">
+            <option :value="m.id" x-text="m.name"></option>
+          </template>
+        </select>
+      </div>
+      <button @click="showNewTag=true" class="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 rounded-lg text-xs font-medium text-white">
+        + Novo Sensor
+      </button>
+    </div>
+    <div x-show="showNewTag" x-cloak class="bg-gray-900 border border-gray-700 rounded-xl p-4 mb-4 space-y-3">
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Máquina</label>
+          <select x-model="newTag.machine_id" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="">Selecione</option>
+            <template x-for="m in machines" :key="m.id">
+              <option :value="m.id" x-text="m.name"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Nome do Sensor</label>
+          <input x-model="newTag.name" placeholder="Ex: Temperatura Motor" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Protocolo</label>
+          <select x-model="newTag.protocol" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="mqtt">MQTT</option>
+            <option value="modbus_tcp">Modbus TCP</option>
+            <option value="opc_ua">OPC UA</option>
+            <option value="http">HTTP</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Endereço</label>
+          <input x-model="newTag.address" placeholder="Ex: 40001 ou ns=2;i=1001" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Unidade</label>
+          <input x-model="newTag.unit" placeholder="Ex: °C, RPM, bar" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"/>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Tipo de dado</label>
+          <select x-model="newTag.data_type" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+            <option value="float">Float</option>
+            <option value="int">Inteiro</option>
+            <option value="bool">Booleano</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="createTag()" class="px-3 py-2 bg-brand-500 hover:bg-brand-400 rounded-lg text-sm font-medium text-white">Criar Sensor</button>
+        <button @click="showNewTag=false" class="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm">Cancelar</button>
+      </div>
+    </div>
+    <div class="space-y-2">
+      <template x-for="tag in tags" :key="tag.id">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="size-9 rounded-lg bg-gray-800 flex items-center justify-center text-lg"
+              x-text="{modbus_tcp:'🔌',opc_ua:'🌐',mqtt:'📡',http:'🌍'}[tag.protocol]||'📡'">
+            </div>
+            <div>
+              <p class="text-sm font-medium" x-text="tag.name"></p>
+              <p class="text-xs text-gray-500">
+                <span x-text="tag.protocol.toUpperCase()"></span>
+                <span class="mx-1">·</span>
+                <span x-text="tag.address"></span>
+                <span x-show="tag.unit" class="mx-1">·</span>
+                <span x-text="tag.unit"></span>
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-xs px-2 py-0.5 rounded-full border"
+              :class="tag.is_active ? 'border-green-700 text-green-400 bg-green-900/20' : 'border-gray-700 text-gray-500'"
+              x-text="tag.is_active ? 'Ativo' : 'Inativo'">
+            </span>
+            <button @click="deleteTag(tag.id)" class="text-gray-600 hover:text-red-400 transition-colors">
+              <svg viewBox="0 0 20 20" fill="currentColor" class="size-4"><path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5z" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+        </div>
+      </template>
+      <p x-show="tags.length===0" class="text-sm text-gray-600 text-center py-8">Nenhum sensor cadastrado.</p>
+    </div>
+  </div>
+
+  <!-- ── Tab: Monitor ──────────────────────────────────────────── -->
+  <div x-show="activeTab==='monitor'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold text-gray-300">Monitor ao Vivo</h2>
+      <div class="flex gap-2">
+        <button @click="startSimulator()" x-show="!status.simulator_running"
+          class="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 rounded-lg text-sm font-medium text-white transition-colors">
+          ▶ Iniciar Simulador
+        </button>
+        <button @click="stopSimulator()" x-show="status.simulator_running"
+          class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-medium text-white transition-colors">
+          ■ Parar Simulador
+        </button>
+        <button @click="clearReadings()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-400">
+          Limpar
+        </button>
+      </div>
+    </div>
+
+    <!-- Grouped readings by machine -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <template x-for="(sensors, machine) in groupedReadings" :key="machine">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div class="flex items-center gap-2 mb-3 pb-3 border-b border-gray-800">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="size-4 text-brand-400 shrink-0"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+            <p class="text-sm font-semibold text-gray-200" x-text="machine"></p>
+          </div>
+          <div class="space-y-2">
+            <template x-for="r in sensors" :key="r.tag_id">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="size-1.5 rounded-full bg-brand-400 animate-pulse"></span>
+                  <span class="text-sm text-gray-400" x-text="r.sensor"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-mono font-semibold text-gray-100" x-text="r.value"></span>
+                  <span class="text-xs text-gray-600" x-text="r.unit"></span>
+                  <span class="text-xs text-gray-700" x-text="r.ts"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="Object.keys(groupedReadings).length===0" class="md:col-span-2 text-center py-16 text-sm text-gray-600">
+        <p x-show="!status.simulator_running">Inicie o simulador para ver dados ao vivo.</p>
+        <p x-show="status.simulator_running">Aguardando dados...</p>
+      </div>
+    </div>
+
+    <!-- Raw event log -->
+    <div class="mt-4 bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <p class="text-xs font-semibold text-gray-500 mb-3">LOG DE EVENTOS</p>
+      <div class="font-mono text-xs text-gray-500 h-40 overflow-y-auto space-y-0.5" id="log">
+        <template x-for="(entry, i) in eventLog.slice().reverse()" :key="i">
+          <div class="flex gap-3">
+            <span class="text-gray-700 shrink-0" x-text="entry.ts"></span>
+            <span :class="entry.color||'text-gray-500'" x-text="entry.msg"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+function edgeApp() {
+  return {
+    activeTab: 'config',
+    tabs: [
+      { id:'config',   label:'⚙️ Configuração' },
+      { id:'lines',    label:'🏭 Linhas' },
+      { id:'machines', label:'🔩 Máquinas' },
+      { id:'tags',     label:'📡 Sensores' },
+      { id:'monitor',  label:'📊 Monitor ao Vivo' },
+    ],
+
+    config: { server_url:'', mqtt_host:'', mqtt_port:1883, email:'', password:'', simulator_interval:2 },
+    connecting: false,
+    connectResult: null,
+
+    lines: [], showNewLine: false,
+    newLine: { name:'', location:'', description:'' },
+
+    machines: [], showNewMachine: false, filterLineId: '',
+    newMachine: { name:'', line_id:'', model:'', serial_number:'' },
+
+    tags: [], showNewTag: false, filterMachineId: '',
+    newTag: { name:'', machine_id:'', protocol:'mqtt', address:'', unit:'', data_type:'float' },
+
+    status: { connected:false, simulator_running:false, tenant_id:null },
+    groupedReadings: {},
+    eventLog: [],
+    ws: null,
+
+    async init() {
+      await this.loadConfig();
+      await this.refreshStatus();
+      setInterval(() => this.refreshStatus(), 3000);
+      this.connectWs();
+      this.log('App iniciado', 'text-gray-400');
+    },
+
+    async loadConfig() {
+      const r = await fetch('/api/config'); const d = await r.json();
+      this.config = { ...d, password:'' };
+    },
+
+    async saveConfig() {
+      const body = { ...this.config };
+      if (!body.password) delete body.password;
+      await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      this.log('Configurações salvas', 'text-green-400');
+    },
+
+    async testConnect() {
+      this.connecting = true; this.connectResult = null;
+      await this.saveConfig();
+      try {
+        const r = await fetch('/api/connect', { method:'POST' });
+        this.connectResult = await r.json();
+        if (this.connectResult.server) {
+          this.log('Conectado ao servidor ✓', 'text-green-400');
+          await this.loadLines(); await this.loadMachines(); await this.loadTags();
+        } else {
+          this.log('Falha na conexão: ' + (this.connectResult.error||'erro desconhecido'), 'text-red-400');
+        }
+      } finally { this.connecting = false; }
+      await this.refreshStatus();
+    },
+
+    async refreshStatus() {
+      try { const r = await fetch('/api/status'); this.status = await r.json(); } catch(e){}
+    },
+
+    async loadLines() {
+      try { const r = await fetch('/api/lines'); this.lines = await r.json(); } catch(e) {}
+    },
+    async createLine() {
+      try {
+        await fetch('/api/lines', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.newLine) });
+        this.showNewLine=false; this.newLine={name:'',location:'',description:''};
+        await this.loadLines(); this.log('Linha criada: ' + this.newLine.name||'nova', 'text-brand-400');
+      } catch(e) { this.log('Erro ao criar linha: '+e, 'text-red-400'); }
+    },
+    async deleteLine(id) {
+      if (!confirm('Remover esta linha?')) return;
+      await fetch('/api/lines/'+id, {method:'DELETE'});
+      await this.loadLines();
+    },
+    selectLine(line) { this.filterLineId=line.id; this.activeTab='machines'; this.loadMachines(); },
+
+    async loadMachines() {
+      try {
+        const url = this.filterLineId ? '/api/machines?line_id='+this.filterLineId : '/api/machines';
+        const r = await fetch(url); this.machines = await r.json();
+      } catch(e){}
+    },
+    async createMachine() {
+      try {
+        await fetch('/api/machines', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.newMachine) });
+        this.showNewMachine=false;
+        await this.loadMachines(); this.log('Máquina criada', 'text-brand-400');
+      } catch(e) { this.log('Erro: '+e, 'text-red-400'); }
+    },
+    async deleteMachine(id) {
+      if (!confirm('Remover esta máquina?')) return;
+      await fetch('/api/machines/'+id, {method:'DELETE'});
+      await this.loadMachines();
+    },
+    selectMachine(m) { this.filterMachineId=m.id; this.activeTab='tags'; this.loadTags(); },
+
+    async loadTags() {
+      try {
+        const url = this.filterMachineId ? '/api/tags?machine_id='+this.filterMachineId : '/api/tags';
+        const r = await fetch(url); this.tags = await r.json();
+      } catch(e){}
+    },
+    async createTag() {
+      try {
+        await fetch('/api/tags', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.newTag) });
+        this.showNewTag=false;
+        await this.loadTags(); this.log('Sensor criado: ' + this.newTag.name, 'text-brand-400');
+      } catch(e) { this.log('Erro: '+e, 'text-red-400'); }
+    },
+    async deleteTag(id) {
+      if (!confirm('Remover este sensor?')) return;
+      await fetch('/api/tags/'+id, {method:'DELETE'});
+      await this.loadTags();
+    },
+
+    async startSimulator() {
+      const r = await fetch('/api/simulator/start', {method:'POST'});
+      const d = await r.json();
+      this.log(d.message||'Simulador iniciado', 'text-brand-400');
+      await this.refreshStatus();
+    },
+    async stopSimulator() {
+      await fetch('/api/simulator/stop', {method:'POST'});
+      this.log('Simulador parado', 'text-yellow-400');
+      await this.refreshStatus();
+    },
+    clearReadings() { this.groupedReadings = {}; },
+
+    connectWs() {
+      const url = 'ws://' + location.host + '/ws/live';
+      this.ws = new WebSocket(url);
+      this.ws.onmessage = (e) => {
+        const r = JSON.parse(e.data);
+        if (!this.groupedReadings[r.machine]) this.groupedReadings[r.machine] = {};
+        this.groupedReadings[r.machine][r.tag_id] = r;
+        // trigger Alpine reactivity
+        this.groupedReadings = { ...this.groupedReadings };
+      };
+      this.ws.onopen = () => this.log('WebSocket conectado', 'text-green-400');
+      this.ws.onclose = () => { this.log('WebSocket desconectado, reconectando...', 'text-yellow-400'); setTimeout(() => this.connectWs(), 3000); };
+    },
+
+    log(msg, color='text-gray-500') {
+      const ts = new Date().toLocaleTimeString('pt-BR');
+      this.eventLog.push({ts, msg, color});
+      if (this.eventLog.length > 100) this.eventLog.shift();
+    },
+  }
+}
+</script>
+</body>
+</html>
