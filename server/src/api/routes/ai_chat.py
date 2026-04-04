@@ -4,13 +4,10 @@ AI Chat route — natural language queries over factory data via LangChain + Ope
 
 from typing import Annotated
 from fastapi import APIRouter, Depends
-from langchain_openai import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
 
 from ...config import settings
 from ...models import User
 from ...auth import get_current_user
-from ...services.influx import influx
 from ..schemas import ChatRequest, ChatResponse
 
 router = APIRouter()
@@ -36,6 +33,9 @@ async def chat(body: ChatRequest, user: CurrentUser):
                 "Defina OPENAI_API_KEY no arquivo .env para ativar o chat com IA."
             )
         )
+
+    from langchain_openai import ChatOpenAI          # lazy import
+    from langchain.schema import HumanMessage, SystemMessage  # lazy import
 
     llm = ChatOpenAI(
         model="gpt-4o",
