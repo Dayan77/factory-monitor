@@ -1,0 +1,132 @@
+version: "3.9"
+
+services:
+  # ── Databases ─────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: fm_postgres
+    restart: always
+    env_file: /opt/factory-monitor/.env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fm-net]
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: fm_influxdb
+    restart: always
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fm-net]
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: fm_mosquitto
+    restart: always
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health -m ping -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fm-net]
+
+  # ── Backend ───────────────────────────────────────────────────────
+  server:
+    image: ghcr.io/${GITHUB_REPO}/factory-monitor-server:${IMAGE_TAG:-latest}
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    container_name: fm_server
+    restart: always
+    env_file: /opt/factory-monitor/.env
+    environment:
+      POSTGRES_HOST: postgres
+      INFLUX_URL: http://influxdb:8086
+      MQTT_BROKER_HOST: mosquitto
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    networks: [fm-net]
+
+  # ── Frontend ──────────────────────────────────────────────────────
+  web:
+    image: ghcr.io/${GITHUB_REPO}/factory-monitor-web:${IMAGE_TAG:-latest}
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      target: prod
+    container_name: fm_web
+    restart: always
+    networks: [fm-net]
+
+  # ── Reverse Proxy + SSL ───────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: fm_nginx
+    restart: always
+    depends_on:
+      - server
+      - web
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [fm-net]
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: fm_certbot
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+networks:
+  fm-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  influxdb-data:
+  mosquitto-data:
+  mosquitto-log:
+  certbot-www:
+  certbot-certs:
