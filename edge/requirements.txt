@@ -1,11 +1,12 @@
 # Protocols
 asyncua==1.1.5          # OPC UA
 pymodbus==3.6.9         # Modbus TCP
-paho-mqtt==2.1.0        # MQTT client
+aiomqtt==2.0.1          # MQTT async client
 
-# Data / Async
-asyncio-mqtt==0.16.2
+# HTTP (simulator API calls)
 aiohttp==3.9.5
+
+# Data / Config
 pydantic==2.7.1
 pydantic-settings==2.2.1
 
