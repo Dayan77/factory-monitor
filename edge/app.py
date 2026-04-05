@@ -95,7 +95,7 @@ STATIC_PATH.mkdir(exist_ok=True)
 @app.on_event("startup")
 async def startup():
     load_config()
-    log.info("edge_app.started", port=7000)
+    log.info("edge_app.started", port=7001)
 
 # ── Config endpoints ───────────────────────────────────────────────────────────
 
@@ -335,5 +335,5 @@ async def serve_ui():
 if __name__ == "__main__":
     import uvicorn
     print("\n  Factory Monitor — Edge Config App")
-    print("  Abra no browser: http://localhost:7000\n")
-    uvicorn.run("edge.app:app", host="0.0.0.0", port=7000, reload=False)
+    print("  Abra no browser: http://localhost:7001\n")
+    uvicorn.run("edge.app:app", host="0.0.0.0", port=7001, reload=False)

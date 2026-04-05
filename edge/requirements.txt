@@ -1,25 +1,25 @@
 # Protocols
-asyncua==1.1.5          # OPC UA
-pymodbus==3.6.9         # Modbus TCP
-aiomqtt==2.0.1          # MQTT async client
+asyncua>=1.1.5          # OPC UA
+pymodbus>=3.6.9         # Modbus TCP
+aiomqtt>=2.0.1          # MQTT async client
 
 # HTTP (simulator API calls)
-aiohttp==3.9.5
+aiohttp>=3.10.0
 
 # Local config app
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
 
 # Data / Config
-pydantic==2.7.1
-pydantic-settings==2.2.1
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
 
 # Security
-cryptography==42.0.8    # AES-256 encryption
+cryptography>=42.0.8    # AES-256 encryption
 
 # Persistence / Buffer
-aiosqlite==0.20.0       # Local SQLite buffer when offline
+aiosqlite>=0.20.0       # Local SQLite buffer when offline
 
 # Observability
-structlog==24.2.0
-prometheus-client==0.20.0
+structlog>=24.2.0
+prometheus-client>=0.20.0

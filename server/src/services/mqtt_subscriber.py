@@ -61,20 +61,26 @@ async def _handle_message(topic: str, raw: bytes) -> None:
         unit  = data.get("unit")
         ts    = data.get("ts")
 
-        # 1. Persist to InfluxDB
-        await influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit)
-
-        # 2. Evaluate alert rules
-        async with AsyncSessionLocal() as db:
-            await evaluate(db=db, tag_id=tag_id, tenant_id=tenant_id, value=value)
-
-        # 3. Broadcast to WebSocket clients
+        # 3. Broadcast to WebSocket clients (always, even if storage fails)
         await manager.broadcast(tenant_id, {
             "tag_id": tag_id,
             "value":  value,
             "unit":   unit,
             "timestamp": ts,
         })
+
+        # 1. Persist to InfluxDB
+        try:
+            await influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit)
+        except Exception:
+            log.warning("mqtt.influx.error", topic=topic)
+
+        # 2. Evaluate alert rules
+        try:
+            async with AsyncSessionLocal() as db:
+                await evaluate(db=db, tag_id=tag_id, tenant_id=tenant_id, value=value)
+        except Exception:
+            log.warning("mqtt.alerts.error", topic=topic)
 
     except Exception:
         log.exception("mqtt.message.error", topic=topic)
