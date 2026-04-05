@@ -1,3 +1,39 @@
+// ── Admin / Superadmin ────────────────────────────────────────────
+
+export type TenantPlan = "trial" | "starter" | "professional" | "enterprise";
+
+export interface Tenant {
+  id:               string;
+  name:             string;
+  slug:             string;
+  is_active:        boolean;
+  plan:             TenantPlan;
+  trial_ends_at:    string | null;
+  suspended_reason: string | null;
+  max_users:        number;
+  max_machines:     number;
+  created_at:       string;
+  updated_at:       string;
+}
+
+export interface TenantWithStats extends Tenant {
+  user_count:    number;
+  machine_count: number;
+}
+
+export interface TenantUser {
+  id:            string;
+  tenant_id:     string;
+  email:         string;
+  name:          string;
+  role:          "operator" | "manager" | "admin" | "superadmin";
+  is_active:     boolean;
+  last_login_at: string | null;
+  created_at:    string;
+}
+
+// ── Domain types ──────────────────────────────────────────────────
+
 export type MachineStatus = "running" | "stopped" | "maintenance" | "error" | "unknown";
 
 export interface Machine {

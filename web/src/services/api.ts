@@ -123,3 +123,19 @@ export const sensorsApi = {
 export const aiApi = {
   chat: (message: string) => api.post<{ reply: string }>("/api/ai/chat", { message }),
 };
+
+export const adminApi = {
+  // Tenants
+  listTenants:   ()                              => api.get("/api/admin/tenants"),
+  getTenant:     (id: string)                    => api.get(`/api/admin/tenants/${id}`),
+  createTenant:  (body: unknown)                 => api.post("/api/admin/tenants", body),
+  updateTenant:  (id: string, body: unknown)     => api.patch(`/api/admin/tenants/${id}`, body),
+  deleteTenant:  (id: string)                    => api.delete(`/api/admin/tenants/${id}`),
+  // Users de um tenant
+  listUsers:     (tenantId: string)              => api.get(`/api/admin/tenants/${tenantId}/users`),
+  createUser:    (tenantId: string, body: unknown) => api.post(`/api/admin/tenants/${tenantId}/users`, body),
+  updateUser:    (tenantId: string, userId: string, body: unknown) =>
+    api.patch(`/api/admin/tenants/${tenantId}/users/${userId}`, body),
+  deleteUser:    (tenantId: string, userId: string) =>
+    api.delete(`/api/admin/tenants/${tenantId}/users/${userId}`),
+};

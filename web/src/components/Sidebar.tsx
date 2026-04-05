@@ -67,6 +67,18 @@ const NAV = [
   },
 ];
 
+const ADMIN_NAV = {
+  label: "Admin",
+  to: "/admin",
+  icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M20 21a8 8 0 1 0-16 0" />
+      <path d="M16 19l2 2 4-4" />
+    </svg>
+  ),
+};
+
 const ROLE_LABELS: Record<string, string> = {
   operator:   "Operador",
   manager:    "Gestor",
@@ -124,6 +136,26 @@ export default function Sidebar() {
             {item.label}
           </NavLink>
         ))}
+
+        {user?.role === "superadmin" && (
+          <>
+            <div className="my-2 border-t border-gray-800" />
+            <NavLink
+              to={ADMIN_NAV.to}
+              className={({ isActive }) =>
+                clsx(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-purple-500/15 text-purple-400"
+                    : "text-gray-500 hover:bg-gray-800 hover:text-gray-100"
+                )
+              }
+            >
+              {ADMIN_NAV.icon}
+              {ADMIN_NAV.label}
+            </NavLink>
+          </>
+        )}
       </nav>
 
       {/* Footer */}

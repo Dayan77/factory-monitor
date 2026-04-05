@@ -9,6 +9,7 @@ import MachinesPage from "@/pages/MachinesPage";
 import AlertsPage from "@/pages/AlertsPage";
 import AiChatPage from "@/pages/AiChatPage";
 import SensorsPage from "@/pages/SensorsPage";
+import AdminPage from "@/pages/AdminPage";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -29,6 +30,7 @@ export default function App() {
               <Route path="/sensors"   element={<SensorsPage />} />
               <Route path="/alerts"    element={<AlertsPage />} />
               <Route path="/ai"        element={<AiChatPage />} />
+              <Route path="/admin"     element={<AdminPage />} />
             </Route>
           </Route>
         </Routes>
