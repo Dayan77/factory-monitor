@@ -7,9 +7,71 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
 from ..models.user import UserRole
+from ..models.tenant import TenantPlan
 from ..models.machine import MachineStatus
 from ..models.tag import ProtocolType, DataType
 from ..models.alert import AlertCondition, AlertSeverity
+
+
+# ── Tenant (superadmin) ───────────────────────────────────────────
+
+class TenantOut(BaseModel):
+    id:               str
+    name:             str
+    slug:             str
+    is_active:        bool
+    plan:             TenantPlan
+    trial_ends_at:    Optional[datetime]
+    suspended_reason: Optional[str]
+    max_users:        int
+    max_machines:     int
+    created_at:       datetime
+    updated_at:       datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TenantWithStats(TenantOut):
+    user_count:    int = 0
+    machine_count: int = 0
+
+
+class TenantCreate(BaseModel):
+    name:          str
+    slug:          str
+    plan:          TenantPlan = TenantPlan.trial
+    trial_ends_at: Optional[datetime] = None
+    max_users:     int = 5
+    max_machines:  int = 10
+    # Usuário admin inicial
+    admin_email:   EmailStr
+    admin_password: str
+    admin_name:    str
+
+    @field_validator("admin_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Senha deve ter no mínimo 8 caracteres.")
+        return v
+
+    @field_validator("slug")
+    @classmethod
+    def slug_format(cls, v: str) -> str:
+        import re
+        if not re.match(r'^[a-z0-9-]+$', v):
+            raise ValueError("Slug deve conter apenas letras minúsculas, números e hífens.")
+        return v
+
+
+class TenantUpdate(BaseModel):
+    name:             Optional[str]        = None
+    is_active:        Optional[bool]       = None
+    plan:             Optional[TenantPlan] = None
+    trial_ends_at:    Optional[datetime]   = None
+    suspended_reason: Optional[str]        = None
+    max_users:        Optional[int]        = None
+    max_machines:     Optional[int]        = None
 
 
 # ── Auth ──────────────────────────────────────────────────────────

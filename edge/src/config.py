@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class EdgeSettings(BaseSettings):
+    tenant_id: str = ""          # UUID do tenant no servidor (obrigatório em produção)
+
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
     mqtt_username: str = ""

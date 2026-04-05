@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import get_db
 from ...models import User
+from ...models.tenant import Tenant
 from ...auth import (
     verify_password, create_access_token, create_refresh_token,
     decode_token, get_current_user,
@@ -26,6 +27,14 @@ async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]
 
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas.")
+
+    # Verifica se o tenant está ativo
+    tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+    tenant = tenant_result.scalar_one_or_none()
+    if not tenant or not tenant.is_active:
+        reason = tenant.suspended_reason if tenant else None
+        detail = f"Conta suspensa. {reason}" if reason else "Conta suspensa. Entre em contato com o suporte."
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
     await db.execute(
         update(User).where(User.id == user.id).values(last_login_at=datetime.now(timezone.utc))

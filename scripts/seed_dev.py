@@ -26,11 +26,14 @@ DATABASE_URL = (
     f"{os.getenv('POSTGRES_DB', 'factory_monitor')}"
 )
 
-ADMIN_EMAIL    = os.getenv("SEED_ADMIN_EMAIL",    "admin@factory-monitor.com")
-ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "Admin@1234")
-ADMIN_NAME     = os.getenv("SEED_ADMIN_NAME",     "Administrador")
-TENANT_NAME    = os.getenv("SEED_TENANT_NAME",    "Empresa Demo")
-TENANT_SLUG    = os.getenv("SEED_TENANT_SLUG",    "demo")
+ADMIN_EMAIL      = os.getenv("SEED_ADMIN_EMAIL",      "admin@factory-monitor.com")
+ADMIN_PASSWORD   = os.getenv("SEED_ADMIN_PASSWORD",   "Admin@1234")
+ADMIN_NAME       = os.getenv("SEED_ADMIN_NAME",       "Administrador")
+TENANT_NAME      = os.getenv("SEED_TENANT_NAME",      "Empresa Demo")
+TENANT_SLUG      = os.getenv("SEED_TENANT_SLUG",      "demo")
+SUPERADMIN_EMAIL = os.getenv("SEED_SUPERADMIN_EMAIL", "superadmin@factory-monitor.com")
+SUPERADMIN_PASS  = os.getenv("SEED_SUPERADMIN_PASS",  "Super@1234")
+SUPERADMIN_NAME  = os.getenv("SEED_SUPERADMIN_NAME",  "Super Admin")
 
 
 async def seed() -> None:
@@ -38,8 +41,9 @@ async def seed() -> None:
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
-        # Check if already seeded
         from sqlalchemy import select
+
+        # ── Tenant demo ───────────────────────────────────────────
         existing = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
         if existing.scalar_one_or_none():
             print(f"⚠  Tenant '{TENANT_SLUG}' já existe. Seed ignorado.")
@@ -57,10 +61,30 @@ async def seed() -> None:
             role=UserRole.admin,
         )
         db.add(admin)
+
+        # ── Tenant "platform" para o superadmin ───────────────────
+        platform_existing = await db.execute(select(Tenant).where(Tenant.slug == "platform"))
+        if not platform_existing.scalar_one_or_none():
+            platform_tenant = Tenant(name="Factory Monitor Platform", slug="platform")
+            db.add(platform_tenant)
+            await db.flush()
+
+            superadmin = User(
+                tenant_id=platform_tenant.id,
+                email=SUPERADMIN_EMAIL,
+                password_hash=hash_password(SUPERADMIN_PASS),
+                name=SUPERADMIN_NAME,
+                role=UserRole.superadmin,
+            )
+            db.add(superadmin)
+
         await db.commit()
 
-    print(f"✓  Tenant: {TENANT_NAME} (slug: {TENANT_SLUG})")
-    print(f"✓  Admin:  {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+    print(f"✓  Tenant demo: {TENANT_NAME} (slug: {TENANT_SLUG})")
+    print(f"   tenant_id: {tenant.id}  ← copie para TENANT_ID no .env do edge")
+    print(f"✓  Admin:      {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+    print()
+    print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {SUPERADMIN_PASS}")
     print()
     print("Acesse http://localhost e faça login com as credenciais acima.")
     await engine.dispose()

@@ -61,10 +61,11 @@ class EdgeGateway:
         if not self.filter.should_publish(tag_id, value):
             return
 
-        payload = self.publisher.build_payload(tag_id, value)
-        published = await self.publisher.publish(payload)
+        topic = self.publisher.build_topic(settings.tenant_id, tag_id)
+        payload = self.publisher.build_payload(value)
+        published = await self.publisher.publish(settings.tenant_id, tag_id, value)
         if not published:
-            await self.buffer.store(payload)
+            await self.buffer.store(topic, payload)
 
     async def _flush_buffer_loop(self) -> None:
         """Retry buffered readings when connection is restored."""
@@ -72,8 +73,17 @@ class EdgeGateway:
             await asyncio.sleep(30)
             if self.publisher.is_connected:
                 pending = await self.buffer.flush()
-                for payload in pending:
-                    await self.publisher.publish(payload)
+                for topic, payload in pending:
+                    await self._client_publish_raw(topic, payload)
+
+    async def _client_publish_raw(self, topic: str, payload: dict) -> None:
+        """Republish a buffered (topic, payload) pair directly."""
+        import json
+        if self.publisher.is_connected and self.publisher._client:
+            try:
+                await self.publisher._client.publish(topic, json.dumps(payload).encode())
+            except Exception:
+                await self.buffer.store(topic, payload)
 
     async def stop(self) -> None:
         self._running = False
