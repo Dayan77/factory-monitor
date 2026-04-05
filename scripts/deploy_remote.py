@@ -58,15 +58,16 @@ def main():
     run(c, f"cd {APP} && git fetch origin && git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)")
     print("  ✓ Código atualizado")
 
-    # Rebuild server
-    print("\n▶ Rebuilding servidor (pode demorar ~1min)...")
-    run(c, f"cd {APP} && docker build -t factory-monitor-server:latest ./server 2>&1 | tail -8", timeout=300)
+    # Rebuild server + web
+    print("\n▶ Rebuilding servidor e frontend (pode demorar ~2min)...")
+    run(c, f"cd {APP} && docker build -t factory-monitor-server:latest ./server 2>&1 | tail -5", timeout=300)
+    run(c, f"cd {APP} && docker build -t factory-monitor-web:latest --target prod ./web 2>&1 | tail -5", timeout=300)
     print("  ✓ Build concluído")
 
-    # Restart
-    print("\n▶ Reiniciando servidor...")
-    run(c, f"cd {APP} && docker compose -f infra/docker-compose.prod.yml up -d --no-deps server")
-    time.sleep(4)
+    # Restart both
+    print("\n▶ Reiniciando serviços...")
+    run(c, f"cd {APP} && docker compose -f infra/docker-compose.prod.yml up -d --no-deps server web")
+    time.sleep(5)
 
     # Status
     print("\n▶ Status:")

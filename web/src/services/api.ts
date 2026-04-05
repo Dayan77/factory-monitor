@@ -77,26 +77,26 @@ export const authApi = {
 };
 
 export const linesApi = {
-  list:   ()               => api.get("/api/lines"),
+  list:   ()               => api.get("/api/lines/"),
   get:    (id: string)     => api.get(`/api/lines/${id}`),
-  create: (body: unknown)  => api.post("/api/lines", body),
+  create: (body: unknown)  => api.post("/api/lines/", body),
   update: (id: string, body: unknown) => api.patch(`/api/lines/${id}`, body),
   remove: (id: string)     => api.delete(`/api/lines/${id}`),
 };
 
 export const machinesApi = {
   list:   (lineId?: string) =>
-    api.get("/api/machines", { params: lineId ? { line_id: lineId } : undefined }),
+    api.get("/api/machines/", { params: lineId ? { line_id: lineId } : undefined }),
   get:    (id: string)      => api.get(`/api/machines/${id}`),
-  create: (body: unknown)   => api.post("/api/machines", body),
+  create: (body: unknown)   => api.post("/api/machines/", body),
   update: (id: string, body: unknown) => api.patch(`/api/machines/${id}`, body),
   remove: (id: string)      => api.delete(`/api/machines/${id}`),
 };
 
 export const tagsApi = {
   list:   (machineId?: string) =>
-    api.get("/api/tags", { params: machineId ? { machine_id: machineId } : undefined }),
-  create: (body: unknown)      => api.post("/api/tags", body),
+    api.get("/api/tags/", { params: machineId ? { machine_id: machineId } : undefined }),
+  create: (body: unknown)      => api.post("/api/tags/", body),
   update: (id: string, body: unknown) => api.patch(`/api/tags/${id}`, body),
   remove: (id: string)         => api.delete(`/api/tags/${id}`),
 };
