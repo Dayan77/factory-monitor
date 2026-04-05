@@ -46,21 +46,22 @@ async def seed() -> None:
         # ── Tenant demo ───────────────────────────────────────────
         existing = await db.execute(select(Tenant).where(Tenant.slug == TENANT_SLUG))
         if existing.scalar_one_or_none():
-            print(f"⚠  Tenant '{TENANT_SLUG}' já existe. Seed ignorado.")
-            return
+            print(f"⚠  Tenant '{TENANT_SLUG}' já existe. Pulando criação do tenant demo.")
+        else:
+            tenant = Tenant(name=TENANT_NAME, slug=TENANT_SLUG)
+            db.add(tenant)
+            await db.flush()
 
-        tenant = Tenant(name=TENANT_NAME, slug=TENANT_SLUG)
-        db.add(tenant)
-        await db.flush()
-
-        admin = User(
-            tenant_id=tenant.id,
-            email=ADMIN_EMAIL,
-            password_hash=hash_password(ADMIN_PASSWORD),
-            name=ADMIN_NAME,
-            role=UserRole.admin,
-        )
-        db.add(admin)
+            admin = User(
+                tenant_id=tenant.id,
+                email=ADMIN_EMAIL,
+                password_hash=hash_password(ADMIN_PASSWORD),
+                name=ADMIN_NAME,
+                role=UserRole.admin,
+            )
+            db.add(admin)
+            print(f"✓  Tenant demo: {TENANT_NAME} (slug: {TENANT_SLUG})")
+            print(f"   Admin: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
 
         # ── Tenant "platform" para o superadmin ───────────────────
         platform_existing = await db.execute(select(Tenant).where(Tenant.slug == "platform"))
@@ -80,13 +81,9 @@ async def seed() -> None:
 
         await db.commit()
 
-    print(f"✓  Tenant demo: {TENANT_NAME} (slug: {TENANT_SLUG})")
-    print(f"   tenant_id: {tenant.id}  ← copie para TENANT_ID no .env do edge")
-    print(f"✓  Admin:      {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
-    print()
     print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {SUPERADMIN_PASS}")
     print()
-    print("Acesse http://localhost e faça login com as credenciais acima.")
+    print("Acesse /admin após login com o superadmin.")
     await engine.dispose()
 
 
