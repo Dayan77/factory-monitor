@@ -22,7 +22,7 @@ stop_local() {
     PIDS=$(lsof -ti :$PORT 2>/dev/null || true)
     [ -n "$PIDS" ] && echo "$PIDS" | xargs kill -9 2>/dev/null && echo "  ✓ Porta $PORT liberada" || true
   done
-  pkill -f "edge.src.simulator" 2>/dev/null && echo "  ✓ Simulador encerrado" || true
+  pkill -f "edge.src.simulator" 2>/dev/null && echo "  ✓ Simulador encerrado (estava rodando)" || true
   echo ""
 }
 
@@ -63,13 +63,6 @@ sleep 3
 lsof -ti :7001 > /dev/null 2>&1 && echo "  ✓ Edge App OK (PID $(lsof -ti :7001))" || echo "  ✗ Edge App falhou — veja /tmp/edge_app.log"
 echo ""
 
-# ── 5. Simulador ──────────────────────────────────────────────
-echo "▶ Iniciando Simulador..."
-"$VENV" -m edge.src.simulator > /tmp/sim.log 2>&1 &
-sleep 4
-pgrep -f "edge.src.simulator" > /dev/null 2>&1 && echo "  ✓ Simulador OK (PID $(pgrep -f edge.src.simulator))" || echo "  ✗ Simulador falhou — veja /tmp/sim.log"
-echo ""
-
 # ── Resumo ────────────────────────────────────────────────────
 echo "╔══════════════════════════════════════════╗"
 echo "║  Tudo pronto!                             ║"
@@ -77,8 +70,11 @@ echo "║                                           ║"
 echo "║  Local:   http://localhost:7001           ║"
 echo "║  Online:  https://factoryconnect.tech     ║"
 echo "║                                           ║"
+echo "║  Para simular dados:                      ║"
+echo "║    → Use o botão no app local (7001)      ║"
+echo "║    → Ou: python3 -m edge.src.simulator    ║"
+echo "║                                           ║"
 echo "║  Logs:                                    ║"
-echo "║    tail -f /tmp/sim.log                   ║"
 echo "║    tail -f /tmp/edge_app.log              ║"
 echo "║                                           ║"
 echo "║  Para parar:                              ║"
