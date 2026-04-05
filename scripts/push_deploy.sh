@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================
 # Factory Monitor — Push & Deploy
-# Faz git push e deploya no VPS automaticamente.
-# Uso: ./scripts/push_deploy.sh ["mensagem do commit"]
+# Faz git push e deploya no VPS via SSH.
+# Uso: ./scripts/push_deploy.sh
 # =============================================================
 set -euo pipefail
 
-MSG="${1:-deploy: atualização automática}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="${SCRIPT_DIR}/../.venv/bin/python3"
+
+# Usa python do .venv se disponível, senão usa o do sistema
+if [ ! -f "$PYTHON" ]; then
+    PYTHON="python3"
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -15,13 +21,10 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── 1. Git push ──────────────────────────────────────────────
-echo "▶ Commit e push para GitHub..."
-git add -A
-git commit -m "$MSG" 2>/dev/null || echo "  (nada novo para commitar)"
+echo "▶ Push para GitHub..."
 git push origin HEAD
 echo "  ✓ GitHub atualizado"
 
-# ── 2. Deploy via Python/paramiko ────────────────────────────
+# ── 2. Deploy remoto via SSH ─────────────────────────────────
 echo ""
-echo "▶ Iniciando deploy no VPS..."
-"$(dirname "$0")/../.venv/bin/python3" "$(dirname "$0")/deploy_remote.py"
+"$PYTHON" "$SCRIPT_DIR/deploy_remote.py"
