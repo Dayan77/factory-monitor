@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
 
 export default function LoginPage() {
@@ -9,6 +9,8 @@ export default function LoginPage() {
 
   const { login, loading } = useAuthStore();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const justRegistered = searchParams.get("registered") === "1";
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -32,10 +34,17 @@ export default function LoginPage() {
             </svg>
           </span>
           <div className="text-center">
-            <h1 className="text-xl font-bold text-white">Factory Monitor</h1>
+            <h1 className="text-xl font-bold text-white">FactoryConnect</h1>
             <p className="text-sm text-gray-500">Acesse sua conta</p>
           </div>
         </div>
+
+        {/* Registro confirmado */}
+        {justRegistered && (
+          <div className="rounded-xl bg-brand-500/10 border border-brand-500/20 px-4 py-3 text-sm text-brand-400 text-center">
+            Conta criada com sucesso! Faça login para continuar.
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -76,7 +85,20 @@ export default function LoginPage() {
           >
             {loading ? "Entrando…" : "Entrar"}
           </button>
+
+          <p className="text-center text-sm text-gray-600">
+            Não tem conta?{" "}
+            <Link to="/register" className="text-brand-400 hover:text-brand-300">
+              Criar gratuitamente
+            </Link>
+          </p>
         </form>
+
+        <p className="text-center">
+          <Link to="/" className="text-xs text-gray-600 hover:text-gray-400">
+            ← Voltar ao site
+          </Link>
+        </p>
       </div>
     </div>
   );

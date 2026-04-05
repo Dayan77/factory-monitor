@@ -74,6 +74,8 @@ export const authApi = {
       "/api/auth/login", { email, password }
     ),
   me: () => api.get("/api/auth/me"),
+  register: (body: { company_name: string; admin_name: string; admin_email: string; admin_password: string }) =>
+    api.post<{ message: string; tenant_slug: string }>("/api/auth/register", body),
 };
 
 export const linesApi = {
