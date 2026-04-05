@@ -5,12 +5,9 @@ Writes to InfluxDB, evaluates alert rules and broadcasts via WebSocket.
 
 import asyncio
 import json
-from base64 import b64decode
-from typing import Optional
 
 import aiomqtt
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import AsyncSessionLocal
@@ -24,7 +21,7 @@ TOPIC = "factory/+/sensors/#"   # factory/{tenant_id}/sensors/{tag_id}
 
 
 async def run_subscriber() -> None:
-    """Long-running task started on app lifespan."""
+    """Long-running task started on app lifespan. Never exits."""
     while True:
         try:
             async with aiomqtt.Client(
@@ -35,12 +32,19 @@ async def run_subscriber() -> None:
             ) as client:
                 log.info("mqtt.connected", broker=settings.mqtt_broker_host)
                 await client.subscribe(TOPIC)
+                log.info("mqtt.subscribed", topic=TOPIC)
 
                 async for message in client.messages:
-                    await _handle_message(str(message.topic), message.payload)
+                    # Fire-and-forget — never let a slow handler block message delivery
+                    asyncio.create_task(
+                        _handle_message(str(message.topic), bytes(message.payload))
+                    )
 
         except aiomqtt.MqttError as e:
             log.warning("mqtt.disconnected", error=str(e))
+            await asyncio.sleep(5)
+        except Exception as e:
+            log.error("mqtt.subscriber.error", error=str(e))
             await asyncio.sleep(5)
 
 
@@ -61,26 +65,38 @@ async def _handle_message(topic: str, raw: bytes) -> None:
         unit  = data.get("unit")
         ts    = data.get("ts")
 
-        # 3. Broadcast to WebSocket clients (always, even if storage fails)
+        log.debug("mqtt.message", tenant_id=tenant_id[:8], tag_id=tag_id[:8], value=value)
+
+        # 1. Broadcast to WebSocket clients immediately
         await manager.broadcast(tenant_id, {
-            "tag_id": tag_id,
-            "value":  value,
-            "unit":   unit,
+            "tag_id":    tag_id,
+            "value":     value,
+            "unit":      unit,
             "timestamp": ts,
         })
 
-        # 1. Persist to InfluxDB
+        # 2. Persist to InfluxDB (with timeout so it never blocks forever)
         try:
-            await influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit)
-        except Exception:
-            log.warning("mqtt.influx.error", topic=topic)
+            await asyncio.wait_for(
+                influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            log.warning("mqtt.influx.timeout", topic=topic)
+        except Exception as e:
+            log.warning("mqtt.influx.error", topic=topic, error=str(e))
 
-        # 2. Evaluate alert rules
+        # 3. Evaluate alert rules (with timeout)
         try:
             async with AsyncSessionLocal() as db:
-                await evaluate(db=db, tag_id=tag_id, tenant_id=tenant_id, value=value)
-        except Exception:
-            log.warning("mqtt.alerts.error", topic=topic)
+                await asyncio.wait_for(
+                    evaluate(db=db, tag_id=tag_id, tenant_id=tenant_id, value=value),
+                    timeout=5.0,
+                )
+        except asyncio.TimeoutError:
+            log.warning("mqtt.alerts.timeout", topic=topic)
+        except Exception as e:
+            log.warning("mqtt.alerts.error", topic=topic, error=str(e))
 
-    except Exception:
-        log.exception("mqtt.message.error", topic=topic)
+    except Exception as e:
+        log.exception("mqtt.message.error", topic=topic, error=str(e))

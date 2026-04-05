@@ -41,8 +41,8 @@ class InfluxService:
             "fields":    {"value": value},
             "time":      (ts or datetime.now(timezone.utc)).isoformat(),
         }
-        async with self._client.write_api() as writer:
-            await writer.write(bucket=settings.influx_bucket, record=record)
+        writer = self._client.write_api()
+        await writer.write(bucket=settings.influx_bucket, record=record)
 
     async def query_history(
         self,
