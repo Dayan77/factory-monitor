@@ -18,7 +18,6 @@ apiAddress: :9997
 ###############################################
 hls: yes
 hlsAddress: :8888
-hlsAlwaysRemuxMuxer: yes
 hlsSegmentCount: 3
 hlsSegmentDuration: 2s
 hlsPartDuration: 200ms
