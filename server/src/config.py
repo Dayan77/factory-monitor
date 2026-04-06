@@ -22,6 +22,9 @@ class ServerSettings(BaseSettings):
     mqtt_username: str = ""
     mqtt_password: str = ""
 
+    mediamtx_api_url: str = "http://fm_mediamtx:9997"
+    mediamtx_hls_url: str = "http://fm_mediamtx:8888"
+
     openai_api_key: str = ""
 
     sendgrid_api_key: str = ""

@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { linesApi, machinesApi, alertsApi, sensorsApi } from "@/services/api";
+import { linesApi, machinesApi, alertsApi, sensorsApi, camerasApi } from "@/services/api";
 
 // ── Lines ─────────────────────────────────────────────────────────
 export function useLines() {
@@ -43,6 +43,38 @@ export function useResolveAlert() {
   return useMutation({
     mutationFn: (id: string) => alertsApi.resolveEvent(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
+// ── Cameras ───────────────────────────────────────────────────────
+export function useCameras(machineId?: string) {
+  return useQuery({
+    queryKey: ["cameras", machineId],
+    queryFn:  () => camerasApi.list(machineId).then((r) => r.data),
+  });
+}
+
+export function useCreateCamera() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: unknown) => camerasApi.create(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cameras"] }),
+  });
+}
+
+export function useUpdateCamera() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: unknown }) => camerasApi.update(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cameras"] }),
+  });
+}
+
+export function useDeleteCamera() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => camerasApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cameras"] }),
   });
 }
 

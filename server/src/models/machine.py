@@ -27,6 +27,7 @@ class Machine(Base, TimestampMixin):
     serial_number: Mapped[Optional[str]]         = mapped_column(String(255), nullable=True)
     status:        Mapped[MachineStatus]         = mapped_column(SAEnum(MachineStatus), nullable=False, default=MachineStatus.unknown)
 
-    tenant = relationship("Tenant",  back_populates="machines")
-    line   = relationship("Line",    back_populates="machines")
-    tags   = relationship("Tag",     back_populates="machine",  lazy="noload")
+    tenant  = relationship("Tenant",  back_populates="machines")
+    line    = relationship("Line",    back_populates="machines")
+    tags    = relationship("Tag",     back_populates="machine",  lazy="noload")
+    cameras = relationship("Camera",  back_populates="machine",  lazy="noload")

@@ -295,6 +295,37 @@ class SensorHistoryQuery(BaseModel):
     window: str = "1m"                 # InfluxDB aggregation window
 
 
+# ── Camera ────────────────────────────────────────────────────────
+
+class CameraOut(BaseModel):
+    id:          str
+    tenant_id:   str
+    machine_id:  Optional[str]
+    name:        str
+    rtsp_url:    str
+    description: Optional[str]
+    is_active:   bool
+    created_at:  datetime
+    updated_at:  datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CameraCreate(BaseModel):
+    name:        str
+    rtsp_url:    str
+    machine_id:  Optional[str] = None
+    description: Optional[str] = None
+
+
+class CameraUpdate(BaseModel):
+    name:        Optional[str]  = None
+    rtsp_url:    Optional[str]  = None
+    machine_id:  Optional[str]  = None
+    description: Optional[str]  = None
+    is_active:   Optional[bool] = None
+
+
 # ── AI Chat ───────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):

@@ -1,0 +1,48 @@
+# MediaMTX — RTSP to HLS proxy for Factory Monitor
+# Docs: https://github.com/bluenviron/mediamtx
+
+###############################################
+# General
+###############################################
+logLevel: info
+logDestinations: [stdout]
+
+###############################################
+# API (used by fm_server to register/remove streams dynamically)
+###############################################
+api: yes
+apiAddress: :9997
+
+###############################################
+# HLS (consumed by the frontend via /api/cameras/{id}/hls/ proxy)
+###############################################
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemuxMuxer: yes
+hlsSegmentCount: 3
+hlsSegmentDuration: 2s
+hlsPartDuration: 200ms
+
+###############################################
+# RTSP server (relay — cameras connect here if push mode is needed)
+###############################################
+rtsp: yes
+rtspAddress: :8554
+
+###############################################
+# WebRTC — disabled for now (HLS is enough for monitoring use case)
+###############################################
+webrtc: no
+
+###############################################
+# Default path settings
+# Cameras are registered dynamically via API — no static paths needed.
+###############################################
+pathDefaults:
+  readUser: ""
+  readPass: ""
+  sourceOnDemand: yes
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+
+paths: {}

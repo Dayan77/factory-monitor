@@ -33,3 +33,4 @@ class Tenant(Base, TimestampMixin):
     lines    = relationship("Line",    back_populates="tenant", lazy="noload")
     machines = relationship("Machine", back_populates="tenant", lazy="noload")
     tags     = relationship("Tag",     back_populates="tenant", lazy="noload")
+    cameras  = relationship("Camera",  back_populates="tenant", lazy="noload")

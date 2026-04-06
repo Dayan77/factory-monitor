@@ -90,3 +90,17 @@ export interface OeeSnapshot {
   quality: number;
   timestamp: string;
 }
+
+// ── Camera ────────────────────────────────────────────────────────
+
+export interface Camera {
+  id:          string;
+  tenant_id:   string;
+  machine_id:  string | null;
+  name:        string;
+  rtsp_url:    string;
+  description: string | null;
+  is_active:   boolean;
+  created_at:  string;
+  updated_at:  string;
+}

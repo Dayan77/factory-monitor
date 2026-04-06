@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
-from .api.routes import auth, lines, machines, tags, alerts, sensors, ai_chat, admin
+from .api.routes import auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber
 
@@ -63,6 +63,7 @@ app.include_router(alerts.router,   prefix="/api/alerts",   tags=["alerts"])
 app.include_router(sensors.router,  prefix="/api/sensors",  tags=["sensors"])
 app.include_router(ai_chat.router,  prefix="/api/ai",       tags=["ai"])
 app.include_router(admin.router,    prefix="/api/admin",    tags=["admin"])
+app.include_router(cameras.router,  prefix="/api/cameras",  tags=["cameras"])
 
 app.include_router(ws_router, prefix="/ws")
 

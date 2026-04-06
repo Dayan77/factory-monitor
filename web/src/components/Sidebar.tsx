@@ -45,6 +45,16 @@ const NAV = [
     ),
   },
   {
+    label: "Câmeras",
+    to: "/cameras",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
+        <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.87v6.26a1 1 0 0 1-1.447.899L15 14" />
+        <rect x="2" y="6" width="13" height="12" rx="2" />
+      </svg>
+    ),
+  },
+  {
     label: "Alertas",
     to: "/alerts",
     icon: (

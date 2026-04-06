@@ -126,6 +126,17 @@ export const aiApi = {
   chat: (message: string) => api.post<{ reply: string }>("/api/ai/chat", { message }),
 };
 
+export const camerasApi = {
+  list:   (machineId?: string) =>
+    api.get("/api/cameras/", { params: machineId ? { machine_id: machineId } : undefined }),
+  get:    (id: string)         => api.get(`/api/cameras/${id}`),
+  create: (body: unknown)      => api.post("/api/cameras/", body),
+  update: (id: string, body: unknown) => api.patch(`/api/cameras/${id}`, body),
+  remove: (id: string)         => api.delete(`/api/cameras/${id}`),
+  /** Returns the proxied HLS playlist URL for this camera. */
+  hlsUrl: (id: string)         => `/api/cameras/${id}/hls/index.m3u8`,
+};
+
 export const adminApi = {
   // Tenants
   listTenants:   ()                              => api.get("/api/admin/tenants"),
