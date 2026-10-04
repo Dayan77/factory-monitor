@@ -78,3 +78,4 @@ coverage/
 # Misc
 .tmp/
 tmp/
+.venv-*/
