@@ -594,6 +594,9 @@ async function runDesktop(browser, theme) {
   // 11) Links from machine detail and Raio-X
   await page.goto(`${BASE}/factory/machines/m-fix`);
   await page.getByRole("heading", { name: "Manutenção" }).waitFor();
+  // the panel's queries resolve after the heading renders: wait for the rows before counting
+  await page.getByTestId("asset-plan").nth(2).waitFor({ timeout: 10_000 }).catch(() => {});
+  await page.getByTestId("asset-wo").first().waitFor({ timeout: 10_000 }).catch(() => {});
   check((await page.getByTestId("asset-plan").count()) >= 3, "machine detail: plans of the machine");
   check((await page.getByTestId("asset-wo").count()) >= 1, "machine detail: open WOs");
   await shot(page, `machine-maintenance-${tag}`);

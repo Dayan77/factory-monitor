@@ -83,7 +83,8 @@ for (const theme of ["light", "dark"]) {
     if (vpName === "desktop") {
       const row = page.getByRole("row", { name: "Abrir posição Cilindro A3" });
       await row.waitFor();
-      const bars = page.getByRole("progressbar");
+      // Sprint 4 added the machine's maintenance panel (plan consumption bars): count only the life bars
+      const bars = page.getByRole("progressbar", { name: /^Vida consumida/ });
       check((await bars.count()) === 4, `4 life bars on Estação de Fixação (${await bars.count()})`);
       const usage = await api(`/api/machines/${fixacao.id}/usage`);
       const a3 = usage.positions.find((p) => p.name === "Cilindro A3");
