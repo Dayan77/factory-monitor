@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AxiosError, AxiosHeaders } from "axios";
 import {
-  applyPending, enqueue, flushQueue, getFailed, getQueue, loadList, loadWorkOrder, saveList, withSnapshot,
+  applyPending, clearFailed, enqueue, flushQueue, getFailed, getQueue, loadList, loadWorkOrder, purgeOtherUsersSnapshots,
+  saveList, withSnapshot,
 } from "./offline";
 import { workOrder } from "@/test/maintenanceFixtures";
 
@@ -42,6 +43,65 @@ describe("offline action queue", () => {
     expect(r).toEqual({ sent: 1, failed: 1, stalled: false });
     expect(getQueue()).toEqual([]);
     expect(getFailed()[0]).toMatchObject({ message: "Transição inválida.", action: { kind: "transition", wo_number: "OS-1" } });
+  });
+});
+
+function loginAs(id: string, tenant = "t1") {
+  localStorage.setItem("fm-user", JSON.stringify({ id, tenant_id: tenant, name: id, email: `${id}@x`, role: "technician" }));
+}
+
+describe("transient server answers are retried, not dropped", () => {
+  it.each([502, 503, 504, 500, 429])("HTTP %i stalls the queue and keeps every action", async (status) => {
+    enqueue({ kind: "task", wo_id: "wo-1", body: { task_id: "t1", done: true } });
+    enqueue({ kind: "labor", wo_id: "wo-1", body: { hours: 1.5 } });
+    const r = await flushQueue(async () => { throw http(status); }, () => "err");
+    expect(r).toEqual({ sent: 0, failed: 0, stalled: true });
+    expect(getQueue()).toHaveLength(2);
+    expect(getFailed()).toEqual([]);
+  });
+
+  it.each([400, 403, 404, 409, 422])("HTTP %i is a definitive rejection (failed list)", async (status) => {
+    enqueue({ kind: "task", wo_id: "wo-1", body: { task_id: "t1", done: true } });
+    const r = await flushQueue(async () => { throw http(status); }, () => "recusado");
+    expect(r).toEqual({ sent: 0, failed: 1, stalled: false });
+    expect(getQueue()).toEqual([]);
+  });
+});
+
+describe("shared team phone: offline data is per user", () => {
+  afterEach(() => { localStorage.clear(); });
+
+  it("actions queued as A are not replayed under B; they replay when A logs in again", async () => {
+    loginAs("tech-a");
+    enqueue({ kind: "labor", wo_id: "wo-1", body: { hours: 1.5 } });
+    loginAs("tech-b");
+    expect(getQueue()).toEqual([]);
+    const exec = vi.fn().mockResolvedValue({});
+    expect(await flushQueue(exec, () => "err")).toEqual({ sent: 0, failed: 0, stalled: false });
+    expect(exec).not.toHaveBeenCalled();
+    loginAs("tech-a");
+    expect(getQueue()).toHaveLength(1);
+    expect(getQueue()[0].owner).toBe("t1:tech-a");
+    await flushQueue(exec, () => "err");
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(getQueue()).toEqual([]);
+  });
+
+  it("B never sees A's cached work orders; A's failed list is not B's", async () => {
+    loginAs("tech-a");
+    saveList([workOrder()]);
+    enqueue({ kind: "transition", wo_id: "wo-1", body: { to: "completed" } });
+    await flushQueue(async () => { throw http(422); }, () => "Transição inválida.");
+    expect(getFailed()).toHaveLength(1);
+    loginAs("tech-b");
+    purgeOtherUsersSnapshots();
+    expect(loadList()).toBeNull();
+    expect(loadWorkOrder("wo-1")).toBeNull();
+    expect(getFailed()).toEqual([]);
+    clearFailed();
+    loginAs("tech-a");
+    expect(getFailed()).toHaveLength(1);                 // B's "Entendi" did not discard A's failures
+    expect(loadList()).toBeNull();                       // A's snapshot was dropped when B logged in
   });
 });
 

@@ -120,6 +120,10 @@ class ServerSettings(BaseSettings):
     vapid_public_key: str = ""
     vapid_private_key: str = ""
     vapid_subject: str = ""
+    # Web Push endpoints are only accepted (and only POSTed to) on these push-service hosts (SSRF guard).
+    # Comma-separated; "*.example.com" matches subdomains.
+    push_allowed_hosts: str = ("fcm.googleapis.com,android.googleapis.com,updates.push.services.mozilla.com,"
+                               "*.push.services.mozilla.com,*.push.apple.com,*.notify.windows.com")
     # Maintenance module (Sprint 4): engine tick (emergency calls, escalation, overdue WOs, digests),
     # full plan recompute interval (also recomputed when usage changes) and webhook delivery tick.
     maintenance_tick_s: float = 30.0

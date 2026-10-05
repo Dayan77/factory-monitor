@@ -222,8 +222,14 @@ async def ws_part():
     ta = asyncio.create_task(listen(f"{ws_url}/ws/sensors/{a_tenant}", a_tech_tok, got_a))
     tb = asyncio.create_task(listen(f"{ws_url}/ws/sensors/{b_tenant}", b_tech_tok, got_b))
     await asyncio.sleep(2)
+    # a machine on a line covered by A's on-call technician (an emergency call on a line with nobody on call
+    # notifies nobody — that is a separate check, e2e/sprint4/emergency_no_oncall.py)
+    tech_lines = set(A["tech"].get("/api/auth/me").json().get("line_ids") or [])
+    a_machines = A["admin"].get("/api/machines/").json()
+    a_machines = a_machines if isinstance(a_machines, list) else a_machines.get("items", [])
+    em_machine = next((m["id"] for m in a_machines if not tech_lines or m.get("line_id") in tech_lines), a_wo["machine_id"])
     async with httpx.AsyncClient(base_url=API, trust_env=False, headers=dict(A["sup"].headers)) as c:
-        rr = await c.post("/api/work-orders/emergency-call", json={"machine_id": a_wo["machine_id"], "title": "QA isolamento", "note": "QA"})
+        rr = await c.post("/api/work-orders/emergency-call", json={"machine_id": em_machine, "title": "QA isolamento", "note": "QA"})
     await asyncio.sleep(4)
     ta.cancel(); tb.cancel()
     check(any(m["notification"]["kind"] == "emergency_call" for m in got_a), "A's emergency call reaches A's technician WebSocket", (rr.status_code, got_a))

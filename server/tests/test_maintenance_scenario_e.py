@@ -82,11 +82,8 @@ async def _replay(client, ctx, plan_ids, failure_ids) -> dict:
         for i, (state, at) in enumerate(w["history"]):
             events.append((ts(at), order, i, w["id"], state))
     events.sort()
-    # The scenario drafts OS-101 (PL5) on 28/10 while OS-099 (PL5) is still scheduled; the server keeps at most
-    # one open WO per plan (S4-4), so a WO whose plan still has an open WO is replayed (with its own `at`
-    # timestamps) right after that WO is completed.
-    queue: list = []
-    deferred: dict[str, list] = {}
+    # Replayed exactly as written: the scenario keeps at most one open WO per plan (S4-4; OS-101 is drafted only
+    # after OS-099 completes — domain.md S4-4 clarification). Guard it, so a future edit cannot hide a conflict.
     ids: dict[str, str] = {}
     state: dict[str, str] = {}
 
@@ -99,19 +96,9 @@ async def _replay(client, ctx, plan_ids, failure_ids) -> dict:
         return None
 
     def ordered():
-        pending = list(events)
-        while pending or queue:
-            if queue:
-                yield queue.pop(0)
-                continue
-            ev = pending.pop(0)
-            wid = ev[3]
-            if wid in deferred:
-                deferred[wid].append(ev)
-                continue
-            if ev[2] == 0 and blocker(wid):
-                deferred[wid] = [ev]
-                continue
+        for ev in events:
+            if ev[2] == 0:
+                assert blocker(ev[3]) is None, f"scenario E: {ev[3]} opened while {blocker(ev[3])} is open (S4-4)"
             yield ev
 
     pending_rejections = list(E["rejected_transitions"])
@@ -163,9 +150,6 @@ async def _replay(client, ctx, plan_ids, failure_ids) -> dict:
                 await api(client, "POST", f"/api/work-orders/{ids[wid]}/labor", ctx.h("technician"), 201,
                           json={"hours": w["labor_hours"], "at": (at.replace(minute=30)).isoformat(), "note": "parcial"})
         state[wid] = to
-        if to in ("completed", "cancelled"):
-            for other in [o for o, evs in deferred.items() if WO[o]["plan_id"] == w["plan_id"]]:
-                queue.extend(deferred.pop(other))
         for rj in list(pending_rejections):
             if rj["wo"] in state and state[rj["wo"]] == rj["from"]:
                 body = {"to": rj["to"], **(rj.get("body") or {})}

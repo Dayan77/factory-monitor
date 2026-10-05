@@ -218,12 +218,13 @@ class Rul:
     measure: Optional[str]
     remaining: Optional[float] = None
     rate_per_day: Optional[float] = None
-    reason: Optional[str] = None       # no_nominal_life | no_recent_usage | insufficient_data
+    reason: Optional[str] = None       # no_nominal_life | no_recent_usage | insufficient_data | beyond_horizon
     low_confidence: bool = False
     overdue: bool = False
 
 
 RUL_WINDOW_DAYS = 14
+RUL_HORIZON_DAYS = 3650             # no projected end date beyond ~10 years (avoids date overflow)
 RUL_MIN_DAYS = 3
 
 
@@ -240,12 +241,16 @@ def rul(today: date, nominal: Mapping[str, float], usage: Mapping[str, float],
         return Rul(None, None, None, reason="insufficient_data", low_confidence=True)
     low_conf = window < RUL_WINDOW_DAYS
     best: Optional[Rul] = None
+    beyond = False
     for m in measures:
         remaining = float(nominal[m]) - float(usage.get(m, 0.0) or 0.0)
         rate = float(usage_window.get(m, 0.0) or 0.0) / window
         if remaining <= 0:
             cand = Rul(today, 0, m, remaining, rate, low_confidence=low_conf, overdue=True)
         elif rate <= 0:
+            continue
+        elif remaining / rate > RUL_HORIZON_DAYS:
+            beyond = True                  # pace so slow the end lies beyond the horizon: no date
             continue
         else:
             days = math.ceil(remaining / rate - 1e-9)
@@ -257,5 +262,5 @@ def rul(today: date, nominal: Mapping[str, float], usage: Mapping[str, float],
                 > float(usage.get(best.measure, 0.0) or 0.0) / float(nominal[best.measure])):
             best = cand
     if best is None:
-        return Rul(None, None, None, reason="no_recent_usage", low_confidence=low_conf)
+        return Rul(None, None, None, reason="beyond_horizon" if beyond else "no_recent_usage", low_confidence=low_conf)
     return best

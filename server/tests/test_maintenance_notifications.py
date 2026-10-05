@@ -152,7 +152,7 @@ async def test_web_push_encrypted_and_vapid_signed(client, m, monkeypatch):
 
     ua = ec.generate_private_key(ec.SECP256R1())
     auth = webpush.b64u(b"0123456789abcdef")
-    endpoint = "https://push.example.com/send/abc"
+    endpoint = "https://fcm.googleapis.com/fcm/send/abc"
     r = await client.post("/api/push/subscribe", headers=m.h("technician"),
                           json={"endpoint": "http://insecure", "keys": {"p256dh": "x", "auth": "y"}})
     assert r.status_code == 422
@@ -183,7 +183,7 @@ async def test_web_push_encrypted_and_vapid_signed(client, m, monkeypatch):
     assert k == key["public_key"]
     head, claims, sig = t.split(".")
     c = json.loads(webpush.b64u_decode(claims))
-    assert c["aud"] == "https://push.example.com" and c["sub"] == "mailto:ops@example.com"
+    assert c["aud"] == "https://fcm.googleapis.com" and c["sub"] == "mailto:ops@example.com"
     raw = webpush.b64u_decode(sig)
     vk.public_key().verify(encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
                            f"{head}.{claims}".encode(), ec.ECDSA(hashes.SHA256()))
@@ -318,11 +318,20 @@ def test_signature_roundtrip():
     assert not webhooks.matches(["failure.*"], "work_order.completed")
 
 
-async def test_webhook_delivery_signed_with_retries_and_isolation(client, m):
+def _orig_url(r) -> str:
+    """URL the webhook was meant for: delivery connects to the pinned IP with the original Host header."""
+    return f"{r.url.scheme}://{r.headers['host']}{r.url.raw_path.decode()}"
+
+
+async def test_webhook_delivery_signed_with_retries_and_isolation(client, m, monkeypatch):
     from sqlalchemy import select
     from src.db import AsyncSessionLocal
     from src.models import WebhookDelivery
     from src.services import webhooks
+
+    async def fake_resolve(host, port):
+        return ["93.184.216.34"]                       # public address (example.com)
+    monkeypatch.setattr(webhooks, "_resolve", fake_resolve)
     other = await make_maint_tenant("W2")
     secret = "whsec-0123456789abcdef"
     adm = m.h("admin")
@@ -354,10 +363,11 @@ async def test_webhook_delivery_signed_with_retries_and_isolation(client, m):
     async with AsyncSessionLocal() as s:
         async with httpx.AsyncClient(transport=httpx.MockTransport(ok)) as hc:
             n = await webhooks.deliver_due(s, client=hc, limit=500)
-    mine = [r for r in seen if str(r.url) == "https://hooks.example.com/cmms"]
+    assert all(r.url.host == "93.184.216.34" and r.extensions.get("sni_hostname") == "hooks.example.com" for r in seen)
+    mine = [r for r in seen if _orig_url(r) == "https://hooks.example.com/cmms"]
     events = [r.headers["x-factoryconnect-event"] for r in mine]
     assert events == ["work_order.created", "work_order.state_changed", "work_order.approved"]
-    assert all(str(r.url) != "https://hooks.example.com/other" or json.loads(r.content)["tenant_id"] == other.id for r in seen)
+    assert all(_orig_url(r) != "https://hooks.example.com/other" or json.loads(r.content)["tenant_id"] == other.id for r in seen)
     for r in mine:
         assert webhooks.verify(secret, r.headers["x-factoryconnect-timestamp"], r.content,
                                r.headers["x-factoryconnect-signature"])

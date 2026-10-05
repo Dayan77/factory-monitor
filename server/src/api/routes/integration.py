@@ -86,9 +86,9 @@ def _hook_out(h: Webhook) -> dict:
             "created_at": clock.iso(h.created_at)}
 
 
-def _validate(url: Optional[str], events: Optional[list[str]]) -> None:
+async def _validate(url: Optional[str], events: Optional[list[str]]) -> None:
     if url is not None:
-        reason = webhooks.check_url(url)
+        reason = await webhooks.check_url(url)
         if reason:
             raise HTTPException(status_code=422, detail=reason)
     if events is not None:
@@ -131,7 +131,7 @@ async def create_hook(body: WebhookIn, user: Admin, db: DB):
     then `failed` (see `/deliveries`). The secret is write-only. Private/loopback URLs are refused
     (WEBHOOK_ALLOW_PRIVATE_HOSTS=true to allow, dev only)."""
     _no_token(user)
-    _validate(body.url, body.events)
+    await _validate(body.url, body.events)
     h = Webhook(tenant_id=user.tenant_id, url=body.url, secret=body.secret, events=sorted(set(body.events)),
                 description=body.description, is_active=body.is_active, created_by=user.id)
     db.add(h)
@@ -148,7 +148,7 @@ async def get_hook(hook_id: str, user: Admin, db: DB):
 async def patch_hook(hook_id: str, body: WebhookPatch, user: Admin, db: DB):
     _no_token(user)
     h = await _get_hook(db, hook_id, user.tenant_id)
-    _validate(body.url, body.events)
+    await _validate(body.url, body.events)
     for k, v in body.model_dump(exclude_unset=True).items():
         if v is None and k != "description":
             continue

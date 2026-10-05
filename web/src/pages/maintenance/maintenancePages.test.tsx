@@ -137,7 +137,13 @@ describe("Gestão da manutenção", () => {
     expect(await screen.findByTestId("kpi-pmp")).toHaveTextContent(/^68,4\s%$/);
     expect(screen.getByTestId("kpi-compliance")).toHaveTextContent(/^50,0\s%$/);
     expect(screen.getByTestId("kpi-backlog")).toHaveTextContent("18,0");
-    expect(screen.getByText(/0,5 semana\(s\) de trabalho/)).toBeInTheDocument();
+    expect(screen.getByText(/0,45 semana\(s\) de trabalho/)).toBeInTheDocument();
+    // PMP drill-down: the WOs completed in the month (completed_at in the plant-local month), any state
+    const pmpLink = screen.getByTestId("kpi-pmp").closest("a")!;
+    const href = new URL(pmpLink.getAttribute("href")!, "http://x");
+    expect(href.searchParams.get("completed_from")).toBe("2026-11-01T04:00:00.000Z");
+    expect(href.searchParams.get("completed_to")).toBe("2026-12-01T04:00:00.000Z");
+    expect(href.searchParams.get("state")).toBeNull();
     const excluded = screen.getAllByTestId("excluded-row");
     expect(excluded[0]).toHaveTextContent("OS-115");
     expect(excluded[1]).toHaveTextContent("encaixe — programada depois do congelamento da semana");

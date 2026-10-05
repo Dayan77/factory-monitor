@@ -15,6 +15,7 @@ USAGE_MEASURES = ("cycles", "hours", "starts")
 TRIGGERS = ("cycles", "hours", "starts", "days")
 RATE_WINDOW_DAYS = 14          # kpis.md §4.2 / C17
 EPS = 1e-9                     # C18: an integer quotient does not round up
+PROJECTION_HORIZON_DAYS = 3650  # projections beyond ~10 years are not dated (reason beyond_horizon)
 
 # ── plans (domain.md §5.1, kpis.md §4.2, S4-1, S4-3) ─────────────────────────
 
@@ -86,6 +87,7 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
     ref = local_date(last_reset_at, tz)
     trig: list[TriggerStatus] = []
     calendar_due: Optional[date] = None
+    beyond_horizon = False
     for m in TRIGGERS:
         iv = intervals.get(m)
         if iv is None or iv <= 0:
@@ -93,11 +95,15 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
         if m == "days":
             iv_days = int(iv)
             used = (today - ref).days                                  # S4-1: local calendar days
-            due = ref + timedelta(days=iv_days)
-            calendar_due = due
-            days = max((due - today).days, 0)
-            trig.append(TriggerStatus(m, float(iv_days), float(used), used / iv_days, days,
-                                      today + timedelta(days=days)))
+            remaining = iv_days - used
+            if remaining > PROJECTION_HORIZON_DAYS:                    # no date overflow on absurd intervals
+                cal_days: Optional[int] = None
+                beyond_horizon = True
+            else:
+                calendar_due = ref + timedelta(days=iv_days)
+                cal_days = max((calendar_due - today).days, 0)
+            trig.append(TriggerStatus(m, float(iv_days), float(used), used / iv_days, cal_days,
+                                      today + timedelta(days=cal_days) if cal_days is not None else None))
             continue
         base = float(last_reset_usage.get(m, 0.0) or 0.0)
         used = float(usage_now.get(m, 0.0) or 0.0) - base
@@ -105,8 +111,11 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
         rem = iv - used
         if rem <= 0:
             days: Optional[int] = 0
-        elif rate > 0:
+        elif rate > 0 and rem / rate <= PROJECTION_HORIZON_DAYS:
             days = math.ceil(rem / rate - EPS)                          # C18
+        elif rate > 0:
+            days = None                                                 # pace too slow: beyond the horizon
+            beyond_horizon = True
         else:
             days = None                                                 # no_recent_usage
         trig.append(TriggerStatus(m, float(iv), used, used / iv, days,
@@ -125,7 +134,7 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
         return PlanStatus(state, consumed, best.measure, trig, 0, due_t, today, calendar_due, True)
     if not dated:
         return PlanStatus(state, consumed, best.measure, trig, None, None, None, calendar_due, False,
-                          reason="no_recent_usage")
+                          reason="beyond_horizon" if beyond_horizon else "no_recent_usage")
     first = min(dated, key=lambda t: (t.days, -t.consumed))           # earliest date; tie → larger %
     return PlanStatus(state, consumed, best.measure, trig, first.days, first.measure,
                       today + timedelta(days=first.days), calendar_due, False)

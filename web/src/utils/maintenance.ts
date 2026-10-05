@@ -110,6 +110,7 @@ export const RELIABILITY_REASON_LABEL: Record<string, string> = {
   no_restorations: "nenhuma falha com restabelecimento",
   no_restored_failures: "nenhuma falha com restabelecimento",
   no_triggers: "plano sem gatilho",
+  beyond_horizon: "ritmo recente projeta além de 10 anos",
   no_cycles: "sem contagem de ciclos",
 };
 

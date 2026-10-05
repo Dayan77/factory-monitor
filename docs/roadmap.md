@@ -63,6 +63,10 @@ SEO e desempenho (`site/`, gerador estático, ex. Astro). Hoje existe só a `Lan
 - [ ] MTBF, **MCBF**, MTTR, disponibilidade — por componente, tipo, fabricante, máquina e linha
 - [ ] Painel "próximas manutenções" e alertas em 80% / 100% da vida
 - [ ] API de integração com CMMS/ERP (SAP PM, TOTVS, Engeman) — webhooks + REST
+- [ ] Janela de parada `PLN-03` proposta ao programar OS que para a máquina (maintenance_workflows.md §2) —
+  **fora do aceite do Sprint 4**: hoje o supervisor recebe o pedido de janela (`window_request`), mas a parada
+  planejada por máquina no calendário de produção (exceção por máquina + confirmação do supervisor + migration)
+  fica para o próximo sprint. Até lá a parada planejada é cadastrada à mão no calendário (Programação/Turnos).
 
 ## Fase 4 — Preditiva e IA ⬜
 - [ ] Previsão da data de troca a partir do ritmo de uso e do plano de produção

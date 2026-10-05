@@ -30,6 +30,16 @@ function fmtMeasure(m: LifeMeasure, v: number | null | undefined) {
   return m === "hours" ? `${formatDec1(v)} h` : formatInt(v);
 }
 
+const MEASURE_UNIT: Record<LifeMeasure, string> = { cycles: "ciclos", hours: "h", starts: "partidas" };
+
+/** Age of a component in this position (frozen at removal): "340.000 ciclos · 1.250,0 h"; zero shows as "0 ciclos · 0,0 h". */
+export function componentAgeLabel(c: Pick<Component, "usage_since_install">): string {
+  const u = c.usage_since_install;
+  const shown = MEASURES.filter((m) => (u?.[m] ?? 0) > 0);
+  const list = shown.length ? shown : (["cycles", "hours"] as LifeMeasure[]);
+  return list.map((m) => (m === "hours" ? `${formatDec1(u?.[m] ?? 0)} h` : `${formatInt(u?.[m] ?? 0)} ${MEASURE_UNIT[m]}`)).join(" · ");
+}
+
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <section className="space-y-3 border-b border-line py-4 first:pt-0 last:border-b-0">
@@ -143,7 +153,10 @@ function HistorySection({ positionId }: { positionId: string }) {
                   <p className="text-caption text-fg-subtle">
                     {c.serial_number ? `S/N ${c.serial_number} · ` : ""}
                     {formatDate(c.installed_at)} → {installed ? "hoje" : formatDate(c.removed_at)}
-                    {c.life_consumed_pct != null && ` · ${formatPct(c.life_consumed_pct)} da vida`}
+                  </p>
+                  <p className="text-caption text-fg-muted" data-testid="component-age">
+                    {installed ? "Idade" : "Idade na remoção"}: <span className="tabular">{componentAgeLabel(c)}</span>
+                    {c.life_consumed_pct != null ? ` · ${formatPct(c.life_consumed_pct)} da vida` : " · sem vida nominal cadastrada"}
                   </p>
                 </li>
               );

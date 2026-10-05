@@ -7,7 +7,7 @@ import { inputClass } from "@/components/ui/Field";
 import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { useMaintenanceKpis } from "@/hooks/useMaintenance";
 import { usePlant } from "@/hooks/useEfficiency";
-import { formatDec1, formatPct } from "@/utils/format";
+import { formatDec1, formatDec2, formatPct } from "@/utils/format";
 import { zonedToUtc } from "@/utils/period";
 import { EXCLUDED_REASON_LABEL, isoDay } from "@/utils/maintenance";
 import { useUrlFilters } from "./filters";
@@ -95,7 +95,7 @@ export default function KpisPage() {
             <KpiTile testId="kpi-pmp" label="PMP — manutenção planejada" value={d.pmp == null ? "—" : formatPct(d.pmp)}
               tone={d.pmp == null ? "neutral" : d.pmp >= 0.85 ? "ok" : d.pmp >= 0.6 ? "warn" : "danger"}
               hint={d.pmp == null ? `sem OS concluídas no período${d.pmp_reason ? ` (${d.pmp_reason})` : ""}` : "Horas planejadas ÷ horas totais das OS concluídas · meta ≥ 85 %"}
-              to={listLink(`state=completed&from=${range.from}&to=${range.to}`)} />
+              to={listLink(`completed_from=${encodeURIComponent(range.start)}&completed_to=${encodeURIComponent(range.stop)}`)} />
             <KpiTile testId="kpi-compliance" label="Cumprimento da programação" value={d.schedule_compliance == null ? "—" : formatPct(d.schedule_compliance)}
               tone={d.schedule_compliance == null ? "neutral" : d.schedule_compliance >= 0.9 ? "ok" : d.schedule_compliance >= 0.7 ? "warn" : "danger"}
               hint={d.schedule_compliance == null ? "sem OS programadas no período" : "OS concluídas no prazo ÷ OS programadas (semana congelada)"}
@@ -104,7 +104,7 @@ export default function KpisPage() {
               <p className="text-caption font-medium text-fg-muted">Backlog</p>
               <p data-testid="kpi-backlog" className="mt-1.5 text-display tabular text-fg">{formatDec1(d.backlog_hours)}<span className="ml-1 text-body text-fg-subtle">h</span></p>
               <p className="mt-1 text-caption text-fg-subtle">
-                {d.backlog_weeks == null ? "— capacidade da equipe não cadastrada" : `${formatDec1(d.backlog_weeks)} semana(s) de trabalho · capacidade ${formatDec1(d.crew_capacity_hours_per_week)} h/semana`}
+                {d.backlog_weeks == null ? "— capacidade da equipe não cadastrada" : `${formatDec2(d.backlog_weeks)} semana(s) de trabalho · capacidade ${formatDec1(d.crew_capacity_hours_per_week)} h/semana`}
               </p>
               {d.backlog_weeks != null && <BacklogBand weeks={d.backlog_weeks} />}
               <p className="mt-1 text-caption text-fg-subtle">Referência saudável: 2–4 semanas.</p>

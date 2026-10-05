@@ -104,6 +104,9 @@ export function notificationTarget(n: AppNotification, mobile: boolean): string 
   if (n.url) {
     const wo = /^\/maintenance\/work-orders\/([^/?#]+)/.exec(n.url)?.[1] ?? (n.url.startsWith("/maintenance/work-orders") ? n.work_order_id : null);
     if (mobile && wo) return `/m/work-orders/${wo}`;
+    // the phone has no failures screen: a failure/emergency notification opens the WO (or the list with the
+    // emergency calls to take)
+    if (mobile && /^\/maintenance\/failures/.test(n.url)) return n.work_order_id ? `/m/work-orders/${n.work_order_id}` : "/m/work-orders";
     if (!mobile && /^\/m\/work-orders\/([^/?#]+)/.test(n.url)) return n.url.replace(/^\/m\/work-orders\//, "/maintenance/work-orders/");
     return n.url;
   }

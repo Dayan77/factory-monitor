@@ -71,6 +71,11 @@ async def _api_token_user(token: str, request: Request, db: AsyncSession) -> Use
     now = datetime.now(timezone.utc)
     if row is None or row.revoked_at is not None or (row.expires_at is not None and row.expires_at <= now):
         raise exc
+    # the token acts on behalf of the admin who created it: it dies with that account (deactivated/removed)
+    creator_ok = row.created_by is not None and (await db.execute(select(User.id).where(
+        User.id == row.created_by, User.tenant_id == row.tenant_id, User.is_active.is_(True)))).first() is not None
+    if not creator_ok:
+        raise exc
     if request.method.upper() not in SAFE_METHODS and "write" not in (row.scopes or []):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token de API sem escopo 'write'.")
     await db.execute(update(ApiToken).where(ApiToken.id == row.id).values(last_used_at=now))

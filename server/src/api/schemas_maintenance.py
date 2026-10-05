@@ -271,8 +271,10 @@ class PushSubscribeIn(BaseModel):
     @field_validator("endpoint")
     @classmethod
     def _https(cls, v):
-        if not v.startswith("https://"):
-            raise ValueError("endpoint deve ser https.")
+        from ..notifications.webpush import endpoint_error
+        reason = endpoint_error(v)
+        if reason:
+            raise ValueError(reason)
         return v
 
 

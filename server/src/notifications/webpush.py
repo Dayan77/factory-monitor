@@ -119,6 +119,30 @@ class Vapid:
         return f"vapid t={header}.{claims}.{sig}, k={self.public_key_b64}"
 
 
+def endpoint_error(endpoint: str, allowed_hosts: Optional[str] = None) -> Optional[str]:
+    """None if `endpoint` is an https URL on a known push service host, else the reason (SSRF guard: the
+    server POSTs to this URL, so it must never point to an internal host)."""
+    if allowed_hosts is None:
+        from ..config import settings
+        allowed_hosts = settings.push_allowed_hosts
+    try:
+        p = urlsplit(endpoint)
+        port = p.port
+    except ValueError:
+        return "endpoint inválido."
+    if p.scheme != "https" or not p.hostname:
+        return "endpoint deve ser https."
+    if p.username or p.password or port not in (None, 443):
+        return "endpoint de push não pode ter credenciais nem porta."
+    host = p.hostname.lower().rstrip(".")
+    for pat in (h.strip().lower() for h in allowed_hosts.split(",") if h.strip()):
+        if pat.startswith("*.") and host.endswith(pat[1:]) and len(host) > len(pat) - 1:
+            return None
+        if host == pat:
+            return None
+    return "endpoint não pertence a um serviço de push conhecido."
+
+
 def vapid_from_settings() -> Optional[Vapid]:
     from ..config import settings
     try:
@@ -130,13 +154,16 @@ def vapid_from_settings() -> Optional[Vapid]:
 async def send(endpoint: str, p256dh: str, auth: str, payload: dict, vapid: Vapid, urgency: str = "normal",
                ttl_s: int = 3600, client: Optional[httpx.AsyncClient] = None) -> int:
     """Returns the push service HTTP status (201 = accepted; 404/410 = subscription gone)."""
+    reason = endpoint_error(endpoint)
+    if reason:
+        raise ValueError(reason)
     body = encrypt(json.dumps(payload, ensure_ascii=False).encode(), p256dh, auth)
     headers = {"Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", "TTL": str(ttl_s),
                "Urgency": urgency, "Authorization": vapid.authorization(endpoint)}
     if client is not None:
         r = await client.post(endpoint, content=body, headers=headers, timeout=10)
         return r.status_code
-    async with httpx.AsyncClient() as c:
+    async with httpx.AsyncClient(follow_redirects=False) as c:
         r = await c.post(endpoint, content=body, headers=headers, timeout=10)
         return r.status_code
 

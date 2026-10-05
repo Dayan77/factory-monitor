@@ -43,6 +43,12 @@ describe("notification target (each notification opens the screen that answers i
     expect(notificationTarget(n({ work_order_id: "wo-2" }), false)).toBe("/maintenance/work-orders?wo=wo-2");
     expect(notificationTarget(n({ type: "plan_due" }), false)).toBe("/maintenance/upcoming");
   });
+
+  it("failure / emergency links on the phone open the WO to take (no failures screen on /m)", () => {
+    expect(notificationTarget(n({ url: "/maintenance/failures/f-1", work_order_id: "wo-5" }), true)).toBe("/m/work-orders/wo-5");
+    expect(notificationTarget(n({ url: "/maintenance/failures/f-1" }), true)).toBe("/m/work-orders");
+    expect(notificationTarget(n({ url: "/maintenance/failures/f-1" }), false)).toBe("/maintenance/failures/f-1");
+  });
 });
 
 describe("normalization of server payloads", () => {

@@ -129,6 +129,8 @@ class WorkOrderHistory(Base):
     from_state:    Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     to_state:      Mapped[str]           = mapped_column(String(16), nullable=False)
     note:          Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # set when the action came from an API token (integration): `by` is then the token's creator
+    api_token_id:  Mapped[Optional[str]] = mapped_column(UUID(as_uuid=False), ForeignKey("api_tokens.id", ondelete="SET NULL"), nullable=True)
     recorded_at:   Mapped[datetime]      = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 

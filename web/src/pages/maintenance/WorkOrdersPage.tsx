@@ -38,7 +38,7 @@ const QUICK = [
   { value: "closed", label: "Encerradas" },
 ] as const;
 const TYPES: WoType[] = ["preventive", "predictive", "corrective", "improvement"];
-const KEYS = ["view", "line", "machine", "type", "assignee", "quick", "wo", "plan", "state", "from", "to"] as const;
+const KEYS = ["view", "line", "machine", "type", "assignee", "quick", "wo", "plan", "state", "from", "to", "completed_from", "completed_to"] as const;
 
 function WoCard({ wo, today, onOpen }: { wo: WorkOrder; today: string; onOpen: () => void }) {
   const names = useWoNames();
@@ -94,6 +94,12 @@ function Board({ list, today, onOpen }: { list: WorkOrder[]; today: string; onOp
       </div>
     </div>
   );
+}
+
+/** `completed_to` is exclusive (start of the next day): show the last included day. */
+function completedToLabel(iso: string): string {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? formatDate(iso) : formatDate(new Date(t - 1).toISOString());
 }
 
 type SortKey = "number" | "scheduled_for" | "state";
@@ -164,6 +170,8 @@ export default function WorkOrdersPage() {
     overdue: quick === "overdue" ? true : undefined,
     from: f.from || undefined,
     to: f.to || undefined,
+    completed_from: f.completed_from || undefined,
+    completed_to: f.completed_to || undefined,
   };
   const wos = useWorkOrders(query);
 
@@ -172,11 +180,11 @@ export default function WorkOrdersPage() {
     if (quick === "overdue") l = l.filter((w) => isWoOverdue(w, today));
     else if (quick === "done_today") l = l.filter((w) => w.state === "completed" && dayOf(w.completed_at) === today);
     else if (quick === "closed") l = l.filter((w) => w.state === "closed" || w.state === "cancelled");
-    else if (!f.state && !f.from) l = l.filter((w) => w.state !== "closed" && w.state !== "cancelled");
+    else if (!f.state && !f.from && !f.completed_from) l = l.filter((w) => w.state !== "closed" && w.state !== "cancelled");
     return l;
-  }, [wos.data, quick, today, f.state, f.from]);
+  }, [wos.data, quick, today, f.state, f.from, f.completed_from]);
 
-  const filtersActive = !!(f.line || f.machine || f.type || f.assignee || f.plan || f.state || f.from || quick);
+  const filtersActive = !!(f.line || f.machine || f.type || f.assignee || f.plan || f.state || f.from || f.completed_from || quick);
 
   return (
     <div className="mx-auto max-w-[96rem] space-y-5 animate-rise-in">
@@ -204,6 +212,7 @@ export default function WorkOrdersPage() {
           </select>
           {f.state && <Button size="sm" variant="ghost" onClick={() => set({ state: null })}>Estado: {WO_STATE_LABEL[f.state as WoState] ?? f.state} ✕</Button>}
           {(f.from || f.to) && <Button size="sm" variant="ghost" onClick={() => set({ from: null, to: null })}>Período: {formatDate(f.from)} – {formatDate(f.to)} ✕</Button>}
+          {(f.completed_from || f.completed_to) && <Button size="sm" variant="ghost" onClick={() => set({ completed_from: null, completed_to: null })}>Concluídas: {formatDate(f.completed_from)} – {completedToLabel(f.completed_to)} ✕</Button>}
           {f.plan && <Button size="sm" variant="ghost" onClick={() => set({ plan: null })}>Plano filtrado ✕</Button>}
         </div>
         <Pills label="Filtro rápido" items={QUICK} value={quick as (typeof QUICK)[number]["value"]} onChange={(v) => set({ quick: v || null })} />

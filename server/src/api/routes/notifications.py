@@ -127,8 +127,11 @@ async def subscribe(body: PushSubscribeIn, user: CurrentUser, db: DB):
                              p256dh=body.keys["p256dh"], auth=body.keys["auth"])
         db.add(s)
     else:
-        # same browser re-subscribing (possibly another user logged in on the team device)
-        s.tenant_id, s.user_id = user.tenant_id, user.id
+        if s.tenant_id != user.tenant_id:
+            # an endpoint is a browser's capability URL: never move it across tenants
+            raise HTTPException(status_code=409, detail="Esta inscrição de push pertence a outra conta.")
+        # same browser re-subscribing (another user of the same tenant logged in on the team device)
+        s.user_id = user.id
         s.p256dh, s.auth, s.last_error = body.keys["p256dh"], body.keys["auth"], None
     await db.commit()
     return {"id": s.id, "endpoint": s.endpoint}

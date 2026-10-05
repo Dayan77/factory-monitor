@@ -2,6 +2,7 @@
 
 const int = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
 const dec1 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const dec2 = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const compact = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
 
 /** 1234567 → "1.234.567" */
@@ -12,6 +13,11 @@ export function formatInt(n: number | null | undefined): string {
 /** 12.345 → "12,3" */
 export function formatDec1(n: number | null | undefined): string {
   return n == null || Number.isNaN(n) ? "—" : dec1.format(n);
+}
+
+/** 0.45 → "0,45" (backlog in weeks: kpis.md S4-7 reports two decimals). */
+export function formatDec2(n: number | null | undefined): string {
+  return n == null || Number.isNaN(n) ? "—" : dec2.format(n);
 }
 
 /** 1234567 → "1,2 mi" (for tight spaces; full value goes in a title). */

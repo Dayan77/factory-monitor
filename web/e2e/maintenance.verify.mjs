@@ -537,7 +537,7 @@ async function runDesktop(browser, theme) {
   check((await page.getByTestId("kpi-pmp").textContent()) === "68,4 %", "PMP 68,4 %");
   check((await page.getByTestId("kpi-compliance").textContent()) === "50,0 %", "schedule compliance 50,0 %");
   check((await page.getByTestId("kpi-backlog").textContent()).startsWith("18,0"), "backlog 18,0 h");
-  check(await page.getByText("0,5 semana(s)").isVisible() || await page.getByText(/0,4 semana|0,5 semana/).isVisible(), "backlog in weeks");
+  check(await page.getByText(/0,45 semana/).first().isVisible(), "backlog in weeks 0,45 (§7 item 5: two decimals)");
   check((await page.getByTestId("excluded-row").count()) === 2 && (await page.getByText(/^encaixe — /).isVisible()), "excluded OS-115/OS-121 with the reason");
   await shot(page, `kpis-${tag}`);
 

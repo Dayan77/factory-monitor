@@ -200,6 +200,10 @@ export interface WorkOrderQuery {
   overdue?: boolean;
   from?: string;
   to?: string;
+  /** completed_at ≥ (ISO instant). */
+  completed_from?: string;
+  /** completed_at < (ISO instant, exclusive). */
+  completed_to?: string;
 }
 
 export interface WorkOrderCreateBody {

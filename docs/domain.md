@@ -427,6 +427,10 @@ cada item e `docs/scenarios/test_scenario_e.py` é o oráculo. O dia a dia de qu
 - Invariante: plano com `consumed ≥ 0,8` tem **exatamente uma** OS em `draft … on_hold` (antes de `completed`).
   Se essa OS for cancelada (qualquer motivo) e o plano ainda estiver ≥ 0,8, uma nova `draft` é criada na hora
   (E: OS-116 cancelada por conflito com a produção → OS-122). Não se criam duplicatas a cada recálculo.
+- A invariante vale também para OS criada à mão com `plan_id`: enquanto o plano tem uma OS antes de `completed`,
+  criar outra é recusado (**409**). (E: a OS-101 do PL5 só é rascunhada em 30/10 14:30, depois da conclusão da
+  OS-099 às 14:00 — esclarecimento do Sprint 4; a versão anterior do cenário a rascunhava em 28/10, com a OS-099
+  ainda programada.)
 - Só a **conclusão** da OS do plano zera o plano (§5.4); `scheduled`/`in_progress` não (E: PL4 continua `due`
   com a OS-110 programada).
 

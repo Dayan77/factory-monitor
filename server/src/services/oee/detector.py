@@ -303,8 +303,16 @@ async def ensure_failure(db: AsyncSession, events: list[DowntimeEvent], failed_a
         db.add(fr)
         await db.flush()
     else:
+        was_restored = fr.restored_at
         fr.failed_at = failed_at
         fr.restored_at = restored_at
+        if restored_at is not None and was_restored != restored_at:
+            # machine back in production: integrations (CMMS/ERP) learn the restoration (failure.updated)
+            from .. import clock, webhooks
+            await webhooks.enqueue(db, fr.tenant_id, "failure.updated", {
+                "id": fr.id, "machine_id": fr.machine_id, "failed_at": clock.iso(fr.failed_at),
+                "restored_at": clock.iso(restored_at), "severity": fr.severity, "status": fr.status,
+                "downtime_event_id": fr.downtime_event_id, "work_order_id": fr.work_order_id})
     for e in events:
         e.failure_id = fr.id
     return fr

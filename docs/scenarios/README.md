@@ -425,7 +425,7 @@ PL3 é a pegadinha: `consumed` usa o gatilho de **maior %** (partidas, 0,82), ma
 
 | OS | Tipo | Programada p/ | Programada em | Situação em 01/12 | Horas (apont./est.) | PMP | Cumprimento |
 |---|---|---|---|---|---|---|---|
-| 101 | preventiva (PL5) | 03/11 | 29/10 | fechada 03/11 | 2,0 | planejada | no prazo |
+| 101 | preventiva (PL5) | 03/11 | 30/10 | fechada 03/11 | 2,0 | planejada | no prazo |
 | 103 | corretiva emergencial (falha F4, troca C-A1-2 → C-A1-3) | — | — | fechada 12/11 | 3,0 | **não planejada** | — |
 | 104 | preditiva | 10/11 | 06/11 | concluída 10/11 | 1,5 | planejada | no prazo |
 | 106 | corretiva programada | 18/11 | 13/11 | concluída **19/11** | 2,5 | planejada | **atrasada** |

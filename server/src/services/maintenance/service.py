@@ -13,12 +13,12 @@ from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import (Component, FailureRecord, Line, Machine, MaintenancePlan, MaintenanceSettings, Position,
-                       User, WorkOrder, WorkOrderHistory, WorkOrderLabor, WorkOrderReplacement)
+from ...models import (ApiToken, Component, FailureRecord, Line, Machine, MaintenancePlan, MaintenanceSettings,
+                       Position, User, WorkOrder, WorkOrderHistory, WorkOrderLabor, WorkOrderReplacement)
 from ...notifications import service as notif
 from .. import clock, webhooks
 from . import core
@@ -96,8 +96,13 @@ async def evaluate_plans(db: AsyncSession, tenant_id: str, plans: list[Maintenan
             u_now, u_win = pos_now.get(p.position_id, {}), pos_win.get(p.position_id, {})
         else:
             u_now, u_win = m_now.get(p.machine_id, {}), m_win.get(p.machine_id, {})
-        st = core.compute_plan_status(plan_intervals(p), p.last_reset_at, p.last_reset_usage or {}, u_now, u_win,
-                                      today, tz, tolerance=(p.tolerance_pct or 0) / 100.0, due_soon_at=cfg.due_soon_at)
+        try:
+            st = core.compute_plan_status(plan_intervals(p), p.last_reset_at, p.last_reset_usage or {}, u_now, u_win,
+                                          today, tz, tolerance=(p.tolerance_pct or 0) / 100.0,
+                                          due_soon_at=cfg.due_soon_at)
+        except Exception:  # noqa: BLE001 — one bad plan must not break the listing or the engine
+            log.exception("maintenance.plan.evaluate_error", tenant_id=tenant_id, plan_id=p.id)
+            st = None
         out.append(PlanEval(p, st, tz, today))
     return out
 
@@ -117,10 +122,15 @@ async def next_number(db: AsyncSession, tenant_id: str) -> int:
     return (cur or 0) + 1
 
 
-async def add_history(db: AsyncSession, wo: WorkOrder, at: datetime, by: Optional[str], from_state: Optional[str],
+async def add_history(db: AsyncSession, wo: WorkOrder, at: datetime, by, from_state: Optional[str],
                       to_state: str, note: Optional[str] = None) -> None:
+    """`by`: user id, None (system) or the acting User — an API-token principal is recorded with its token id."""
+    token_id = None
+    if isinstance(by, User):
+        token_id = getattr(by, "api_token_id", None)
+        by = by.id
     db.add(WorkOrderHistory(tenant_id=wo.tenant_id, work_order_id=wo.id, at=at, by=by, from_state=from_state,
-                            to_state=to_state, note=note))
+                            to_state=to_state, note=note, api_token_id=token_id))
     wo.state_changed_at = at
 
 
@@ -161,31 +171,40 @@ async def run_plan_engine(db: AsyncSession, tenant_id: str, plan_ids: Optional[l
     evals = await evaluate_plans(db, tenant_id, plans, now)
     open_wos = await open_plan_work_orders(db, tenant_id, [p.id for p in plans])
     for ev in evals:
-        p, st = ev.plan, ev.status
-        if st is None:
+        if ev.status is None:
             continue
-        old_state = p.state
-        p.state, p.consumed, p.evaluated_at = st.state, st.consumed, now
-        line_id = await machine_line(db, tenant_id, p.machine_id)
-        created = None
-        if st.consumed >= cfg.due_soon_at and p.id not in open_wos:
-            created = await create_plan_draft(db, p, at or now)
-            if created is not None:
-                open_wos[p.id] = created
-                await notify_draft(db, p, st, created, line_id)
-        if old_state != st.state and st.state in ("due", "overdue"):
-            users = await notif.users_with_roles(db, tenant_id, PLANNERS, line_id)
-            kind = "plan_due" if st.state == "due" else "plan_overdue"
-            await notif.notify(db, tenant_id, users, kind,
-                               f"{p.name}: {'vencido' if st.state == 'due' else 'além da tolerância'} "
-                               f"({st.consumed * 100:.0f} %)",
-                               body=f"Gatilho {st.consumed_trigger}.", link="/maintenance/upcoming",
-                               data={"plan_id": p.id, "state": st.state, "consumed": st.consumed}, line_id=line_id)
-            await webhooks.enqueue(db, tenant_id, "plan.due", {"plan_id": p.id, "name": p.name, "state": st.state,
-                                                                "consumed": st.consumed,
-                                                                "open_work_order_id": getattr(open_wos.get(p.id), "id", None)})
+        try:
+            async with db.begin_nested():
+                await _apply_plan_eval(db, tenant_id, cfg, ev, open_wos, at or now, now)
+        except Exception:  # noqa: BLE001 — errors are isolated per plan
+            log.exception("maintenance.plan.engine_error", tenant_id=tenant_id, plan_id=ev.plan.id)
     await db.flush()
     return evals
+
+
+async def _apply_plan_eval(db: AsyncSession, tenant_id: str, cfg, ev: PlanEval, open_wos: dict,
+                           at: datetime, now: datetime) -> None:
+    p, st = ev.plan, ev.status
+    old_state = p.state
+    p.state, p.consumed, p.evaluated_at = st.state, st.consumed, now
+    line_id = await machine_line(db, tenant_id, p.machine_id)
+    created = None
+    if st.consumed >= cfg.due_soon_at and p.id not in open_wos:
+        created = await create_plan_draft(db, p, at)
+        if created is not None:
+            open_wos[p.id] = created
+            await notify_draft(db, p, st, created, line_id)
+    if old_state != st.state and st.state in ("due", "overdue"):
+        users = await notif.users_with_roles(db, tenant_id, PLANNERS, line_id)
+        kind = "plan_due" if st.state == "due" else "plan_overdue"
+        await notif.notify(db, tenant_id, users, kind,
+                           f"{p.name}: {'vencido' if st.state == 'due' else 'além da tolerância'} "
+                           f"({st.consumed * 100:.0f} %)",
+                           body=f"Gatilho {st.consumed_trigger}.", link="/maintenance/upcoming",
+                           data={"plan_id": p.id, "state": st.state, "consumed": st.consumed}, line_id=line_id)
+        await webhooks.enqueue(db, tenant_id, "plan.due", {"plan_id": p.id, "name": p.name, "state": st.state,
+                                                            "consumed": st.consumed,
+                                                            "open_work_order_id": getattr(open_wos.get(p.id), "id", None)})
 
 
 async def notify_draft(db: AsyncSession, p: MaintenancePlan, st: core.PlanStatus, created: WorkOrder,
@@ -290,11 +309,14 @@ async def wo_out(db: AsyncSession, wo: WorkOrder, user: Optional[User] = None, f
                  names: Optional[dict] = None, today: Optional[date] = None) -> dict:
     hist, labor, reps = [], [], []
     if full:
-        rows = (await db.execute(select(WorkOrderHistory, User.name).outerjoin(User, User.id == WorkOrderHistory.by)
+        rows = (await db.execute(select(WorkOrderHistory, User.name, ApiToken.name)
+                                 .outerjoin(User, User.id == WorkOrderHistory.by)
+                                 .outerjoin(ApiToken, ApiToken.id == WorkOrderHistory.api_token_id)
                                  .where(WorkOrderHistory.work_order_id == wo.id, WorkOrderHistory.tenant_id == wo.tenant_id)
                                  .order_by(WorkOrderHistory.at, WorkOrderHistory.recorded_at))).all()
-        hist = [{"at": clock.iso(h.at), "by": h.by, "by_name": n, "from_state": h.from_state, "to_state": h.to_state,
-                 "note": h.note} for h, n in rows]
+        hist = [{"at": clock.iso(h.at), "by": h.by,
+                 "by_name": f"API: {tn}" if h.api_token_id else n, "api_token_id": h.api_token_id,
+                 "from_state": h.from_state, "to_state": h.to_state, "note": h.note} for h, n, tn in rows]
         labor = [{"id": l.id, "user_id": l.user_id, "hours": l.hours, "remaining_hours": l.remaining_hours,
                   "note": l.note, "at": clock.iso(l.at)}
                  for l in (await db.execute(select(WorkOrderLabor).where(
@@ -421,12 +443,20 @@ async def _apply_replacements(db: AsyncSession, wo: WorkOrder, at: datetime, now
         WorkOrderReplacement.applied_at.is_(None)).order_by(WorkOrderReplacement.created_at))).scalars().all()
     reset: list[str] = []
     for r in reps:
+        # lock the incoming component first: nothing is removed unless it can really be installed here
+        new = (await db.execute(select(Component).where(
+            Component.id == r.installed_component_id, Component.tenant_id == wo.tenant_id)
+            .with_for_update())).scalar_one_or_none()
+        if new is None:
+            raise _422("Componente novo da troca não existe mais.")
+        if new.removed_at is not None or new.position_id not in (None, r.position_id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "message": "O componente novo desta troca já foi instalado em outra posição (outra OS). "
+                           "Remova a troca e registre outro componente.",
+                "replacement_id": r.id, "component_id": new.id})
         old = (await db.execute(select(Component).where(
             Component.tenant_id == wo.tenant_id, Component.position_id == r.position_id,
             Component.removed_at.is_(None)).with_for_update())).scalar_one_or_none()
-        new = await db.get(Component, r.installed_component_id)
-        if new is None or new.tenant_id != wo.tenant_id:
-            raise _422("Componente novo da troca não existe mais.")
         if old is not None and old.id != new.id:
             if old.installed_at is not None and at < old.installed_at:
                 raise _422("Conclusão anterior à instalação do componente removido.")
@@ -436,8 +466,6 @@ async def _apply_replacements(db: AsyncSession, wo: WorkOrder, at: datetime, now
             r.removed_component_id = old.id
             await db.flush()
         if new.position_id is None:
-            if new.removed_at is not None:
-                raise _422("Componente novo já foi removido de outra posição (histórico).")
             new.position_id = r.position_id
             new.last_position_id = r.position_id
             new.installed_at = at
@@ -517,7 +545,7 @@ async def transition(db: AsyncSession, wo: WorkOrder, to: str, user: User, *, no
             raise _422("remaining_hours não pode ser negativo.")
         wo.remaining_hours = remaining_hours
     wo.state = to
-    await add_history(db, wo, at, user.id, frm, to, note)
+    await add_history(db, wo, at, user, frm, to, note)
     await db.flush()
 
     if to == "completed":
@@ -590,6 +618,34 @@ async def _check_assignee(db: AsyncSession, tenant_id: str, user_id: str) -> Use
     if u is None or u.tenant_id != tenant_id or not u.is_active:
         raise HTTPException(status_code=404, detail="assignee_id não encontrado(a).")
     return u
+
+
+async def engine_emergency_work_order(db: AsyncSession, f: FailureRecord, title: str, at: datetime) -> WorkOrder:
+    """Automatic emergency call (engine): the open emergency corrective WO of the stop, created if missing, so the
+    on-call technician can "Assumir" it on the phone (workflows §3). Reuses an open WO of the same stop/failure."""
+    q = select(WorkOrder).where(WorkOrder.tenant_id == f.tenant_id, WorkOrder.state.in_(core.OPEN_STATES))
+    conds = []
+    if f.work_order_id:
+        conds.append(WorkOrder.id == f.work_order_id)
+    if f.downtime_event_id:
+        conds.append(WorkOrder.downtime_event_id == f.downtime_event_id)
+    if conds:
+        existing = (await db.execute(q.where(or_(*conds)))).scalars().first()
+        if existing is not None:
+            return existing
+    number = await next_number(db, f.tenant_id)
+    wo = WorkOrder(tenant_id=f.tenant_id, number=number, type="corrective", urgency="emergency", state="open",
+                   position_id=f.position_id, machine_id=f.machine_id, downtime_event_id=f.downtime_event_id,
+                   failure_id=f.id, title=title, description="Aberta automaticamente: parada por falha de equipamento (EQP).",
+                   task_list=[], estimated_hours=0.0, stops_machine=False, created_by=None, created_at=at,
+                   requested_at=at)
+    db.add(wo)
+    await db.flush()
+    await add_history(db, wo, at, None, None, "open", "chamado emergencial automático")
+    if f.work_order_id is None:
+        f.work_order_id = wo.id
+    await webhooks.enqueue(db, f.tenant_id, "work_order.created", await wo_out(db, wo, full=False))
+    return wo
 
 
 async def emergency_call(db: AsyncSession, tenant_id: str, machine_id: str, title: str, body: Optional[str],

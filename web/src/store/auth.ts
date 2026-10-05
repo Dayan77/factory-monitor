@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { isAxiosError } from "axios";
 import { authApi } from "@/services/api";
+import { purgeOtherUsersSnapshots } from "@/services/offline";
 
 export interface AuthUser {
   id: string;
@@ -31,6 +32,9 @@ function cacheUser(u: AuthUser | null) {
     if (u) localStorage.setItem(USER_CACHE, JSON.stringify(u));
     else localStorage.removeItem(USER_CACHE);
   } catch { /* storage blocked */ }
+  // offline data is per user (services/offline.ts): a new user on a shared phone never sees the previous
+  // user's cached work orders; queued actions stay with their author.
+  if (u) purgeOtherUsersSnapshots();
 }
 
 export function cachedUser(): AuthUser | null {

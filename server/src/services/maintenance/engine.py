@@ -31,8 +31,8 @@ from .. import clock, webhooks
 from . import core
 from . import usage as mu
 from .kpis import components_life, default_reliability_window
-from .service import (PLANNERS, SUPERVISORS, emergency_call, machine_line, run_plan_engine, settings_for,
-                      wo_label)
+from .service import (PLANNERS, SUPERVISORS, emergency_call, engine_emergency_work_order, machine_line,
+                      run_plan_engine, settings_for, wo_label)
 
 log = structlog.get_logger()
 
@@ -48,14 +48,17 @@ async def tick_tenant(db: AsyncSession, tenant_id: str, now: Optional[datetime] 
     due = force_plans or last is None or (now - last).total_seconds() >= settings.maintenance_plan_recompute_s
     changed = usage_mark is not None and usage_mark != _last_usage_seen.get(tenant_id)
     if due or changed:
-        out["plans"] = len(await run_plan_engine(db, tenant_id, now=now))
-        out["component_alerts"] = await component_alerts(db, tenant_id, now)
+        plans = await _stage(db, tenant_id, "plans", lambda: run_plan_engine(db, tenant_id, now=now))
+        out["plans"] = len(plans) if plans is not None else 0
+        out["component_alerts"] = await _stage(db, tenant_id, "component_alerts",
+                                               lambda: component_alerts(db, tenant_id, now)) or 0
         _last_full[tenant_id] = now
         if usage_mark is not None:
             _last_usage_seen[tenant_id] = usage_mark
-    out["overdue"] = await overdue_work_orders(db, tenant_id, now)
-    out["emergency"] = await emergency_calls(db, tenant_id, now)
-    out["escalations"] = await escalations(db, tenant_id, now)
+    # each stage in its own savepoint: a bad plan can never suppress an emergency call or an escalation
+    out["emergency"] = await _stage(db, tenant_id, "emergency", lambda: emergency_calls(db, tenant_id, now)) or 0
+    out["escalations"] = await _stage(db, tenant_id, "escalations", lambda: escalations(db, tenant_id, now)) or 0
+    out["overdue"] = await _stage(db, tenant_id, "overdue", lambda: overdue_work_orders(db, tenant_id, now)) or 0
     await db.commit()
     await notif.deliver_pending(db)
     tz = await mu.tenant_tz(db, tenant_id)
@@ -63,6 +66,16 @@ async def tick_tenant(db: AsyncSession, tenant_id: str, now: Optional[datetime] 
     local = now.astimezone(tz)
     out["digests"] = await notif.send_digests(db, tenant_id, local.date(), local.hour, cfg.digest_hour_local)
     return out
+
+
+async def _stage(db: AsyncSession, tenant_id: str, name: str, fn):
+    """Run one engine stage inside a savepoint; log and swallow its error so the other stages still run."""
+    try:
+        async with db.begin_nested():
+            return await fn()
+    except Exception:  # noqa: BLE001 — isolation between stages is the point
+        log.exception("maintenance.engine.stage_error", tenant_id=tenant_id, stage=name)
+        return None
 
 
 async def component_alerts(db: AsyncSession, tenant_id: str, now: datetime) -> int:
@@ -137,11 +150,13 @@ async def emergency_calls(db: AsyncSession, tenant_id: str, now: datetime) -> in
                                {"id": f.id, "machine_id": f.machine_id, "failed_at": clock.iso(f.failed_at),
                                 "severity": f.severity, "downtime_event_id": f.downtime_event_id})
         mins = max(int((now - f.failed_at).total_seconds() // 60), 0)
+        # workflows §3: the call carries the emergency WO so the technician can take it on /m
+        wo = await engine_emergency_work_order(db, f, f"Chamado emergencial — {m.name if m else 'máquina'}", now)
         await emergency_call(db, tenant_id, f.machine_id,
                              f"Chamado emergencial: {m.name if m else 'máquina'} — falha há {mins} min",
-                             body="Parada por falha de equipamento (EQP).", link=f"/maintenance/failures/{f.id}",
+                             body="Parada por falha de equipamento (EQP).", link=f"/m/work-orders/{wo.id}",
                              data={"failure_id": f.id, "downtime_event_id": f.downtime_event_id,
-                                   "machine_id": f.machine_id})
+                                   "machine_id": f.machine_id, "work_order_id": wo.id})
         n += 1
     return n
 

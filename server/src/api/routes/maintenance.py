@@ -365,7 +365,7 @@ async def create_work_order(body: WorkOrderCreate, user: CurrentUser, db: DB):
                    requested_at=at if body.state == "open" else None)
     db.add(wo)
     await db.flush()
-    await ms.add_history(db, wo, at, user.id, None, body.state, None)
+    await ms.add_history(db, wo, at, user, None, body.state, None)
     if failure is not None and failure.work_order_id is None:
         failure.work_order_id = wo.id
     if core.is_emergency(wo.type, wo.urgency) and wo.state == "open":
@@ -540,9 +540,16 @@ async def add_replacement(wo_id: str, body: ReplacementIn, user: CurrentUser, db
     old = (await db.execute(select(Component).where(Component.tenant_id == tid, Component.position_id == pos.id,
                                                     Component.removed_at.is_(None)))).scalar_one_or_none()
     if body.new_component_id:
-        new = await _get(db, Component, body.new_component_id, tid, "new_component_id")
+        new = await _get(db, Component, body.new_component_id, tid, "new_component_id", lock=True)
         if new.position_id is not None or new.removed_at is not None:
             raise HTTPException(status_code=409, detail="O componente novo deve estar em estoque (nem instalado nem removido).")
+        claimed = (await db.execute(select(WorkOrder.number).join(
+            WorkOrderReplacement, WorkOrderReplacement.work_order_id == WorkOrder.id).where(
+            WorkOrderReplacement.tenant_id == tid, WorkOrderReplacement.installed_component_id == new.id,
+            WorkOrderReplacement.applied_at.is_(None), WorkOrder.state.in_(core.OPEN_STATES)))).scalars().first()
+        if claimed is not None:
+            raise HTTPException(status_code=409, detail=f"Este componente de estoque já está reservado para uma troca "
+                                                        f"na {ms.wo_label(claimed)}.")
     else:
         nc = body.new_component
         ctype = nc.component_type or pos.component_type.value
@@ -552,6 +559,9 @@ async def add_replacement(wo_id: str, body: ReplacementIn, user: CurrentUser, db
             raise HTTPException(status_code=422, detail="component_type inválido.")
         life = {k: v for k, v in (nc.nominal_life or {}).items() if k in ("cycles", "hours", "starts")
                 and isinstance(v, (int, float)) and v > 0}
+        if not life and old is not None and old.nominal_life and old.component_type == ctype_e \
+                and (nc.model or "").strip().lower() == (old.model or "").strip().lower():
+            life = dict(old.nominal_life)          # same model as the removed one → same nominal life
         new = Component(tenant_id=tid, component_type=ctype_e, manufacturer=nc.manufacturer, model=nc.model,
                         serial_number=nc.serial_number, nominal_life=life)
         db.add(new)

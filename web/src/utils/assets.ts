@@ -44,6 +44,7 @@ const RUL_REASON_LABEL: Record<string, string> = {
   no_nominal_life: "sem vida nominal cadastrada",
   no_recent_usage: "sem uso nos últimos 14 dias",
   insufficient_data: "histórico insuficiente (mín. 3 dias)",
+  beyond_horizon: "ritmo recente projeta além de 10 anos",
 };
 
 export function rulReasonLabel(reason: string | null | undefined): string {
