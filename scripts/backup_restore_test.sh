@@ -43,7 +43,9 @@ wait_pg() {
 }
 wait_influx() {
   for _ in $(seq 1 90); do
-    docker exec "$1" influx bucket list >/dev/null 2>&1 && return 0
+    # --host explícito: durante o setup o entrypoint sobe um influxd temporário na INFLUXD_INIT_PORT (9999) e o
+    # config do CLI aponta para ele; sem --host o "pronto" passa no servidor de init, que é derrubado em seguida
+    docker exec "$1" influx bucket list --host http://localhost:8086 >/dev/null 2>&1 && return 0
     sleep 1
   done
   docker logs "$1" | tail -20 >&2; die "influx $1 não ficou pronto"

@@ -184,11 +184,57 @@ def wait_events(api: Api, mid: str, params: dict) -> list[dict]:
     return evs
 
 
-def verify(api: Api, mid: str, line_id: str, ts) -> None:
+def wait_ingested(api: Api, tags: dict, ts) -> None:
+    """Barrier (mqtt mode): every published run/fault reading is in InfluxDB. Under a shared-broker backlog the
+    downtime events can look complete (UNK-01 is set by the shift-end rule on wall time) while the tail of the
+    shift (e.g. the 13:50 micro-stop) is still queued in the MQTT handler; verifying then is a harness race."""
+    want: dict[str, set] = {}
+    for tag, _v, at in readings(tags, ts):
+        if tag in (tags["run"], tags["fault"]):
+            want.setdefault(tag, set()).add(at)
+    t0 = time.time()
+    while True:
+        missing = 0
+        for tag, tss in want.items():
+            lo, hi = min(tss), max(tss)
+            pts = api.get("/api/sensors/history", params={"tag_id": tag, "window": "1s", "start": lo.isoformat(),
+                                                          "stop": (hi + timedelta(seconds=1)).isoformat()})["points"]
+            missing += len(tss) - len(pts)
+        if missing <= 0:
+            break
+        if time.time() - t0 > WAIT_S:
+            print(f"  WARNING: {missing} readings still not in InfluxDB after {WAIT_S:.0f} s")
+            return
+        time.sleep(5)
+    print(f"  all readings ingested after {time.time() - t0:.0f} s")
+
+
+def wait_settled(api: Api, mid: str, params: dict) -> None:
+    """Barrier (both modes): the detector re-derives provisional micro-stops and late data on every tick; wait
+    until the machine's OEE loss split is identical on two reads > settle + 1 tick apart."""
+    keys = ("micro_stop_count", "micro_stop_loss_s", "speed_loss_s", "adot_s", "data_coverage", "good", "scrap")
+    gap = float(os.getenv("DETECTOR_SETTLE_WAIT_S", "45"))   # downtime_settle_s 30 + tick 10 + margin
+    t0, prev = time.time(), None
+    while time.time() - t0 < WAIT_S:
+        o = api.get("/api/oee", params={"scope": "machine", "id": mid, **params})
+        cur = tuple(o.get(k) for k in keys)
+        if cur == prev:
+            print(f"  detector settled after {time.time() - t0:.0f} s")
+            return
+        prev = cur
+        time.sleep(gap)
+    print(f"  WARNING: OEE still changing after {WAIT_S:.0f} s")
+
+
+def verify(api: Api, mid: str, line_id: str, ts, tags: dict | None = None) -> None:
     start, end = ts(C["shift"]["start_utc"]), ts(C["shift"]["end_utc"])
     params = {"start": start.isoformat(), "stop": end.isoformat()}
+    if tags:
+        print("\n[ingest] waiting for the MQTT backlog to drain")
+        wait_ingested(api, tags, ts)
     print(f"\n[events] window {start.isoformat()} → {end.isoformat()}")
     evs = wait_events(api, mid, params)
+    wait_settled(api, mid, params)
     eq("downtime event starts (local)", [local(e["start"]) for e in evs], [d["from_local"] for d in X["downtime_events"]])
     eq("downtime event durations", [e["duration_s"] for e in evs], [d["duration_s"] for d in X["downtime_events"]])
     by = {local(e["start"]): e for e in evs}
@@ -278,8 +324,9 @@ def main() -> int:
             json.dump(ids, sys.stdout)
             print()
             return 0
-        mid, line_id = ids["machine"], ids["line"]
+        mid, line_id, tags = ids["machine"], ids["line"], ids["tags"]
     else:
+        tags = None
         ts = shift_fn(int(os.getenv("SHIFT_DAYS", "2")))
         if os.getenv("TENANT_EMAIL"):
             api.login(os.environ["TENANT_EMAIL"], os.getenv("TENANT_PASSWORD", "QaGolden#2026"))
@@ -293,7 +340,7 @@ def main() -> int:
             print(f"machine {name!r}: {len(ms)} matches")
             return 2
         mid, line_id = ms[0]["id"], ms[0]["line_id"]
-    verify(api, mid, line_id, ts)
+    verify(api, mid, line_id, ts, tags)
     bad = [n for ok, n in results if not ok]
     print(f"\n{len(results) - len(bad)}/{len(results)} checks passed")
     return 1 if bad else 0

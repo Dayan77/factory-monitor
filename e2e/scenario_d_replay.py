@@ -202,11 +202,40 @@ def unshift_local(ev_local: str) -> str:
     return (datetime.strptime(ev_local, "%Y-%m-%d %H:%M") + SH).strftime("%Y-%m-%d %H:%M")
 
 
+def wait_ingested(api: Api, ids: dict) -> None:
+    """Barrier: every published run/fault reading is in InfluxDB (the MQTT handler may still be draining a
+    backlog long after the downtime events look complete — the tail after the last event, e.g. the last
+    micro-stop, would be missed), then the detector settles (downtime_settle_s) and ticks again."""
+    want: dict[str, set] = {}
+    for tag, _v, at in readings(ids["tags"]):
+        if tag in (ids["tags"]["run"], ids["tags"]["fault"]):
+            want.setdefault(tag, set()).add(at)
+    t0 = time.time()
+    while True:
+        missing = 0
+        for tag, tss in want.items():
+            lo, hi = min(tss), max(tss)
+            pts = api.get("/api/sensors/history", params={"tag_id": tag, "window": "1s", "start": lo.isoformat(),
+                                                          "stop": (hi + timedelta(seconds=1)).isoformat()})["points"]
+            missing += len(tss) - len(pts)       # one 1-s window per reading (readings are ≥ 10 s apart)
+        if missing <= 0:
+            break
+        if time.time() - t0 > WAIT_S:
+            print(f"  WARNING: {missing} readings still not in InfluxDB after {WAIT_S:.0f} s")
+            return
+        time.sleep(5)
+    settle = float(os.getenv("DETECTOR_SETTLE_WAIT_S", "60"))   # downtime_settle_s 30 + 2 ticks of 10 s + margin
+    print(f"  all readings ingested after {time.time() - t0:.0f} s; waiting {settle:.0f} s for the detector")
+    time.sleep(settle)
+
+
 def verify(api: Api, ids: dict) -> None:
     q = D["query"]
     start, stop = ts(q["start_utc"]), ts(q["stop_utc"])
     win = {"start": start.isoformat(), "stop": stop.isoformat()}
     mid, lid = ids["machines"][OUT], ids["line"]
+    print("\n[ingest] waiting for the MQTT backlog to drain")
+    wait_ingested(api, ids)
     want = sorted(e["from_local"] for e in D["downtime_events"])
     print(f"\n[events] window {start.isoformat()} → {stop.isoformat()}")
     t0, evs = time.time(), []

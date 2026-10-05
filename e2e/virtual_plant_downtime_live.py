@@ -5,10 +5,12 @@ The virtual plant at --speed N stamps readings with the HOST clock, so a stop of
 seconds on the server. Expected on the server, per machine:
 * a downtime EVENT for every stop whose real duration ≥ the machine threshold (120 s), after merging stops less
   than 10 s (real) apart (C22–C24); everything shorter (≥ 1 s debounce) is a MICRO-STOP, never an event;
-* every event opened live (WebSocket action 'open' received before its end) and closed live ('close').
+* every event opened live (WebSocket action 'open' received before its end) and closed live ('close'); an event
+  ending < LIVE_SLACK_S after crossing the threshold may be first seen closed → 'close' only (detector tick).
 Ground-truth stops = faults + setups + micro-stops + starved/blocked + the plant's calendar breaks (sim time).
 
-Env: API (http://localhost:8176), VP_STATE (http://127.0.0.1:8189/state), PLANT_JSON (edge/config/plant.json),
+Env: API (http://localhost:8176), VP_STATE (http://127.0.0.1:8189/state), PLANT_JSON (edge/config/plant.json: the
+plant's OWN sim-time calendar — not a provisioning map whose shifts were rewritten to real-time server shifts),
 WS_LOG (JSON lines of 'downtime' socket messages), SPEED (20), START_TIME (06:00, the plant's --start-time),
 TOL_S (5, real seconds), EMAIL/PASSWORD. Exit 0 = every check passed.
 """
@@ -26,6 +28,8 @@ VP = os.getenv("VP_STATE", "http://127.0.0.1:8189/state")
 SPEED = float(os.getenv("SPEED", "20"))
 TOL = float(os.getenv("TOL_S", "5"))
 THRESH, MERGE, DEBOUNCE = float(os.getenv("THRESH_S", "120")), 10.0, 1.0
+# detector tick (DOWNTIME_TICK_S=10) + finalize delay (DOWNTIME_FINALIZE_DELAY_S=5) + 2 s margin
+LIVE_SLACK_S = float(os.getenv("LIVE_SLACK_S", "17"))
 NAMES = {"usinagem.torno": "Torno CNC", "usinagem.centro": "Centro de Usinagem", "montagem.robo": "Robô de Solda",
          "montagem.fixacao": "Estação de Fixação", "montagem.transportador": "Transportador de Saída"}
 SB = [(datetime.fromisoformat(a), datetime.fromisoformat(b)) for a, b in json.loads(os.getenv("SERVER_BREAKS", "[]"))]
@@ -170,14 +174,25 @@ def main() -> int:
             acts = ws_ids.get(e["id"], [])
             opened = [rx for a, rx, _ in acts if a == "open"]
             closed = [rx for a, rx, _ in acts if a == "close"]
+            # the detector ticks every DOWNTIME_TICK_S and reads up to now − DOWNTIME_FINALIZE_DELAY_S: a stop that
+            # ends less than tick + finalize after crossing the threshold may be first seen already closed, and a
+            # new event first seen closed is broadcast once as 'close' (detector._upsert_events) — no 'open' then
+            if (e["duration_s"] or 0) < THRESH + LIVE_SLACK_S and closed and not opened:
+                continue
             if not opened or not closed:
                 not_live.append((e["start"][11:19], "open" if opened else "-", "close" if closed else "-"))
             elif e["end"] and datetime.fromisoformat(opened[0]) > datetime.fromisoformat(e["end"]):
-                not_live.append((e["start"][11:19], "opened only after it ended"))
+                # same tick + finalize window: the tick that first saw the stop past the threshold read data only up
+                # to now − DOWNTIME_FINALIZE_DELAY_S, so a short event can be broadcast 'open' just after its real end
+                if (e["duration_s"] or 0) >= THRESH + LIVE_SLACK_S or (
+                        datetime.fromisoformat(opened[0]) - datetime.fromisoformat(e["end"])).total_seconds() > LIVE_SLACK_S:
+                    not_live.append((e["start"][11:19], "opened only after it ended"))
         check(not not_live, f"{name}: every event opened live and closed over the WebSocket", not_live)
         # micro-stops: whole run (hour-aligned window, D7), every truth stop < 120 s real counted once, none an event
+        # a stop entirely inside a server break is planned downtime, not a micro-stop (same rule as `planned` above)
         all_micro = [(a, b) for a, b in union_merged(stops) if DEBOUNCE <= (b - a) / SPEED < THRESH - TOL
-                     and (b - a) / SPEED and b < sim_now - 30 * SPEED]
+                     and (b - a) / SPEED and b < sim_now - 30 * SPEED
+                     and not any(bs <= real(a) and real(b) <= be for bs, be in SB)]
         w0 = t0.replace(minute=0, second=0, microsecond=0)
         o = httpx.get(f"{API}/api/oee", headers=h, params={"scope": "machine", "id": m["id"], "start": w0.isoformat(),
                                                             "stop": datetime.now(timezone.utc).isoformat()}).json()
