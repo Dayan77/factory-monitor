@@ -368,10 +368,11 @@ async def create_work_order(body: WorkOrderCreate, user: CurrentUser, db: DB):
     await ms.add_history(db, wo, at, user, None, body.state, None)
     if failure is not None and failure.work_order_id is None:
         failure.work_order_id = wo.id
+    call = None
     if core.is_emergency(wo.type, wo.urgency) and wo.state == "open":
         m = await db.get(Machine, machine_id)
         title = wo.title if wo.title.startswith("Chamado emergencial") else f"Chamado emergencial: {m.name} — {wo.title}"
-        await ms.emergency_call(db, tid, machine_id, title,
+        call = await ms.emergency_call(db, tid, machine_id, title,
                                 body=body.description, link=f"/m/work-orders/{wo.id}",
                                 data={"work_order_id": wo.id, "machine_id": machine_id,
                                       "downtime_event_id": wo.downtime_event_id}, exclude_user=user.id)
@@ -381,13 +382,18 @@ async def create_work_order(body: WorkOrderCreate, user: CurrentUser, db: DB):
         await ms._notify_assignee(db, wo, True, False)
     await webhooks.enqueue(db, tid, "work_order.created", await ms.wo_out(db, wo, full=False))
     await _commit(db)
-    return await ms.wo_out(db, wo, user)
+    out = await ms.wo_out(db, wo, user)
+    if call is not None:
+        out["emergency_call"] = call.as_dict()     # who was reached — the caller is told when nobody was
+    return out
 
 
 @wo_router.post("/emergency-call", status_code=201)
 async def emergency_call(body: EmergencyCallIn, user: CurrentUser, db: DB):
     """"Chamar manutenção": emergency corrective WO (open) linked to the stop and its failure draft; notifies
-    the on-call technicians of the line (push with sound). Returns the existing open one if already called."""
+    the on-call technicians of the line (push with sound; without on-call coverage it escalates to planners/admins).
+    The response carries `emergency_call: {notified_count, on_call_technicians, fallback, warning}`; an already
+    open call for the stop is returned with `already_open: true` (nobody is notified again)."""
     if not (user.role_set & {"technician", "production_supervisor", "operator", "maintenance_planner", "manager",
                              "admin", "superadmin"}):
         raise HTTPException(status_code=403, detail="Permissão insuficiente.")
@@ -398,7 +404,7 @@ async def emergency_call(body: EmergencyCallIn, user: CurrentUser, db: DB):
             WorkOrder.tenant_id == tid, WorkOrder.downtime_event_id == ev.id,
             WorkOrder.state.in_(core.OPEN_STATES)))).scalars().first()
         if existing is not None:
-            return await ms.wo_out(db, existing, user)
+            return {**(await ms.wo_out(db, existing, user)), "already_open": True}
     machine_id = ev.machine_id if ev else body.machine_id
     if not machine_id:
         raise HTTPException(status_code=422, detail="Informe downtime_event_id ou machine_id.")

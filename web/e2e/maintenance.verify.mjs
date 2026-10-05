@@ -293,7 +293,8 @@ function makeBackend(user) {
     if (p === "/api/work-orders/emergency-call") {
       const w = wo({ id: `wo-${st.seq}`, number: `OS-${st.seq++}`, type: "corrective", urgency: "emergency", state: "open", machine_id: body.machine_id, downtime_event_id: body.downtime_event_id, title: body.title, history: [{ at: iso(Date.now()), by: user.id, from_state: null, to_state: "open", note: body.note }] });
       st.wos.push(w);
-      return json(out(w, user), 201);
+      // response contract since the no-on-call fix: who was actually reached (maintenance_workflows §4)
+      return json({ ...out(w, user), emergency_call: { notified_count: 2, on_call_technicians: 1, fallback: false, warning: null } }, 201);
     }
     const mWo = /^\/api\/work-orders\/([^/]+)(?:\/([a-z-]+))?$/.exec(p);
     if (mWo) {
@@ -627,6 +628,7 @@ async function runSupervisor(browser, theme) {
   await page.getByTestId("call-maintenance").first().waitFor();
   await page.getByTestId("call-maintenance").first().click();
   await page.getByText(/Manutenção chamada: OS-\d+/).waitFor();
+  check(await page.getByTestId("call-maintenance-result").getAttribute("data-tone") === "ok" && /1 técnico de plantão notificado/.test(await page.getByTestId("call-maintenance-result").innerText()), "call result reports the on-call technician reached");
   const call = lastLog(be, (l) => l.path === "/api/work-orders/emergency-call");
   check(call?.body.downtime_event_id === "d-2" && call.body.machine_id === "m-rob", "Chamar manutenção → POST /work-orders/emergency-call {downtime_event_id}");
   await shot(page, `call-maintenance-${theme}`);

@@ -29,7 +29,10 @@ ap.add_argument("--control", default="http://127.0.0.1:7072")
 ap.add_argument("--sub", required=True, help="JSON with p256dh/auth/secret (made by the QA setup)")
 ap.add_argument("--recv-log", required=True)
 ap.add_argument("--state", required=True)
-ap.add_argument("--push-endpoint", default="https://localhost:9443/push/qa-tech")
+ap.add_argument("--push-endpoint", default="https://localhost/push/qa-tech",
+                help="push endpoints must be https without a port and on PUSH_ALLOWED_HOSTS: run the server with "
+                     "PUSH_ALLOWED_HOSTS=localhost (and SSL_CERT_FILE trusting the receiver's cert) and "
+                     "receiver.py --push-port 443")
 ap.add_argument("--webhook-url", default="http://127.0.0.1:9180/hook")
 args = ap.parse_args()
 SUB = json.loads(Path(args.sub).read_text())

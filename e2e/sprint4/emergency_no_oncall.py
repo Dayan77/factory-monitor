@@ -37,6 +37,9 @@ fails = []
 new = [n for u in (adm, pl) for n in c.get("/api/notifications/", headers=u).json()["items"]
        if n["id"] not in ids_before and n["kind"] == "emergency_call"]
 hint = {k: wo.get(k) for k in ("notified", "recipients", "notified_count", "warning") if k in wo}
+call = wo.get("emergency_call") or {}
+if call.get("on_call_technicians") == 0 and call.get("warning"):
+    hint["emergency_call"] = call                    # fallback escalation reported to the caller
 ok = bool(new) or bool(hint)
 print(("  ✓ " if ok else "  ✗ ") + f"someone is reached or the caller is told nobody was (new emergency notifications for admin/planner: {len(new)}; response hints: {hint})")
 if r.status_code in (200, 201):

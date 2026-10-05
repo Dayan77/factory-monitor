@@ -45,7 +45,7 @@ async def test_grouping_and_area_isolation(client, m):
         # emergency call of a line-1 machine: on-call technicians of line 1 + its supervisor only
         from src.services.maintenance.service import emergency_call
         n = await emergency_call(s, m.id, m.machines["Robô de Solda"], "Chamado emergencial: Robô", None, "/x", {})
-        assert n == 2
+        assert (n.notified, n.on_call_technicians, n.fallback, n.warning) == (2, 1, False, None)
         # recipients of another tenant are never notified, even if passed by mistake
         foreign = await notif.users_with_roles(s, other.id, ("maintenance_planner",))
         assert await notif.notify(s, m.id, foreign, "wo_on_hold", "x") == []
@@ -303,6 +303,72 @@ async def test_call_maintenance_from_downtime(client, m):
     assert d["state"] == "in_progress"
     f2 = await api(client, "GET", f"/api/failures/{f.id}", m.h("technician"))
     assert f2["work_order_id"] == wo["id"] and f2["repair_started_at"]
+
+
+# ── emergency call on a line without on-call coverage (QA S4: nobody reached, caller told it worked) ──
+
+async def test_emergency_call_without_on_call_escalates_and_reports(client, m):
+    """Prensa L2 (line 2) has no on-call technician and no supervisor: the call escalates to planners /
+    managers / admins of the area, and the response says nobody on call was reached."""
+    wo = await api(client, "POST", "/api/work-orders/emergency-call", m.h("operator"), 201,
+                   json={"machine_id": m.machines["Prensa L2"], "title": "Prensa parada"})
+    call = wo["emergency_call"]
+    assert call["fallback"] is True and call["on_call_technicians"] == 0
+    assert call["notified_count"] == 3                       # planner + manager + admin (none restricted to a line)
+    assert "plantão" in call["warning"]
+    for role in ("maintenance_planner", "manager", "admin"):
+        items = (await api(client, "GET", "/api/notifications/", m.h(role)))["items"]
+        assert [i["kind"] for i in items] == ["emergency_call"], role
+        assert items[0]["data"]["work_order_id"] == wo["id"] and items[0]["data"]["no_on_call"] is True
+    for role in ("technician", "production_supervisor"):     # line-1 people are not called for line 2
+        assert (await api(client, "GET", "/api/notifications/", m.h(role)))["items"] == []
+    # a covered line keeps the normal recipients and no warning
+    ok = await api(client, "POST", "/api/work-orders/emergency-call", m.h("operator"), 201,
+                   json={"machine_id": m.machines["Robô de Solda"]})
+    assert ok["emergency_call"] == {"notified_count": 2, "on_call_technicians": 1, "fallback": False, "warning": None}
+    assert [i["kind"] for i in (await api(client, "GET", "/api/notifications/", m.h("maintenance_planner")))["items"]] \
+        == ["emergency_call"]                                # planner not called again for the covered line
+
+
+async def test_emergency_call_reaching_nobody_is_reported(client, m):
+    from sqlalchemy import update
+    from src.db import AsyncSessionLocal
+    from src.models import User
+    async with AsyncSessionLocal() as s:
+        ids = [m.users[r]["id"] for r in ("maintenance_planner", "manager")]
+        await s.execute(update(User).where(User.id.in_(ids)).values(is_active=False))
+        await s.commit()
+    # the admin is the only fallback and is the caller himself → nobody reached, and the response says so
+    wo = await api(client, "POST", "/api/work-orders/emergency-call", m.h("admin"), 201,
+                   json={"machine_id": m.machines["Prensa L2"]})
+    assert wo["emergency_call"]["notified_count"] == 0 and wo["emergency_call"]["fallback"] is True
+    assert wo["emergency_call"]["warning"].startswith("Ninguém foi notificado")
+    # a non-emergency WO carries no call report
+    again = await api(client, "POST", "/api/work-orders/", m.h("admin"), 201,
+                      json={"type": "corrective", "urgency": "deferred", "state": "open",
+                            "machine_id": m.machines["Prensa L2"], "title": "não emergencial"})
+    assert "emergency_call" not in again
+
+
+async def test_engine_emergency_call_without_on_call_reaches_planner(client, m):
+    from src.db import AsyncSessionLocal
+    from src.models import DowntimeEvent, FailureRecord
+    from src.services.maintenance import engine
+    mid = m.machines["Prensa L2"]
+    async with AsyncSessionLocal() as s:
+        ev = DowntimeEvent(tenant_id=m.id, machine_id=mid, start=NOW() - timedelta(minutes=5), source="auto_fault",
+                           suggested_reason_code="EQP-01", stop_start=NOW() - timedelta(minutes=5))
+        s.add(ev)
+        await s.flush()
+        s.add(FailureRecord(tenant_id=m.id, machine_id=mid, downtime_event_id=ev.id, failed_at=ev.start,
+                            severity="critical", status="draft"))
+        await s.commit()
+    async with AsyncSessionLocal() as s:
+        assert await engine.emergency_calls(s, m.id, NOW()) == 1
+        await s.commit()
+    for role in ("maintenance_planner", "manager", "admin"):
+        kinds = [i["kind"] for i in (await api(client, "GET", "/api/notifications/", m.h(role)))["items"]]
+        assert "emergency_call" in kinds, role
 
 
 # ── webhooks ─────────────────────────────────────────────────────────────────

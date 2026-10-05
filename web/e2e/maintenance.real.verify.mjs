@@ -99,7 +99,23 @@ try {
   {
     const tTok = await token("tecnico@factory-monitor.com", process.env.TECH_PASSWORD ?? "Tecnico@1234");
     const mine = (await api("GET", "/api/work-orders/?assignee_id=me&state=scheduled", tTok)).data;
-    const target = mine.find((w) => w.task_list.length >= 2) ?? mine[0];
+    let target = mine.find((w) => w.task_list.length >= 2);
+    if (!target) {
+      // precondition made explicit: a WO scheduled today for the technician with a 2-item checklist (the dev
+      // seed's scheduled WOs have no checklist), created through the planner API.
+      const pTok = await token("planejador@factory-monitor.com", process.env.PLANNER_PASSWORD ?? "Planner@1234");
+      const me = (await api("GET", "/api/auth/me", tTok)).data;
+      const machine = (await api("GET", "/api/machines/", pTok)).data.find((m) => !me.line_ids?.length || me.line_ids.includes(m.line_id));
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Manaus" });
+      let w = (await api("POST", "/api/work-orders/", pTok, { type: "preventive", title: `QA e2e: checklist offline ${Date.now()}`, machine_id: machine.id,
+        estimated_hours: 1, task_list: [{ text: "Verificar pressão" }, { text: "Inspecionar mangueiras" }] })).data;
+      for (const to of ["approved", "scheduled"]) {
+        if (w.state === "scheduled") break;
+        if (to === "approved" && w.state !== "open") continue;
+        w = (await api("POST", `/api/work-orders/${w.id}/transition`, pTok, { to, ...(to === "scheduled" ? { scheduled_for: today, assignee_id: me.id } : {}) })).data;
+      }
+      target = w;
+    }
     check(!!target, `a scheduled WO assigned to the technician (${target?.number ?? "none"})`);
     if (target) {
       const { context, page, errors } = await newPage(browser, { width: 360, height: 740 }, true);

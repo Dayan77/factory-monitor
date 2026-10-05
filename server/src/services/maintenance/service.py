@@ -30,6 +30,7 @@ CLOCK_SKEW = timedelta(minutes=5)
 PLANNERS = ("maintenance_planner", "manager")
 SUPERVISORS = ("production_supervisor",)
 TECHNICIANS = ("technician",)
+ADMINS = ("admin",)
 
 
 def wo_label(number: int) -> str:
@@ -648,13 +649,49 @@ async def engine_emergency_work_order(db: AsyncSession, f: FailureRecord, title:
     return wo
 
 
+@dataclass(frozen=True)
+class EmergencyCallResult:
+    """Who an emergency call reached. `fallback` = no on-call technician covers the line, so the planners /
+    managers and admins of the area were called instead; `notified == 0` means nobody was reached and the caller
+    must be told (CLAUDE.md: never report a success that did not happen)."""
+    notified: int
+    on_call_technicians: int
+    fallback: bool
+
+    @property
+    def warning(self) -> Optional[str]:
+        if self.notified == 0:
+            return "Ninguém foi notificado: não há técnico de plantão nem responsável cadastrado para esta linha. Avise por rádio/telefone."
+        if self.on_call_technicians == 0:
+            return "Não há técnico de plantão nesta linha: o chamado foi enviado ao planejamento/gestão para acionar alguém."
+        return None
+
+    def as_dict(self) -> dict:
+        return {"notified_count": self.notified, "on_call_technicians": self.on_call_technicians,
+                "fallback": self.fallback, "warning": self.warning}
+
+
 async def emergency_call(db: AsyncSession, tenant_id: str, machine_id: str, title: str, body: Optional[str],
-                         link: str, data: dict, exclude_user: Optional[str] = None) -> int:
-    """Push + sound to the on-call technicians of the machine's line and its supervisors (cannot be muted)."""
+                         link: str, data: dict, exclude_user: Optional[str] = None) -> EmergencyCallResult:
+    """Push + sound to the on-call technicians of the machine's line (technicians without a line restriction
+    cover every line) and its supervisors (cannot be muted). When no on-call technician covers the line, the call
+    escalates to the planners / managers of the area and the tenant admins, so a stopped machine is never left
+    with nobody called."""
     line_id = await machine_line(db, tenant_id, machine_id)
-    techs = await notif.users_with_roles(db, tenant_id, TECHNICIANS, line_id, on_call=True)
+    techs = [u for u in await notif.users_with_roles(db, tenant_id, TECHNICIANS, line_id, on_call=True)
+             if u.id != exclude_user]
     sups = await notif.users_with_roles(db, tenant_id, SUPERVISORS, line_id)
-    users = [u for u in techs + sups if u.id != exclude_user]
+    users = techs + sups
+    fallback = not techs
+    if fallback:
+        users += await notif.users_with_roles(db, tenant_id, PLANNERS + ADMINS, line_id)
+    users = [u for u in users if u.id != exclude_user]
     ns = await notif.notify(db, tenant_id, users, "emergency_call", title, body=body, link=link,
-                            data={**data, "sound": True}, line_id=line_id)
-    return len(ns)
+                            data={**data, "sound": True, "no_on_call": fallback}, line_id=line_id)
+    reached = {n.user_id for n in ns}
+    res = EmergencyCallResult(notified=len(reached), on_call_technicians=sum(1 for u in techs if u.id in reached),
+                              fallback=fallback)
+    if res.on_call_technicians == 0:
+        log.warning("emergency_call_no_on_call", tenant_id=tenant_id, machine_id=machine_id, line_id=line_id,
+                    notified=res.notified)
+    return res

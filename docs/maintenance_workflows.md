@@ -155,7 +155,10 @@ leitura de QR code da posição/componente (etiqueta na máquina com o `id` da p
 
 - **Parada por falha**: a parada `EQP-*` aparece em Paradas; o supervisor (ou o operador) toca **"Chamar
   manutenção"** → cria a solicitação/OS emergencial ligada à parada e à falha rascunho e notifica os técnicos de
-  plantão da área. A parada continua contando no OEE como `EQP-*` (disponibilidade) até a máquina voltar.
+  plantão da área (sem plantão na linha, escala para planejamento/gestão e admins). A resposta informa quem foi
+  avisado (`emergency_call.notified_count`, `on_call_technicians`, `warning`) e a tela nunca mostra "Manutenção
+  chamada" quando nenhum técnico de plantão foi notificado: aviso "ninguém de plantão nesta linha" (ou alerta
+  "ninguém foi notificado — avise por rádio/telefone"). A parada continua contando no OEE como `EQP-*` (disponibilidade) até a máquina voltar.
 - **Defeito sem parada** (vazamento de ar, ruído): **"Solicitar manutenção"** a partir da máquina/posição (QR) com
   foto → OS `open` para o planejador; não é falha enquanto não houver perda de função (domain.md §5.5).
 - **Liberação**: quando o técnico conclui uma OS que parou a máquina, o supervisor confirma "máquina liberada e
@@ -179,7 +182,7 @@ leitura de QR code da posição/componente (etiqueta na máquina com o `id` da p
 | Plano `due` / `overdue` | planejador, gerente | sino + e-mail | na mudança de estado |
 | Componente ≥ 80 % / ≥ 100 % da vida | planejador | sino + resumo diário | na mudança |
 | OS atribuída / reprogramada | técnico | push | na hora |
-| Parada `EQP-*` aberta / "chamar manutenção" | técnicos de plantão da área, supervisor | push com som | na hora (após o limiar de parada) |
+| Parada `EQP-*` aberta / "chamar manutenção" | técnicos de plantão da área, supervisor; **sem técnico de plantão na linha**: planejador/gestor da área e admins (fallback) | push com som | na hora (após o limiar de parada) |
 | Falha ainda aberta há > 2 × MTTR da posição | planejador, supervisor | push | escalonamento |
 | OS vencida | planejador, técnico atribuído | sino + resumo diário | 00:00 local do dia seguinte a `scheduled_for` |
 | OS `on_hold` | planejador | sino | na hora |

@@ -190,6 +190,17 @@ export interface WorkOrder {
   line_id?: string | null;
 }
 
+/** Who an emergency call reached (POST /api/work-orders/emergency-call). `fallback` = no on-call technician
+ *  covers the line, so planners / managers / admins were called; `notified_count === 0` = nobody was reached. */
+export interface EmergencyCallReport {
+  notified_count: number;
+  on_call_technicians: number;
+  fallback: boolean;
+  warning: string | null;
+}
+
+export type EmergencyCallResponse = WorkOrder & { emergency_call?: EmergencyCallReport; already_open?: boolean };
+
 export interface WorkOrderQuery {
   state?: WoState | string;
   type?: WoType;

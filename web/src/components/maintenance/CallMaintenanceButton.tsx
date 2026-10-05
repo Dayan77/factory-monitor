@@ -3,18 +3,43 @@ import clsx from "clsx";
 import { useEmergencyCall } from "@/hooks/useMaintenance";
 import { useAuthStore } from "@/store/auth";
 import type { DowntimeEvent } from "@/services/types";
+import type { EmergencyCallResponse } from "@/services/maintenanceTypes";
 import { apiErrorMessage } from "@/utils/errors";
 import { can } from "@/utils/maintenance";
 
 /**
  * "Chamar manutenção" from a stop (supervisor / operator, workflows §4): creates the emergency corrective
  * work order linked to the downtime event (the server links the draft failure and notifies the on-call
- * technicians). The stop keeps counting as EQP-* until the machine runs again.
+ * technicians; without on-call coverage it escalates to planning/management). The stop keeps counting as EQP-*
+ * until the machine runs again. The result tells the truth about who was reached: success only when an on-call
+ * technician was notified, a warning when the call went to the fallback, an alert when nobody was reached.
  */
+
+type Outcome = { tone: "ok" | "warn" | "danger"; text: string };
+
+function callOutcome(wo: EmergencyCallResponse): Outcome {
+  if (wo.already_open) return { tone: "ok", text: `Já existe chamado aberto para esta parada: ${wo.number}.` };
+  const r = wo.emergency_call;
+  if (!r) return { tone: "warn", text: `Chamado ${wo.number} aberto, mas não foi possível confirmar quem foi notificado. Avise por rádio/telefone.` };
+  if (r.notified_count === 0) {
+    return { tone: "danger", text: `Chamado ${wo.number} aberto, mas ninguém foi notificado: não há ninguém de plantão nesta linha. Avise por rádio/telefone.` };
+  }
+  if (r.on_call_technicians === 0) {
+    return { tone: "warn", text: `Chamado ${wo.number} aberto. Ninguém de plantão nesta linha: o planejamento/gestão foi avisado (${r.notified_count} pessoa${r.notified_count > 1 ? "s" : ""}) para acionar um técnico.` };
+  }
+  const n = r.on_call_technicians;
+  return { tone: "ok", text: `Manutenção chamada: ${wo.number}. ${n} técnico${n > 1 ? "s" : ""} de plantão notificado${n > 1 ? "s" : ""}.` };
+}
+
+const TONE = {
+  ok: "bg-ok-solid/15 text-ok",
+  warn: "bg-warn-solid/15 text-warn",
+  danger: "bg-danger-solid/15 text-danger",
+} as const;
 export default function CallMaintenanceButton({ ev, className, size = "lg" }: { ev: Pick<DowntimeEvent, "id" | "machine_id" | "machine_name" | "fault_code" | "suggested_reason_code" | "reason_code">; className?: string; size?: "md" | "lg" }) {
   const user = useAuthStore((s) => s.user);
   const create = useEmergencyCall();
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<Outcome | null>(null);
   if (!can(user, "maintenance.request")) return null;
 
   function call() {
@@ -24,11 +49,14 @@ export default function CallMaintenanceButton({ ev, className, size = "lg" }: { 
       machine_id: ev.machine_id,
       title: `Chamado: ${ev.machine_name ?? "máquina"} parada${ev.fault_code != null ? ` (falha ${ev.fault_code})` : ""}`,
       note: `Aberto a partir da parada${code ? ` ${code}` : ""}.`,
-    }, { onSuccess: (wo) => setDone(`Manutenção chamada: ${wo.number}. Os técnicos de plantão foram notificados.`) });
+    }, { onSuccess: (wo) => setDone(callOutcome(wo)) });
   }
 
   if (done) {
-    return <p role="status" className={clsx("rounded-xl bg-ok-solid/15 px-4 py-3 text-body font-medium text-ok", className)}>{done}</p>;
+    return (
+      <p role={done.tone === "ok" ? "status" : "alert"} data-testid="call-maintenance-result" data-tone={done.tone}
+        className={clsx("rounded-xl px-4 py-3 text-body font-medium", TONE[done.tone], className)}>{done.text}</p>
+    );
   }
   return (
     <div className={className}>

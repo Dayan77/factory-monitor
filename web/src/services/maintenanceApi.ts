@@ -6,7 +6,7 @@ import { parseNotification } from "./realtime";
 import type {
   AppNotification, ComponentLifeRow, FailureCode, FailureCodes, FailurePatchBody, FailureQuery, FailureRecord, LaborBody, MaintenanceKpis,
   MaintenancePlan, MaintenancePlanBody, PlanStatus, PlanStatusQuery, ReliabilityGroupBy, ReliabilityRow, ReplacementBody,
-  TechnicianUser, TransitionBody, TransitionResult, WorkOrder, WorkOrderCreateBody, WorkOrderQuery,
+  EmergencyCallResponse, TechnicianUser, TransitionBody, TransitionResult, WorkOrder, WorkOrderCreateBody, WorkOrderQuery,
 } from "./maintenanceTypes";
 
 /** Drops undefined/empty params so the URL only carries real filters. */
@@ -33,7 +33,7 @@ export const workOrdersApi = {
   approveDraft: (id: string) => api.post<WorkOrder>(`/api/work-orders/${id}/approve-draft`, {}),
   /** "Chamar manutenção": emergency corrective WO linked to the stop (returns the open one if already called). */
   emergencyCall: (body: { downtime_event_id?: string; machine_id?: string; position_id?: string; title?: string; note?: string }) =>
-    api.post<WorkOrder>("/api/work-orders/emergency-call", body),
+    api.post<EmergencyCallResponse>("/api/work-orders/emergency-call", body),
   /** Planner edits — reprogramming a scheduled WO (scheduled_for / assignee_id). */
   update: (id: string, body: { scheduled_for?: string; assignee_id?: string | null }) => api.patch<WorkOrder>(`/api/work-orders/${id}`, body),
   labor: (id: string, body: LaborBody, actionId?: string) =>

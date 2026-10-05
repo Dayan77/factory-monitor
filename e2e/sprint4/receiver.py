@@ -4,7 +4,7 @@ Every request is appended to --log as one JSON line. Push bodies are decrypted w
 private key (RFC 8291, using the server's own `decrypt`) and the VAPID JWT is checked against the VAPID
 public key; webhook bodies are checked against HMAC-SHA256(secret, "<timestamp>.<raw body>").
 
-    python e2e/sprint4/receiver.py --push-port 9443 --cert cert.pem --key key.pem --webhook-port 9180 \
+    python e2e/sprint4/receiver.py --push-port 443 --cert cert.pem --key key.pem --webhook-port 9180 \
         --ua-key ua_private.pem --auth <b64u> --vapid-public <b64u> --webhook-secret <secret> --log recv.jsonl
 """
 import argparse
