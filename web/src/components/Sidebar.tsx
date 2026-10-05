@@ -16,6 +16,16 @@ const NAV = [
     ),
   },
   {
+    label: "Fábrica",
+    to: "/factory",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
+        <path d="M2 20h20M4 20V9l5 3V9l5 3V5h4l1 15" />
+        <path d="M8 16h1M12 16h1M16 16h1" />
+      </svg>
+    ),
+  },
+  {
     label: "Linhas",
     to: "/lines",
     icon: (
@@ -124,32 +134,32 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
       <div
         aria-hidden="true"
         onClick={onClose}
-        className="fixed inset-0 z-30 bg-black/60 md:hidden"
+        className="fixed inset-0 z-30 animate-fade-in bg-black/50 md:hidden"
       />
     )}
     <aside
       id="app-sidebar"
       className={clsx(
-        "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-gray-800 bg-gray-900 transition-transform duration-200",
+        "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-line bg-surface transition-transform duration-300 ease-out-soft",
         "md:static md:translate-x-0",
         open ? "translate-x-0" : "-translate-x-full"
       )}
     >
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 border-b border-gray-800 px-5">
+      <div className="flex h-16 items-center gap-3 border-b border-line px-5">
         <span className="flex size-8 items-center justify-center rounded-lg bg-brand-500">
           <svg viewBox="0 0 24 24" fill="currentColor" className="size-5 text-white">
             <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
           </svg>
         </span>
         <div>
-          <p className="text-sm font-semibold text-white">Factory Monitor</p>
-          <p className="text-xs text-gray-500">Indústria 4.0</p>
+          <p className="text-sm font-semibold text-fg">Factory Monitor</p>
+          <p className="text-xs text-fg-subtle">Indústria 4.0</p>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-0.5 p-3">
+      <nav aria-label="Principal" className="flex-1 space-y-0.5 overflow-y-auto p-3">
         {NAV.map((item) => (
           <NavLink
             key={item.to}
@@ -157,10 +167,10 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             onClick={onClose}
             className={({ isActive }) =>
               clsx(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                 isActive
-                  ? "bg-brand-500/15 text-brand-400"
-                  : "text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+                  ? "bg-accent/15 text-ok"
+                  : "text-fg-muted hover:bg-surface-2 hover:text-fg"
               )
             }
           >
@@ -171,16 +181,16 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
         {user?.role === "superadmin" && (
           <>
-            <div className="my-2 border-t border-gray-800" />
+            <div className="my-2 border-t border-line" />
             <NavLink
               to={ADMIN_NAV.to}
               onClick={onClose}
               className={({ isActive }) =>
                 clsx(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150",
                   isActive
                     ? "bg-purple-500/15 text-purple-400"
-                    : "text-gray-500 hover:bg-gray-800 hover:text-gray-100"
+                    : "text-fg-subtle hover:bg-surface-2 hover:text-fg"
                 )
               }
             >
@@ -192,19 +202,19 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-gray-800 p-4 space-y-3">
+      <div className="border-t border-line p-4 space-y-3">
         <div className="flex items-center gap-3">
-          <div className="size-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-300 shrink-0">
+          <div className="size-8 rounded-full bg-surface-2 flex items-center justify-center text-xs font-bold text-fg-muted shrink-0">
             {initials}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-gray-200">{user?.name ?? "—"}</p>
-            <p className="truncate text-xs text-gray-500">{ROLE_LABELS[user?.role ?? ""] ?? user?.role}</p>
+            <p className="truncate text-sm font-medium text-fg">{user?.name ?? "—"}</p>
+            <p className="truncate text-xs text-fg-subtle">{ROLE_LABELS[user?.role ?? ""] ?? user?.role}</p>
           </div>
         </div>
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-300 transition-colors"
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 min-h-10 text-xs text-fg-subtle hover:bg-surface-2 hover:text-fg transition-colors"
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
             <path fillRule="evenodd" d="M3 4.25A2.25 2.25 0 0 1 5.25 2h5.5A2.25 2.25 0 0 1 13 4.25v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 0-.75-.75h-5.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 0 0 .75-.75v-2a.75.75 0 0 1 1.5 0v2A2.25 2.25 0 0 1 10.75 18h-5.5A2.25 2.25 0 0 1 3 15.75V4.25z" clipRule="evenodd" />

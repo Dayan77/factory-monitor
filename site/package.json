@@ -1,0 +1,26 @@
+{
+  "name": "factoryconnect-site",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "astro dev",
+    "check": "astro check",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "dependencies": {
+    "@astrojs/check": "0.9.10",
+    "@astrojs/sitemap": "3.7.4",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.3.5",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1",
+    "vitest": "5.0.3"
+  }
+}

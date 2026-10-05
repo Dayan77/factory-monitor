@@ -112,3 +112,63 @@ def test_modbus_tags_from_settings_dicts_are_converted():
         {"tag_id": "a", "address": 0, "register_type": "holding", "data_type": "float32"},
     ]]
     assert cfg[0].register_count == 2
+
+
+# ── timestamps: one clock per tag, monotonic (server drops out-of-order readings) ──
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+
+def _ts(p: dict) -> datetime:
+    return datetime.strptime(p["ts"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+
+
+class _Connected:
+    connected = True
+
+
+def _refreshable(gateway):
+    """Tag "run" refreshed like an OPC UA tag; heartbeat re-publish on every refresh."""
+    gateway.register_modbus_tags([ModbusTagConfig("run", 0, "coil", no_deadband=True)])
+    gateway._refresh_tags["run"] = _Connected()
+    gateway.filter._max_silence = 1e-9
+
+
+async def test_plc_clock_180s_behind_uses_gateway_time_and_warns_once(gateway, monkeypatch):
+    """A PLC clock 3 min behind must not make every live reading look like a replay (> 120 s old)
+    nor fall behind the refresh timestamps."""
+    _refreshable(gateway)
+    warnings = []
+    monkeypatch.setattr(gw_mod.log, "warning", lambda ev, **kw: warnings.append(ev))
+    offset = timedelta(seconds=-180)
+    before = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await gateway._handle_reading("run", 1.0, datetime.now(timezone.utc) + offset)
+    await gateway.refresh_once()
+    await gateway._handle_reading("run", 0.0, datetime.now(timezone.utc) + offset)
+    await gateway._handle_reading("run", 1.0, datetime.now(timezone.utc) + offset)
+    sent = [p for _, p in gateway.client.sent]
+    assert [p["value"] for p in sent] == [1.0, 1.0, 0.0, 1.0]
+    stamps = [_ts(p) for p in sent]
+    assert all(s >= before for s in stamps), "skewed source ts must be replaced by gateway time"
+    assert all(b > a for a, b in zip(stamps, stamps[1:])), "timestamps strictly increasing"
+    assert warnings.count("edge_gateway.clock_skew") == 1
+
+
+async def test_change_racing_a_refresh_is_not_published_behind_it(gateway):
+    """Refresh stamps run_state=1 at gateway time T; a stop that happened at PLC time T-0.3 s
+    arrives afterwards. It must still be published after T (else the server drops it)."""
+    _refreshable(gateway)
+    t0 = datetime.now(timezone.utc)
+    await gateway._handle_reading("run", 1.0, t0 - timedelta(seconds=2))
+    await gateway.refresh_once()                      # stamped ~now
+    await gateway._handle_reading("run", 0.0, datetime.now(timezone.utc) - timedelta(milliseconds=300))
+    sent = [p for _, p in gateway.client.sent]
+    assert [p["value"] for p in sent] == [1.0, 1.0, 0.0]
+    stamps = [_ts(p) for p in sent]
+    assert stamps[0] < stamps[1] < stamps[2]
+
+
+async def test_small_skew_keeps_source_timestamp(gateway):
+    gateway.register_modbus_tags([ModbusTagConfig("run", 0, "coil", no_deadband=True)])
+    src = datetime.now(timezone.utc) - timedelta(seconds=1.5)
+    await gateway._handle_reading("run", 1.0, src)
+    assert _ts(gateway.client.sent[0][1]) == src.replace(microsecond=src.microsecond // 1000 * 1000)

@@ -1,0 +1,10 @@
+---
+import Icon, { type IconName } from "./Icon.astro";
+interface Props { icon: IconName; title: string }
+const { icon, title } = Astro.props;
+---
+<div class="card reveal h-full">
+  <span class="grid size-10 place-items-center rounded-xl bg-brand-500/12 text-accent"><Icon name={icon} size={22} /></span>
+  <h3 class="mt-4 text-base font-semibold text-fg">{title}</h3>
+  <div class="mt-2 text-sm leading-relaxed text-muted"><slot /></div>
+</div>

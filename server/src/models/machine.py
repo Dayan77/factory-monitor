@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 import enum
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Enum as SAEnum
+from sqlalchemy import String, Boolean, DateTime, Float, ForeignKey, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
@@ -29,8 +29,11 @@ class Machine(Base, TimestampMixin):
     status:        Mapped[MachineStatus]         = mapped_column(SAEnum(MachineStatus), nullable=False, default=MachineStatus.unknown)
     # Last time a reading arrived for any of this machine's tags (server receive time).
     last_seen_at:  Mapped[Optional[datetime]]    = mapped_column(DateTime(timezone=True), nullable=True)
+    # Tempo de ciclo ideal padrão da máquina (s). Fase 2 define por (máquina, produto); aqui é
+    # usado como max_rate padrão do filtro de plausibilidade de contadores (domain.md §3.3 regra 4).
+    ideal_cycle_time_s: Mapped[Optional[float]]  = mapped_column(Float, nullable=True)
 
     tenant  = relationship("Tenant",  back_populates="machines")
-    line    = relationship("Line",    back_populates="machines")
+    line    = relationship("Line",    back_populates="machines", foreign_keys=[line_id])
     tags    = relationship("Tag",     back_populates="machine",  lazy="noload")
     cameras = relationship("Camera",  back_populates="machine",  lazy="noload")

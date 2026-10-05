@@ -10,7 +10,7 @@
 //
 // It finds the simulator with pgrep (`python -m edge.src.simulator`) and restarts it
 // with the same defaults as CLAUDE.md, detached, so it keeps running afterwards.
-// Env: E2E_BASE_URL, E2E_EMAIL, E2E_PASSWORD, E2E_SIM_PYTHON (default .venv-edge/bin/python),
+// Env: E2E_BASE_URL, E2E_EMAIL, E2E_PASSWORD, E2E_SIM_LINE (line whose cards are checked; "" = all), E2E_SIM_PYTHON (default .venv-edge/bin/python),
 //      E2E_SIM_ARGS (default "--server http://localhost:8000 --broker localhost").
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -44,11 +44,14 @@ function startSim() {
   const p = spawn(SIM_PY, ["-m", "edge.src.simulator", ...SIM_ARGS], { cwd: ROOT, detached: true, stdio: "ignore" });
   p.unref();
 }
+// Only the simulator's machines: since Sprint 2 the dev seed also creates the virtual plant (Planta Manaus),
+// whose machines are fed by the edge gateway, not by the simulator this spec stops.
+const SIM_LINE = process.env.E2E_SIM_LINE ?? "Linha Demo (Simulador)";
 const allCards = (text, timeout) => page.waitForFunction(
-  (t) => {
-    const c = [...document.querySelectorAll('[data-testid="machine-card"]')];
+  ([t, line]) => {
+    const c = [...document.querySelectorAll('[data-testid="machine-card"]')].filter((x) => !line || x.textContent.includes(line));
     return c.length > 0 && c.every((x) => x.textContent.includes(t));
-  }, text, { timeout },
+  }, [text, SIM_LINE], { timeout },
 );
 
 before(async () => {

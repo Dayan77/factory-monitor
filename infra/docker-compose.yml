@@ -7,6 +7,11 @@
 # Equivalente manual: docker compose --env-file .env -f infra/docker-compose.yml up -d
 # (sem --env-file o compose procura infra/.env e as variáveis ficam vazias).
 #
+# Planta virtual (profile "sim"): CLPs simulados + provisionamento + gateway edge real.
+#   docker compose --env-file .env -f infra/docker-compose.yml --profile sim up -d
+#   VP_SPEED=60 (1 h simulada/min), VP_SEED=42, VP_SHIFTS=06:00-14:00,14:00-22:00 ajustam a simulação.
+#   Estado/verdade de campo: curl http://localhost:8091/state
+#
 # Todas as imagens têm versão fixa. Atualize de propósito, nunca via :latest.
 
 services:
@@ -158,7 +163,79 @@ services:
     ports:
       - "${NGINX_PORT:-80}:80"
 
+  # ── Planta virtual + gateway edge (profile "sim") ─────────────────
+  # virtual-plant: OPC UA :4840 e Modbus TCP :5020 da "Planta Manaus" (edge/virtual_plant).
+  # provision-sim: cria plant/linhas/máquinas/posições/componentes/tags via REST e grava os tag_id
+  #                em /data/plant.local.json (idempotente; roda a cada `up`).
+  # gateway-sim:   gateway edge real lendo a planta pelo mapa → MQTT (mesmo caminho de uma fábrica).
+  # O simulador antigo (python -m edge.src.simulator) continua disponível fora do compose.
+  virtual-plant:
+    profiles: ["sim"]
+    build:
+      context: ../edge
+      dockerfile: Dockerfile
+    image: factory-monitor-edge:dev
+    container_name: fm_virtual_plant
+    restart: unless-stopped
+    command: ["python", "-m", "virtual_plant", "--host", "0.0.0.0"]
+    environment:
+      VP_SEED: ${VP_SEED:-42}
+      VP_SPEED: ${VP_SPEED:-1}
+      VP_SHIFTS: ${VP_SHIFTS:-}
+    ports:
+      - "127.0.0.1:4840:4840"
+      - "127.0.0.1:5020:5020"
+      - "127.0.0.1:8091:8091"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  provision-sim:
+    profiles: ["sim"]
+    image: factory-monitor-edge:dev
+    container_name: fm_provision_sim
+    restart: "no"
+    command: ["python", "-m", "src.provision", "--server", "http://server:8000", "--out", "/data/plant.local.json"]
+    environment:
+      # usuário admin do seed de desenvolvimento (make seed); sobrescreva no .env se mudou
+      PROVISION_EMAIL: ${SIM_EMAIL:-admin@factory-monitor.com}
+      PROVISION_PASSWORD: ${SIM_PASSWORD:-Admin@1234}
+      # mesma aceleração da planta: ajusta max_rate_per_s dos contadores (senão o servidor os descarta)
+      PROVISION_SPEED: ${VP_SPEED:-1}
+    depends_on:
+      server:
+        condition: service_healthy
+    volumes:
+      - edge-sim-data:/data
+
+  gateway-sim:
+    profiles: ["sim"]
+    image: factory-monitor-edge:dev
+    container_name: fm_gateway_sim
+    restart: unless-stopped
+    environment:
+      PLANT_MAP_PATH: /data/plant.local.json
+      VIRTUAL_PLANT_HOST: virtual-plant
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      BUFFER_DB_PATH: /data/edge_buffer.db
+      COUNTER_DB_PATH: /data/edge_counters.db
+      # Dev: payload em claro. Para cifrar, a MESMA chave AES-256 (32 bytes) no server e aqui.
+      ENCRYPTION_KEY: ""
+    depends_on:
+      provision-sim:
+        condition: service_completed_successfully
+      virtual-plant:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    volumes:
+      - edge-sim-data:/data
+
 volumes:
+  edge-sim-data:
   postgres-data:
   influxdb-data:
   mosquitto-data:

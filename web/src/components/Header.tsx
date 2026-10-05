@@ -1,8 +1,10 @@
 import { useLocation } from "react-router-dom";
 import ConnectionBadge from "./ConnectionBadge";
+import ThemeToggle from "./ThemeToggle";
 
 const TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
+  "/factory": "Fábrica",
   "/lines": "Linhas de Produção",
   "/machines": "Máquinas",
   "/sensors": "Sensores",
@@ -17,11 +19,18 @@ interface Props {
   menuOpen?: boolean;
 }
 
+/** Title for the current route (nested routes inherit the section title, e.g. /factory/machines/:id). */
+export function titleFor(pathname: string): string {
+  if (TITLES[pathname]) return TITLES[pathname];
+  const section = "/" + (pathname.split("/")[1] ?? "");
+  return TITLES[section] ?? "Factory Monitor";
+}
+
 export default function Header({ onMenu, menuOpen = false }: Props) {
   const { pathname } = useLocation();
 
   return (
-    <header className="flex h-16 items-center justify-between gap-3 border-b border-gray-800 bg-gray-900 px-4 sm:px-6">
+    <header className="flex h-16 items-center justify-between gap-3 border-b border-line bg-surface/85 px-4 backdrop-blur supports-[backdrop-filter]:bg-surface/70 sm:px-6">
       <div className="flex min-w-0 items-center gap-2">
         {onMenu && (
           <button
@@ -30,20 +39,20 @@ export default function Header({ onMenu, menuOpen = false }: Props) {
             aria-label="Abrir menu"
             aria-controls="app-sidebar"
             aria-expanded={menuOpen}
-            className="-ml-2 flex size-11 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 md:hidden"
+            className="-ml-2 flex size-11 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-2 hover:text-fg md:hidden"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5" aria-hidden="true">
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
         )}
-        <h1 className="truncate text-base font-semibold text-gray-100">
-          {TITLES[pathname] ?? "Factory Monitor"}
+        <h1 className="truncate text-heading text-fg">
+          {titleFor(pathname)}
         </h1>
       </div>
-      <div className="flex shrink-0 items-center gap-4">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         <ConnectionBadge />
-        <span className="hidden text-xs text-gray-500 sm:inline">
+        <span className="hidden text-caption text-fg-subtle lg:inline">
           {new Date().toLocaleDateString("pt-BR", {
             weekday: "short",
             day: "2-digit",
@@ -51,6 +60,7 @@ export default function Header({ onMenu, menuOpen = false }: Props) {
             year: "numeric",
           })}
         </span>
+        <ThemeToggle />
       </div>
     </header>
   );

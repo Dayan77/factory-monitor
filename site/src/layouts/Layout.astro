@@ -1,0 +1,92 @@
+---
+import "../styles/global.css";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import { BRAND, DEFAULT_DESCRIPTION, SITE_URL, CONTACT_EMAIL } from "../lib/site";
+
+interface Props {
+  title: string;
+  description?: string;
+  /** JSON-LD adicional específico da página */
+  jsonLd?: Record<string, unknown>[];
+  noindex?: boolean;
+}
+
+const { title, description = DEFAULT_DESCRIPTION, jsonLd = [], noindex = false } = Astro.props;
+const fullTitle = title.includes(BRAND) ? title : `${title} | ${BRAND}`;
+const pathname = Astro.url.pathname.replace(/\.html$/, "").replace(/\/index$/, "/");
+const canonical = new URL(pathname === "/" ? "/" : pathname.replace(/\/$/, ""), SITE_URL).href;
+const ogImage = new URL("/og.png", SITE_URL).href;
+
+const organization: Record<string, unknown> = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "@id": `${SITE_URL}/#organization`,
+  name: BRAND,
+  url: SITE_URL,
+  logo: `${SITE_URL}/icon-512.png`,
+  description: DEFAULT_DESCRIPTION,
+  ...(CONTACT_EMAIL
+    ? { contactPoint: { "@type": "ContactPoint", contactType: "sales", email: CONTACT_EMAIL, availableLanguage: ["pt-BR"] } }
+    : {}),
+};
+const schemas = [organization, ...jsonLd];
+---
+<!doctype html>
+<html lang="pt-BR" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    {noindex ? <meta name="robots" content="noindex, follow" /> : <link rel="canonical" href={canonical} />}
+    <meta name="theme-color" content="#0a0f0d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta property="og:site_name" content={BRAND} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="FactoryConnect — o raio-x da sua fábrica" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <script is:inline>
+      // Tema antes da pintura (sem "piscar"): escolha salva > escuro (padrão).
+      (function () {
+        var d = document.documentElement;
+        d.classList.add("js");
+        try {
+          var t = localStorage.getItem("fc-theme");
+          if (t === "light") d.classList.remove("dark");
+        } catch (e) {}
+      })();
+    </script>
+    {schemas.map((s) => <script type="application/ld+json" set:html={JSON.stringify(s)} />)}
+  </head>
+  <body class="min-h-dvh flex flex-col">
+    <a href="#conteudo" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[60] focus:rounded-lg focus:bg-brand-700 focus:px-4 focus:py-2 focus:text-white">
+      Pular para o conteúdo
+    </a>
+    <Header />
+    <main id="conteudo" class="flex-1">
+      <slot />
+    </main>
+    <Footer />
+    <script>
+      import "../lib/client";
+    </script>
+  </body>
+</html>

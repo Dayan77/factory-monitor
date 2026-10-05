@@ -1,0 +1,58 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { CONTACT_EMAIL } from "../lib/site";
+const updated = "5 de outubro de 2026";
+---
+<Layout title="Política de Privacidade" description="Como a FactoryConnect trata dados pessoais no site e na plataforma, em conformidade com a Lei Geral de Proteção de Dados (LGPD — Lei nº 13.709/2018).">
+  <section class="container-x py-14 sm:py-20">
+    <p class="eyebrow">Legal</p>
+    <h1 class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Política de Privacidade</h1>
+    <p class="mt-3 text-sm text-muted">Última atualização: {updated}</p>
+
+    <div class="prose-fc mt-8">
+      <p>Esta política explica como a FactoryConnect ("nós") trata dados pessoais coletados neste site (factoryconnect.tech) e no aplicativo (app.factoryconnect.tech), em conformidade com a Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018).</p>
+
+      <h2>1. Quais dados coletamos</h2>
+      <ul>
+        <li><strong>Formulário de contato:</strong> nome, e-mail, empresa, telefone (opcional) e a mensagem que você escrever, além da data e hora do seu consentimento.</li>
+        <li><strong>Dados técnicos do envio:</strong> para evitar abuso, registramos o navegador (user agent) e uma versão irreversível (hash) do endereço IP — não guardamos o IP em si.</li>
+        <li><strong>Conta no aplicativo:</strong> nome, e-mail, empresa e credenciais de acesso (a senha é armazenada apenas como hash).</li>
+        <li><strong>Dados industriais:</strong> sinais de máquinas e sensores coletados pelo gateway pertencem à empresa cliente e são tratados conforme o contrato; em regra não são dados pessoais.</li>
+      </ul>
+
+      <h2>2. Para que usamos</h2>
+      <ul>
+        <li>Responder ao seu contato e enviar informações sobre o FactoryConnect que você solicitou (base legal: consentimento, art. 7º, I, e procedimentos preliminares a contrato, art. 7º, V).</li>
+        <li>Prestar o serviço contratado e dar suporte (execução de contrato, art. 7º, V).</li>
+        <li>Proteger o site e a plataforma contra fraude e abuso (legítimo interesse, art. 7º, IX).</li>
+      </ul>
+      <p>Não vendemos dados pessoais e não os usamos para publicidade de terceiros.</p>
+
+      <h2>3. Cookies e rastreadores</h2>
+      <p>Este site <strong>não usa cookies de rastreamento, pixels de anúncios nem ferramentas de análise de terceiros</strong>. Guardamos no seu navegador apenas a sua preferência de tema (claro/escuro), que nunca sai do seu dispositivo. O aplicativo usa armazenamento local estritamente necessário para manter você conectado.</p>
+
+      <h2>4. Compartilhamento</h2>
+      <p>Compartilhamos dados apenas com operadores necessários para o funcionamento do serviço — por exemplo, provedores de hospedagem e de envio de e-mail — sob obrigações de confidencialidade e segurança, ou quando exigido por lei ou ordem judicial.</p>
+
+      <h2>5. Por quanto tempo guardamos</h2>
+      <p>Dados de contato são mantidos enquanto houver relacionamento comercial ou pelo tempo necessário para responder à sua solicitação, e eliminados quando você pedir, ressalvadas obrigações legais. Dados de conta são mantidos durante a vigência do contrato e pelo prazo legal aplicável depois dele.</p>
+
+      <h2>6. Segurança</h2>
+      <p>Usamos conexão criptografada (HTTPS/TLS), controle de acesso, isolamento de dados por empresa e armazenamento de senhas com hash. Nenhum sistema é infalível; se ocorrer um incidente de segurança relevante, comunicaremos os titulares e a ANPD conforme a lei.</p>
+
+      <h2>7. Seus direitos</h2>
+      <p>Você pode, a qualquer momento: confirmar se tratamos seus dados; acessá-los; corrigir dados incompletos ou desatualizados; pedir anonimização, bloqueio ou eliminação; solicitar a portabilidade; obter informação sobre compartilhamento; e <strong>revogar o consentimento</strong>, sem prejuízo do tratamento já realizado (art. 18 da LGPD). Você também pode apresentar reclamação à Autoridade Nacional de Proteção de Dados (ANPD).</p>
+
+      <h2>8. Como falar conosco</h2>
+      <p>
+        Para exercer seus direitos ou tirar dúvidas sobre esta política,
+        {CONTACT_EMAIL
+          ? <>escreva para <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> ou use o <a href="/contato">formulário de contato</a>.</>
+          : <>use o <a href="/contato">formulário de contato</a> indicando "Privacidade" na mensagem.</>}
+      </p>
+
+      <h2>9. Alterações</h2>
+      <p>Podemos atualizar esta política. A data da última atualização fica sempre no topo desta página; mudanças relevantes serão comunicadas aos clientes.</p>
+    </div>
+  </section>
+</Layout>

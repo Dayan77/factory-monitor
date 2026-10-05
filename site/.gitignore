@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+test-results/
+
+# o .gitignore da raiz ignora lib/ (Python); aqui é código-fonte
+!src/lib/

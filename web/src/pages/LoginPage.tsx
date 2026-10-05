@@ -34,7 +34,7 @@ export default function LoginPage() {
             </svg>
           </span>
           <div className="text-center">
-            <h1 className="text-xl font-bold text-white">FactoryConnect</h1>
+            <h1 className="text-xl font-bold text-gray-50">FactoryConnect</h1>
             <p className="text-sm text-gray-500">Acesse sua conta</p>
           </div>
         </div>
@@ -49,9 +49,11 @@ export default function LoginPage() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-400">E-mail</label>
+            <label htmlFor="login-email" className="text-xs font-medium text-gray-400">E-mail</label>
             <input
+              id="login-email"
               type="email"
+              autoComplete="username"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -61,9 +63,11 @@ export default function LoginPage() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-medium text-gray-400">Senha</label>
+            <label htmlFor="login-password" className="text-xs font-medium text-gray-400">Senha</label>
             <input
+              id="login-password"
               type="password"
+              autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}

@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { isAxiosError } from "axios";
+import { publicApi } from "@/services/api";
+import { apiErrorMessage } from "@/utils/errors";
 import { Link } from "react-router-dom";
 
 // ── Ícones inline ─────────────────────────────────────────────────
@@ -32,7 +35,6 @@ function Navbar() {
   const links = [
     { label: "Início",      id: "hero" },
     { label: "Ferramentas", id: "features" },
-    { label: "Cases",       id: "cases" },
     { label: "Quem Somos",  id: "about" },
     { label: "Contato",     id: "contact" },
   ];
@@ -75,7 +77,7 @@ function Navbar() {
         </div>
 
         {/* Mobile menu toggle */}
-        <button className="md:hidden text-gray-400 hover:text-white" onClick={() => setMenuOpen(!menuOpen)}>
+        <button type="button" aria-label={menuOpen ? "Fechar menu" : "Abrir menu"} aria-expanded={menuOpen} className="md:hidden flex size-11 items-center justify-center text-gray-400 hover:text-white" onClick={() => setMenuOpen(!menuOpen)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-6">
             {menuOpen
               ? <path strokeLinecap="round" d="M6 18L18 6M6 6l12 12" />
@@ -113,7 +115,7 @@ function Hero() {
       {/* Glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="relative mx-auto max-w-7xl px-6 py-32 text-center">
+      <div className="relative mx-auto w-full min-w-0 max-w-7xl px-6 py-32 text-center">
         <span className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-1.5 text-xs font-medium text-brand-400 mb-8">
           <span className="size-1.5 rounded-full bg-brand-400 animate-pulse" />
           Indústria 4.0 — Monitoramento em tempo real
@@ -149,10 +151,11 @@ function Hero() {
               <span className="size-3 rounded-full bg-red-500/60" />
               <span className="size-3 rounded-full bg-yellow-500/60" />
               <span className="size-3 rounded-full bg-green-500/60" />
-              <span className="ml-3 text-xs text-gray-600 font-mono">factoryconnect.tech/dashboard</span>
+              <span className="ml-3 hidden truncate text-xs text-gray-600 font-mono sm:inline">factoryconnect.tech/dashboard</span>
+              <span className="ml-auto rounded-full bg-gray-800 px-2.5 py-0.5 text-[11px] font-medium text-gray-400">Ilustração — dados fictícios</span>
             </div>
             {/* Fake dashboard */}
-            <div className="p-6 grid grid-cols-4 gap-4">
+            <div className="p-4 sm:p-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
                 { label: "OEE Médio", value: "87.3%", color: "text-brand-400" },
                 { label: "Máquinas Ativas", value: "12/14", color: "text-blue-400" },
@@ -165,9 +168,9 @@ function Hero() {
                 </div>
               ))}
             </div>
-            <div className="px-6 pb-6 grid grid-cols-3 gap-4">
+            <div className="px-4 sm:px-6 pb-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
               {/* Fake chart bars */}
-              <div className="col-span-2 rounded-xl border border-gray-800 bg-gray-950 p-4 h-32 flex items-end gap-1.5">
+              <div className="sm:col-span-2 rounded-xl border border-gray-800 bg-gray-950 p-4 h-32 flex items-end gap-1.5">
                 {[60,75,55,80,70,87,65,90,72,85,78,87].map((h, i) => (
                   <div key={i} className="flex-1 rounded-sm bg-brand-500/40 hover:bg-brand-500/60 transition-colors"
                     style={{ height: `${h}%` }} />
@@ -269,77 +272,6 @@ function Features() {
   );
 }
 
-// ── Cases ─────────────────────────────────────────────────────────
-
-const CASES = [
-  {
-    company: "Metalúrgica Fonseca",
-    segment: "Metalurgia",
-    result: "+23% de OEE",
-    desc: "Integração com 3 linhas de produção via Modbus TCP, com alertas de temperatura e pressão em tempo real. Redução de 40% nas paradas não planejadas.",
-    metric: "23",
-    unit: "%",
-    label: "ganho de OEE",
-  },
-  {
-    company: "Plásticos Norte",
-    segment: "Injeção Plástica",
-    result: "40% menos paradas",
-    desc: "Monitoramento via OPC UA de 8 injetoras com alertas preditivos. O sistema identificou padrões de falha antes da ocorrência, eliminando perdas de turno.",
-    metric: "40",
-    unit: "%",
-    label: "redução de paradas",
-  },
-  {
-    company: "Alimentos BomDia",
-    segment: "Alimentos & Bebidas",
-    result: "ROI em 3 meses",
-    desc: "Implantação em linha de envase com integração ao ERP. Dashboards em tempo real para supervisores e gerentes em qualquer dispositivo.",
-    metric: "3",
-    unit: "x",
-    label: "ROI no primeiro ano",
-  },
-];
-
-function Cases() {
-  return (
-    <section id="cases" className="bg-gray-900/50 py-24 border-y border-gray-800">
-      <div className="mx-auto max-w-7xl px-6">
-        <div className="text-center mb-16">
-          <span className="text-xs font-semibold uppercase tracking-widest text-brand-500">Cases</span>
-          <h2 className="mt-3 text-3xl sm:text-4xl font-bold text-white">Resultados reais</h2>
-          <p className="mt-4 text-gray-400 max-w-xl mx-auto">
-            Empresas de diferentes segmentos já utilizam o FactoryConnect para transformar
-            dados industriais em decisões mais rápidas.
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6">
-          {CASES.map((c) => (
-            <div key={c.company} className="rounded-2xl border border-gray-800 bg-gray-900 p-6 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="font-semibold text-gray-100">{c.company}</p>
-                  <p className="text-xs text-gray-500">{c.segment}</p>
-                </div>
-                <span className="rounded-full bg-brand-500/10 border border-brand-500/20 px-3 py-1 text-xs font-medium text-brand-400">
-                  {c.result}
-                </span>
-              </div>
-              <p className="text-sm text-gray-400 leading-relaxed flex-1">{c.desc}</p>
-              <div className="mt-6 pt-4 border-t border-gray-800 flex items-baseline gap-1">
-                <span className="text-4xl font-extrabold text-brand-400 font-mono">{c.metric}</span>
-                <span className="text-xl font-bold text-brand-500">{c.unit}</span>
-                <span className="ml-1 text-sm text-gray-500">{c.label}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 // ── About ─────────────────────────────────────────────────────────
 
 function About() {
@@ -358,22 +290,21 @@ function About() {
             </p>
             <p className="mt-4 text-gray-400 leading-relaxed">
               Somos especialistas em automação industrial e desenvolvimento de software,
-              com experiência em dezenas de plantas industriais nos setores de metalurgia,
-              alimentos, têxtil e embalagens.
+              focados em levar dados confiáveis do CLP até quem decide — produção e manutenção.
             </p>
-            <div className="mt-8 grid grid-cols-2 gap-6">
+            <ul className="mt-8 grid grid-cols-2 gap-6">
               {[
-                { value: "50+", label: "Plantas conectadas" },
-                { value: "99.9%", label: "Uptime garantido" },
-                { value: "< 1s", label: "Latência de dados" },
-                { value: "24/7", label: "Suporte técnico" },
+                { value: "OPC UA", label: "e Modbus TCP nativos" },
+                { value: "Edge", label: "buffer local se a rede cair" },
+                { value: "LGPD", label: "dados isolados por empresa" },
+                { value: "ISO", label: "22400 e 14224 nos indicadores" },
               ].map((s) => (
-                <div key={s.label}>
-                  <p className="text-3xl font-extrabold text-brand-400 font-mono">{s.value}</p>
+                <li key={s.label}>
+                  <p className="text-2xl font-extrabold text-brand-400 font-mono">{s.value}</p>
                   <p className="text-sm text-gray-500 mt-0.5">{s.label}</p>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -400,14 +331,61 @@ function About() {
 
 // ── Contact ───────────────────────────────────────────────────────
 
-function Contact() {
-  const [form, setForm] = useState({ name: "", email: "", company: "", message: "" });
-  const [sent, setSent] = useState(false);
+export const CONTACT_EMAIL = "contato@factoryconnect.tech";
 
-  function handleSubmit(e: React.FormEvent) {
+type LeadStatus = "idle" | "sending" | "sent" | "error";
+
+const EMPTY_LEAD = { name: "", email: "", company: "", phone: "", message: "", consent: false, website: "" };
+
+const fieldClass =
+  "w-full min-h-11 rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 " +
+  "focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30";
+
+function leadErrorMessage(err: unknown): string {
+  if (isAxiosError(err)) {
+    if (!err.response) return "Sem conexão com o servidor. Verifique sua internet e tente novamente.";
+    if (err.response.status === 429) return "Recebemos muitas mensagens deste endereço. Tente novamente mais tarde.";
+    if (err.response.status === 422) {
+      return apiErrorMessage(err, "Verifique os campos e tente novamente.").replace(/^Value error, /, "");
+    }
+  }
+  return `Não foi possível enviar agora. Tente novamente ou escreva para ${CONTACT_EMAIL}.`;
+}
+
+export function Contact() {
+  const [form, setForm] = useState(EMPTY_LEAD);
+  const [status, setStatus] = useState<LeadStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const set = (k: "name" | "email" | "company" | "phone" | "message" | "website") =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Placeholder — integrar com e-mail ou CRM futuramente
-    setSent(true);
+    if (!form.consent) {
+      setStatus("error");
+      setError("Para enviar, autorize o uso dos seus dados para contato (LGPD).");
+      return;
+    }
+    setStatus("sending");
+    setError(null);
+    try {
+      await publicApi.createLead({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        company: form.company.trim(),
+        phone: form.phone.trim(),
+        message: form.message.trim(),
+        consent: true,
+        website: form.website,
+        source: "app-landing",
+      });
+      setStatus("sent");
+      setForm(EMPTY_LEAD);
+    } catch (err) {
+      setStatus("error");
+      setError(leadErrorMessage(err));
+    }
   }
 
   return (
@@ -422,63 +400,79 @@ function Contact() {
               FactoryConnect se encaixa na sua operação? Fale com a gente.
             </p>
             <div className="mt-8 space-y-4">
-              {[
-                { icon: "M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75", label: "contato@factoryconnect.tech" },
-                { icon: "M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 6z", label: "+55 (92) 99999-0000" },
-              ].map((c) => (
-                <div key={c.label} className="flex items-center gap-3 text-sm text-gray-400">
-                  <span className="flex size-9 items-center justify-center rounded-xl bg-gray-800 text-brand-400 shrink-0">
-                    <Icon d={c.icon} size={4} />
-                  </span>
-                  {c.label}
-                </div>
-              ))}
+              <a href={`mailto:${CONTACT_EMAIL}`} className="flex items-center gap-3 text-sm text-gray-400 hover:text-gray-200">
+                <span className="flex size-9 items-center justify-center rounded-xl bg-gray-800 text-brand-400 shrink-0">
+                  <Icon d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" size={4} />
+                </span>
+                {CONTACT_EMAIL}
+              </a>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-8">
-            {sent ? (
-              <div className="flex flex-col items-center justify-center h-full py-8 text-center gap-4">
+          <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8">
+            {status === "sent" ? (
+              <div role="status" className="flex flex-col items-center justify-center h-full py-8 text-center gap-4">
                 <div className="flex size-14 items-center justify-center rounded-full bg-brand-500/20 text-brand-400">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-7">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-7" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
                   </svg>
                 </div>
                 <h3 className="text-lg font-semibold text-white">Mensagem enviada!</h3>
-                <p className="text-sm text-gray-400">Nossa equipe entrará em contato em até 24h.</p>
-                <button onClick={() => setSent(false)} className="text-sm text-brand-400 hover:text-brand-300">Enviar outra mensagem</button>
+                <p className="text-sm text-gray-400">Recebemos seu contato e responderemos pelo e-mail informado.</p>
+                <button type="button" onClick={() => setStatus("idle")} className="min-h-11 text-sm text-brand-400 hover:text-brand-300">Enviar outra mensagem</button>
               </div>
             ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleSubmit} className="space-y-4" aria-label="Formulário de contato" noValidate={false}>
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1.5">Seu nome</label>
-                    <input required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                      placeholder="João Silva"
-                      className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none" />
+                    <label htmlFor="lead-name" className="block text-xs text-gray-400 mb-1.5">Seu nome *</label>
+                    <input id="lead-name" required maxLength={255} autoComplete="name" value={form.name} onChange={set("name")} placeholder="João Silva" className={fieldClass} />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-1.5">Empresa</label>
-                    <input value={form.company} onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
-                      placeholder="Sua Empresa Ltda"
-                      className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none" />
+                    <label htmlFor="lead-company" className="block text-xs text-gray-400 mb-1.5">Empresa</label>
+                    <input id="lead-company" maxLength={255} autoComplete="organization" value={form.company} onChange={set("company")} placeholder="Sua Empresa Ltda" className={fieldClass} />
+                  </div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="lead-email" className="block text-xs text-gray-400 mb-1.5">E-mail *</label>
+                    <input id="lead-email" required type="email" maxLength={255} autoComplete="email" value={form.email} onChange={set("email")} placeholder="joao@empresa.com" className={fieldClass} />
+                  </div>
+                  <div>
+                    <label htmlFor="lead-phone" className="block text-xs text-gray-400 mb-1.5">Telefone / WhatsApp</label>
+                    <input id="lead-phone" type="tel" maxLength={64} autoComplete="tel" value={form.phone} onChange={set("phone")} placeholder="(11) 90000-0000" className={fieldClass} />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">E-mail</label>
-                  <input required type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                    placeholder="joao@empresa.com"
-                    className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none" />
+                  <label htmlFor="lead-message" className="block text-xs text-gray-400 mb-1.5">Mensagem *</label>
+                  <textarea id="lead-message" required rows={4} maxLength={5000} value={form.message} onChange={set("message")} placeholder="Conte como podemos ajudar..." className={`${fieldClass} resize-none`} />
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">Mensagem</label>
-                  <textarea required rows={4} value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
-                    placeholder="Conte como podemos ajudar..."
-                    className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none resize-none" />
+                {/* Honeypot: invisible to people, bots fill it. Never focusable. */}
+                <div aria-hidden="true" className="absolute -left-[10000px] h-px w-px overflow-hidden">
+                  <label htmlFor="lead-website">Site</label>
+                  <input id="lead-website" name="website" type="text" tabIndex={-1} autoComplete="off" value={form.website} onChange={set("website")} />
                 </div>
-                <button type="submit"
-                  className="w-full rounded-xl bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition-colors">
-                  Enviar mensagem
+                <label className="flex items-start gap-3 text-xs leading-relaxed text-gray-400">
+                  <input
+                    type="checkbox"
+                    required
+                    checked={form.consent}
+                    onChange={(e) => setForm((f) => ({ ...f, consent: e.target.checked }))}
+                    className="mt-0.5 size-4 shrink-0 accent-[rgb(var(--brand-500))]"
+                  />
+                  <span>
+                    Autorizo o FactoryConnect a usar meus dados para responder a este contato, conforme a
+                    Lei Geral de Proteção de Dados (LGPD — Lei 13.709/2018). Não compartilhamos seus dados com
+                    terceiros e você pode pedir a exclusão a qualquer momento por {CONTACT_EMAIL}. *
+                  </span>
+                </label>
+                {status === "error" && error && (
+                  <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
+                )}
+                <button type="submit" disabled={status === "sending"}
+                  className="flex w-full min-h-12 items-center justify-center gap-2 rounded-xl bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition-colors disabled:opacity-60">
+                  {status === "sending" && <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+                  {status === "sending" ? "Enviando…" : "Enviar mensagem"}
                 </button>
               </form>
             )}
@@ -517,11 +511,11 @@ function Footer() {
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-gray-950 font-sans">
+    // The marketing page keeps its dark look regardless of the app theme.
+    <div data-theme="dark" className="relative min-h-screen overflow-x-clip bg-gray-950 font-sans text-gray-100">
       <Navbar />
       <Hero />
       <Features />
-      <Cases />
       <About />
       <Contact />
       <Footer />

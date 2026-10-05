@@ -1,0 +1,43 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import HierarchyDiagram from "../components/HierarchyDiagram.astro";
+import CtaBand from "../components/CtaBand.astro";
+import Icon from "../components/Icon.astro";
+---
+<Layout title="Para Manutenção: uso real de cada componente" description="Para equipes de manutenção: ciclos, horas de operação e partidas por componente, MTBF/MTTR, histórico de falhas e alertas de vida consumida para trocar peças na hora certa.">
+  <PageHero eyebrow="Para Manutenção" title="Troque a peça pelo uso, não pelo calendário" lead="Uma válvula que cicla 40 vezes por minuto não se desgasta como uma que cicla 4. O FactoryConnect conta o uso real de cada componente e transforma isso em plano de manutenção.">
+    <div class="mt-8 flex flex-wrap gap-3"><a href="/contato" class="btn-primary">Fale com um especialista</a></div>
+  </PageHero>
+
+  <section class="container-x mt-16 grid gap-10 lg:grid-cols-2 lg:items-center">
+    <div>
+      <h2 class="text-2xl font-bold text-fg sm:text-3xl">Cada componente com o seu histórico</h2>
+      <p class="mt-4 text-muted">Cilindros, motores, eixos de robô, válvulas, garras, rolamentos: cadastre o componente na posição em que ele trabalha, com fabricante, modelo, série, data de instalação e vida nominal.</p>
+      <ul class="mt-6 grid gap-3 text-sm text-muted">
+        {[
+          "Ciclos, horas de operação e partidas — total e desde a última manutenção",
+          "Troca de componente zera o contador da posição e mantém o histórico da peça",
+          "% de vida consumida comparada à vida nominal do fabricante",
+        ].map((t) => <li class="flex gap-2"><Icon name="check" size={18} class="mt-0.5 shrink-0 text-accent" />{t}</li>)}
+      </ul>
+    </div>
+    <div class="card reveal"><HierarchyDiagram /></div>
+  </section>
+
+  <section class="container-x mt-20">
+    <h2 class="text-2xl font-bold text-fg sm:text-3xl">O que muda na rotina da manutenção</h2>
+    <div class="mt-8 grid gap-5 md:grid-cols-3">
+      <FeatureCard icon="pulse" title="Falhas registradas pela máquina">Paradas e sinais de falha capturados automaticamente, com horário e duração. O técnico completa a causa — sem papel.</FeatureCard>
+      <FeatureCard icon="clock" title="MTBF e MTTR confiáveis">Indicadores de confiabilidade por componente, tipo, fabricante, máquina e linha, calculados a partir dos dados coletados.</FeatureCard>
+      <FeatureCard icon="bell" title="Alertas antes do limite">Aviso quando a vida consumida se aproxima do limite definido no plano, para programar a troca na próxima janela.</FeatureCard>
+      <FeatureCard icon="layers" title="Planos flexíveis">A cada N ciclos, X horas ou Y dias — o que vier primeiro. Cada componente com a regra que faz sentido para ele.</FeatureCard>
+      <FeatureCard icon="eye" title="Desgaste visível">Tendências como tempo de curso de cilindros e temperatura mostram o desgaste chegando.</FeatureCard>
+      <FeatureCard icon="database" title="Integração">API para levar dados a sistemas de manutenção e ERP já usados pela empresa.</FeatureCard>
+    </div>
+    <p class="mt-6 text-sm text-muted">Parte desses recursos está em desenvolvimento e é entregue em etapas. Pergunte o que já está disponível para o seu caso.</p>
+  </section>
+
+  <CtaBand title="Quer começar pelos componentes mais críticos?" text="Escolha uma máquina que mais para e a gente mostra como contar o uso real dos componentes dela." />
+</Layout>

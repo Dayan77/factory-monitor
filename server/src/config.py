@@ -1,4 +1,13 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
+
+# Public site + app (domain decision: site at factoryconnect.tech, app at app.factoryconnect.tech).
+# Always allowed by CORS, whatever CORS_ORIGINS says.
+PUBLIC_ORIGINS = (
+    "https://factoryconnect.tech",
+    "https://www.factoryconnect.tech",
+    "https://app.factoryconnect.tech",
+)
 
 
 class ServerSettings(BaseSettings):
@@ -21,6 +30,9 @@ class ServerSettings(BaseSettings):
     mqtt_broker_port: int = 1883
     mqtt_username: str = ""
     mqtt_password: str = ""
+    # AES-256-GCM payload envelope shared with the edge (services/payload_crypto.py). Empty = plaintext.
+    encryption_key: str = ""
+    mqtt_require_encryption: bool = False
 
     mediamtx_api_url: str = "http://fm_mediamtx:9997"
     mediamtx_hls_url: str = "http://fm_mediamtx:8888"
@@ -34,20 +46,73 @@ class ServerSettings(BaseSettings):
     # Minimum interval between persisted last_seen_at updates (limits DB writes).
     machine_last_seen_write_interval_s: int = 5
 
+    # Usage processing (domain.md §3.3–3.4)
+    # Fallback max_rate (counts/s) of the counter plausibility filter when neither the tag
+    # (max_rate_per_s) nor the machine (ideal_cycle_time_s) define one.
+    usage_default_max_rate_per_s: float = 10.0
+    # A run_state 0 shorter than this does not create a new start.
+    run_state_debounce_s: float = 1.0
+    # MQTT hot path: tag/topology lookups are cached this long (in-process; cleared on any committed
+    # asset change in this process). 0 disables the cache.
+    usage_topology_cache_ttl_s: float = 10.0
+    # Recompute (POST /api/usage/recompute) reads history from Influx one tag × one window at a
+    # time, so memory is bounded by a window, not by the size of the history.
+    usage_recompute_window_h: float = 24.0
+    # Max time one reading may spend in usage processing, incl. waiting for a recompute(apply)
+    # of its tenant to commit (usage/locks.py). A reading that times out is not counted live.
+    usage_process_timeout_s: float = 60.0
+    # SQL statement logging (very slow under MQTT load). Was implied by APP_ENV=development.
+    sql_echo: bool = False
+    # Minimum structlog level (DEBUG logs one line per MQTT reading: costly under load).
+    log_level: str = "INFO"
+    # Max MQTT readings processed at once. Must stay well below the DB pool (10 + 20 overflow):
+    # unbounded handlers took every pooled connection under a backlog and API requests waited
+    # for the 30 s pool timeout. Excess readings wait (in arrival order per tag) instead.
+    mqtt_max_concurrency: int = 12
+    # Payload ts older than this vs. receive time is not sane (PLC/gateway clock unset):
+    # the reading is stamped with the receive time instead.
+    source_ts_max_age_s: int = 30 * 24 * 3600
+    # WebSocket {type:'usage'} messages are coalesced and flushed at most once per interval.
+    usage_ws_interval_s: float = 1.0
+
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = ""
+
+    # Public lead capture (POST /api/public/leads)
+    leads_to_email: str = ""
+    leads_rate_limit_per_hour: int = 5
+    # Reverse proxies whose X-Forwarded-For / X-Forwarded-Proto are trusted (IPs or CIDRs,
+    # comma-separated). The client IP is the right-most X-Forwarded-For entry that is NOT a
+    # trusted proxy, so a client-supplied (left-most) value is never used. Never "*": with "*"
+    # uvicorn takes the left-most entry, which the client controls (lead rate-limit bypass).
+    # Default: loopback + private ranges (docker networks of Traefik/nginx).
+    forwarded_allow_ips: str = "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
     telegram_bot_token: str = ""
 
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
     jwt_refresh_token_expire_days: int = 7
 
-    # Stored as comma-separated string; parsed into list via property
-    cors_origins_raw: str = "http://localhost:3000,http://localhost:5173"
+    # Comma-separated. Read from CORS_ORIGINS (the name used in .env.example / .env.prod.example;
+    # the old field name CORS_ORIGINS_RAW is still accepted).
+    cors_origins_raw: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        validation_alias=AliasChoices("CORS_ORIGINS", "CORS_ORIGINS_RAW", "cors_origins_raw"),
+    )
 
     @property
     def cors_origins(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins_raw.split(",") if o.strip()]
+        origins = [o.strip() for o in self.cors_origins_raw.split(",") if o.strip()]
+        for o in PUBLIC_ORIGINS:
+            if o not in origins:
+                origins.append(o)
+        return origins
 
     @property
     def database_url(self) -> str:

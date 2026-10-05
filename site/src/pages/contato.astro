@@ -1,0 +1,35 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import ContactForm from "../components/ContactForm.astro";
+import Icon from "../components/Icon.astro";
+import { CONTACT_EMAIL, REGISTER_URL } from "../lib/site";
+---
+<Layout title="Contato" description="Fale com a FactoryConnect: conte como é a sua fábrica e montamos com você um piloto para medir eficiência, manutenção e uso de componentes.">
+  <PageHero eyebrow="Contato" title="Vamos conversar sobre a sua fábrica" lead="Conte em poucas linhas quais máquinas você tem e o que gostaria de enxergar. Respondemos por e-mail com os próximos passos." />
+
+  <section class="container-x mt-12 grid gap-10 lg:grid-cols-[1.5fr_1fr]">
+    <ContactForm />
+    <aside class="grid content-start gap-5">
+      <div class="card">
+        <h2 class="font-semibold text-fg">O que acontece depois</h2>
+        <ol class="mt-4 grid gap-4 text-sm text-muted">
+          <li class="flex gap-3"><span class="font-mono text-accent">1.</span>Lemos sua mensagem e respondemos por e-mail.</li>
+          <li class="flex gap-3"><span class="font-mono text-accent">2.</span>Conversa técnica rápida sobre máquinas, CLPs e objetivos.</li>
+          <li class="flex gap-3"><span class="font-mono text-accent">3.</span>Proposta de piloto em uma linha.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h2 class="font-semibold text-fg">Prefere testar sozinho?</h2>
+        <p class="mt-2 text-sm text-muted">Crie uma conta gratuita no app e explore a plataforma.</p>
+        <a href={REGISTER_URL} class="btn-ghost mt-4">Teste grátis</a>
+      </div>
+      {CONTACT_EMAIL && (
+        <div class="card flex items-center gap-3">
+          <Icon name="mail" class="text-accent" />
+          <a class="text-sm text-fg hover:underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+        </div>
+      )}
+    </aside>
+  </section>
+</Layout>

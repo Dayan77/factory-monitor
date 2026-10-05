@@ -1,0 +1,29 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import CtaBand from "../components/CtaBand.astro";
+---
+<Layout title="Segurança: dados industriais protegidos" description="Como o FactoryConnect protege seus dados: HTTPS/TLS, isolamento por empresa, gateway apenas com conexões de saída, senhas com hash, controle de acesso e LGPD.">
+  <PageHero eyebrow="Segurança" title="Seus dados de produção são da sua empresa" lead="Segurança não é um opcional quando o assunto é a rede da fábrica. Estas são as práticas que seguimos — e, quando algo ainda está em evolução, dizemos isso." />
+
+  <section class="container-x mt-16">
+    <div class="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+      <FeatureCard icon="lock" title="Criptografia em trânsito">Acesso ao app e à API somente por HTTPS (TLS). Opcionalmente, o gateway criptografa a carga de dados de ponta a ponta (AES-256-GCM).</FeatureCard>
+      <FeatureCard icon="layers" title="Isolamento por empresa">Plataforma multi-empresa: toda consulta é filtrada pela empresa do usuário, com testes automatizados de isolamento.</FeatureCard>
+      <FeatureCard icon="plug" title="Rede da fábrica preservada">O gateway só inicia conexões de saída. Nenhuma porta de entrada precisa ser aberta no firewall industrial.</FeatureCard>
+      <FeatureCard icon="key" title="Contas e acesso">Senhas armazenadas com hash (bcrypt), sessões com tokens de curta duração e perfis de acesso por função.</FeatureCard>
+      <FeatureCard icon="eye" title="Somente leitura nas máquinas">A coleta lê dados dos CLPs e sensores. O FactoryConnect não envia comandos às suas máquinas.</FeatureCard>
+      <FeatureCard icon="shield" title="Privacidade e LGPD">Dados pessoais tratados só para as finalidades informadas, sem rastreadores de terceiros neste site. <a class="text-accent underline underline-offset-2" href="/privacidade">Política de Privacidade</a>.</FeatureCard>
+    </div>
+  </section>
+
+  <section class="container-x mt-20">
+    <div class="prose-fc">
+      <h2>Em evolução</h2>
+      <p>Segurança é trabalho contínuo. Itens no nosso planejamento incluem autenticação individual por gateway com MQTT sobre TLS, OPC UA com certificados e trilha de auditoria. Se a sua empresa tem requisitos específicos (questionário de segurança, VPN, rede segregada), <a href="/contato">fale com a gente</a>.</p>
+    </div>
+  </section>
+
+  <CtaBand title="Tem requisitos de segurança da TI?" text="Conversamos com o time de TI/OT da sua empresa e explicamos a arquitetura em detalhes." />
+</Layout>

@@ -451,3 +451,107 @@ carregar este bloco passa a ser a verificação permanente.
    "expected": {"cycles": 1400, "estimated": true}}
 ]
 ```
+
+---
+
+## Esclarecimentos Sprint 2
+
+Revisão de domain.md §3 (tags, contadores, horas/partidas) e §4 (produção) procurando pontos em que dois engenheiros
+chegariam a números diferentes. Cada item abaixo é **normativo** (DEVE) e tem prioridade sobre um texto ambíguo
+acima ou em domain.md. Os cenários de ouro em [`docs/scenarios/`](scenarios/README.md) exercitam cada um
+(o código entre parênteses indica onde).
+
+### Contadores (domain.md §3.3)
+
+- **C1 — Primeira leitura é linha de base.** A primeira leitura aceita de uma tag de contador (inclusive após
+  recriar a tag ou perder o estado) tem `delta = 0`: o que foi contado antes é desconhecido. Vale também para
+  `run_state` (C12). (A1 #1, B 17:52)
+- **C2 — `prev` é a última leitura *aceita*.** Leitura descartada como glitch não muda `prev` **nem** o seu
+  timestamp; o Δt da regra 4 é sempre `ts_atual − ts(prev)`. (A1 #10–#11: Δt = 1 200 s, não 600 s)
+- **C3 — A regra 4 vem depois das regras 1–3.** O filtro de plausibilidade é aplicado ao delta já calculado, seja
+  incremento normal, rollover ou reset. Um reset cujo `cur` exceda o limite também é glitch.
+- **C4 — `max_rate` da posição** = `max_rate_per_s` da tag, se cadastrado; senão `2 × cycles_per_part /
+  ideal_cycle_time_s` da máquina; senão o padrão do servidor (`usage_default_max_rate_per_s`, 10/s). Para
+  contadores de peças, `cycles_per_part = 1`. Unidade: contagens/s; o limite é `max_rate × Δt × 1,5 + 10` contagens.
+  (A1: 2 × 1 / 40 = 0,05/s)
+- **C5 — Rollover usa módulo `counter_max + 1`.** `delta = (counter_max − prev) + cur + 1`; o exemplo
+  65 530 → 4 = 10 confirma (usar `counter_max` como módulo dá 9). O limiar `0,9 × counter_max` é comparado com `prev`
+  com `≥`. (A1 #6)
+- **C6 — Duplicata, mesmo instante e fora de ordem.** (a) Mesmo `ts` e mesmo valor → duplicata, `delta = 0`
+  (regra 5). (b) Mesmo `ts` e valor diferente → processada normalmente com Δt = 0 (o limite vira 10).
+  (c) `ts` anterior ao da última leitura aceita → **ignorada** no processamento incremental (o contador é
+  acumulado: a leitura seguinte já traz as contagens). Mesmo valor com `ts` novo **não** é duplicata (delta 0, mas
+  avança `prev`). (A1 #8, #12, #15; B 20:07)
+- **C7 — Salto real depois de um glitch (re-baseline).** Se a leitura seguinte a um glitch for plausível em
+  relação ao **valor glitchado** (`cur ≥ pendente` e `cur − pendente ≤ limite(Δt desde o pendente)`), o contador
+  realmente saltou (CLP trocado, preset): passa-se a contar a partir do valor pendente, somando só
+  `cur − pendente`, e registra-se `counter_rebaseline`. O salto em si **nunca** é contado. Sem isso um salto legítimo
+  congelaria a contagem para sempre. Uma leitura plausível em relação a `prev` descarta o pendente. (A1 #11)
+- **C8 — Reconstrução é a fonte da verdade.** `recompute` (domain.md §3.5) reprocessa o histórico ordenado por
+  `ts`. Para contadores dá o mesmo total que o incremental (a soma dos deltas telescopa). Para `run_state`, leituras
+  que chegaram fora de ordem podem gerar diferença; nesse caso vale o recompute.
+
+### Atribuição no tempo, horas e partidas (domain.md §3.4–3.5)
+
+- **C9 — Bucket de um delta de contador = hora que contém o `ts` da leitura que o revelou**, sem rateio entre
+  horas. Com polling de 1 s o erro é desprezível; com leituras esparsas (cenários), a leitura das 00:07 que cobre
+  23:52–00:07 vai inteira para o bucket 00:00. Horas de operação **são** rateadas pelos buckets que o intervalo
+  atravessa. Partidas vão para o bucket do `ts` da borda de subida. (A1 buckets; A2 buckets; B 00:07)
+- **C10 — Debounce.** A duração de um 0 é `ts(0→1) − ts(1→0)` (timestamps de origem, do edge). Partida nova só se
+  essa duração for **≥** `run_state_debounce_s` (padrão 1,0 s): exatamente 1,0 s **é** partida. As horas são
+  literalmente `Σ run_state = 1`: o 0 filtrado pelo debounce **não** entra como operação (diferença sub-segundo,
+  mas define o número exato). (A2: 0,4/0,9/0,5 s filtrados; 1,0 s é partida; 5 457,2 s)
+- **C11 — Buraco de dados.** `last_seen` = `ts` da última leitura da tag (heartbeat incluso). Intervalo aberto com
+  1 é creditado até `min(próxima leitura, last_seen + machine_offline_timeout_s)` (padrão 60 s). O heartbeat do edge
+  DEVE ser menor que esse timeout (padrão 10 s). Dados que voltam com 1 depois de um buraco iniciado em 1 **não**
+  geram partida (estado no buraco desconhecido); voltar com 1 depois de um 0 observado gera partida normalmente.
+  (A2: 07:30–07:45 credita 60 s; 07:45 não é partida)
+- **C12 — Primeira leitura de `run_state`** é linha de base: não é partida, mesmo com valor 1; a operação é
+  contada a partir dela.
+- **C13 — Herança e precedência de fontes.** Posição sem `run_state` próprio recebe horas **e** partidas do
+  `run_state` da máquina (kpis.md §2.1). Posição com `counter_tag_id` conta ciclos só por essa tag; outras tags de
+  ciclo ligadas à mesma posição são apenas verificação cruzada (não somam).
+- **C14 — Ciclos estimados** (posição sem tag de ciclo) = delta de peças **totais** (boas + refugo) da máquina ×
+  `cycles_per_part`, marcados `estimated = true`.
+- **C15 — Peças totais.** Sem `part_counter_total`: total = boas + refugo (cada delta de boas e de refugo soma no
+  total). Com `part_counter_total`: total vem dele e boas = total − refugo. (B)
+
+### Vida e projeção (kpis.md §4)
+
+- **C16 — Unidades na API.** `life_consumed_pct` é **fração 0–1** apesar do nome (0,72, não 72). Horas trafegam em
+  horas (float) e são armazenadas em segundos. Chaves de vida nominal na API: `cycles`, `hours`, `starts`.
+- **C17 — "Hoje" e janela.** "Hoje" = data **no fuso da planta** no instante da avaliação (23:30 de 05/10 em
+  Manaus é 03:30Z de 06/10 → hoje = 05/10). A janela do ritmo são as 14 × 24 h que terminam no instante da avaliação
+  (buckets horários com início ≥ hora cheia de `agora − 14 d`), divididas por 14. Componente instalado há menos de
+  14 dias: divide-se pelos dias desde `installed_at` (mínimo 3; `low_confidence = true`). (A1/A2 projeção)
+- **C18 — Arredondamento de dias.** `dias = ceil(restante / ritmo)`; quociente inteiro não sobe (70 → 70;
+  46,67 → 47). A RUL é a medida com **menos dias**; empate → a medida de maior % de vida.
+
+### Produção e dia produtivo (domain.md §4.1, kpis.md §1.9)
+
+- **C19 — Dia.** Com calendário de turnos (Sprint 3): o turno que cruza a meia-noite pertence ao dia produtivo em
+  que começa. Sem calendário (Sprint 2): dia = dia calendário **local** 00:00–24:00 no fuso da planta (é o que o
+  histórico `bucket=1d` mostra) e a UI não deve chamá-lo de "dia produtivo". **Nunca** agrupar por data UTC (em Manaus
+  ela vira às 20:00 local). (B: 627 no dia produtivo 05/10; 462 + 165 por dia local; UTC daria 156 + 471)
+- **C20 — Buckets horários** são rotulados na hora local da planta. Para fusos de hora cheia (todo o Brasil) o
+  bucket horário UTC coincide com o local; a agregação diária é sempre feita no fuso da planta.
+- **C21 — Cadência de um bucket** = peças (boas + refugo) no bucket / duração do bucket (h) — cadência bruta, sem
+  descontar pausas. As variantes de §1.9 (`PQ/PBT`, `PQ/APT`) exigem calendário e paradas e valem por turno ou maior.
+
+### Paradas, micro-paradas e confiabilidade (domain.md §4.3, kpis.md §1.8, §2) — para o Sprint 3
+
+- **C22 — Limiar.** `d ≥ micro_stop_threshold_s` → `DowntimeEvent` (120 s exatos é parada). `limiar_detecção` de
+  §1.8 = `run_state_debounce_s` (1 s): quedas menores não são paradas nem micro-paradas. O limiar vale para **toda**
+  fonte, inclusive `fault_state`: falha com código mais curta que o limiar é micro-parada, não gera `FailureRecord`
+  e não entra em `n` do MTBF/MTTR; é contada à parte como `short_faults`. (C: 119 s micro, 120 s evento; falha 305 de 60 s)
+- **C23 — Tempo de operação do MTBF** = `Σ run_state = 1` (exclui micro-paradas), **não** APT. No cenário C:
+  349,5 min, não 357,5 min.
+- **C24 — Fronteiras.** (a) Paradas separadas por menos de 10 s de operação **DEVEM** ser fundidas (era PODE): a
+  duração fundida vai do início da primeira ao fim da última e o limiar é aplicado a ela. (b) O limiar é aplicado à
+  duração contígua total da parada; depois, a parte que cai dentro de uma pausa planejada conta como PDOT e o
+  restante como ADOT (e a divisão por turno da regra 5 se aplica do mesmo modo). (c) O MTTR usa o tempo de relógio
+  `restored_at − failed_at` inteiro, mesmo que atravesse uma pausa (é o que a produção sente); só ADOT desconta a pausa.
+  (d) Parado durante pausa planejada **não** gera `DowntimeEvent`.
+
+Em aberto para o Sprint 3 (sem decisão ainda, nenhum cenário depende disso): parada que começa como `stopped` e vira
+`error` no meio (um evento com motivo sugerido `EQP-*`, ou dois eventos?).

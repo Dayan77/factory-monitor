@@ -160,6 +160,49 @@ jobs:
       - name: Build
         run: npx vite build
 
+  # ── Site público (Astro estático) ────────────────────────────────
+  site:
+    name: site · astro check + vitest + build + e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: site
+    env:
+      ASTRO_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - name: Typecheck (astro check)
+        run: npx astro check
+      - name: Unit tests
+        run: npx vitest run
+      - name: Build
+        run: npx astro build
+      - name: E2E no navegador (Playwright, desktop + mobile)
+        run: |
+          npx playwright install --with-deps chromium
+          node tests/e2e.mjs
+      - name: nginx do site (template com envsubst)
+        run: |
+          docker run --rm -e SITE_CONNECT_SRC=https://app.factoryconnect.tech \
+            -v "$PWD/nginx.conf:/etc/nginx/templates/default.conf.template:ro" \
+            -v "$PWD/dist:/usr/share/nginx/html:ro" nginx:1.30.5-alpine \
+            sh -c '/docker-entrypoint.sh nginx -t'
+      - name: Roteamento de domínios (Traefik v3 e v2 com os labels de produção)
+        run: python3 tests/traefik_routing.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: site-screenshots
+          path: site/test-results/screens
+          retention-days: 7
+
   # ── Infra: compose, nginx, scripts ───────────────────────────────
   infra:
     name: infra · compose + nginx + shell
@@ -185,6 +228,16 @@ jobs:
         run: |
           docker run --rm --add-host server:127.0.0.1 --add-host web:127.0.0.1 \
             -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.30.5-alpine nginx -t
+      - name: nginx -t (prod e bootstrap, com certificado autoassinado descartável)
+        run: |
+          mkdir -p /tmp/le/live/factoryconnect.tech
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=factoryconnect.tech \
+            -keyout /tmp/le/live/factoryconnect.tech/privkey.pem -out /tmp/le/live/factoryconnect.tech/fullchain.pem
+          for f in nginx.prod.conf nginx.bootstrap.conf; do
+            docker run --rm --add-host server:127.0.0.1 --add-host web:127.0.0.1 --add-host site:127.0.0.1 \
+              -v "$PWD/infra/nginx/$f:/etc/nginx/nginx.conf:ro" -v /tmp/le:/etc/letsencrypt:ro \
+              nginx:1.30.5-alpine nginx -t
+          done
       - name: shellcheck
         run: shellcheck -S warning scripts/*.sh
 
@@ -200,6 +253,7 @@ jobs:
           - { name: server, context: server, target: "" }
           - { name: edge,   context: edge,   target: "" }
           - { name: web,    context: web,    target: prod }
+          - { name: site,   context: site,   target: prod }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

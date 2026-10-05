@@ -4,12 +4,12 @@ Pydantic schemas for request/response serialization.
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ..models.user import UserRole
 from ..models.tenant import TenantPlan
 from ..models.machine import MachineStatus
-from ..models.tag import ProtocolType, DataType
+from ..models.tag import ProtocolType, DataType, SemanticRole
 from ..models.alert import AlertCondition, AlertSeverity
 
 
@@ -131,6 +131,9 @@ class UserUpdate(BaseModel):
 class LineOut(BaseModel):
     id: str
     tenant_id: str
+    plant_id: str
+    output_machine_id: Optional[str] = None
+    bottleneck_machine_id: Optional[str] = None
     name: str
     description: Optional[str]
     location: Optional[str]
@@ -145,6 +148,7 @@ class LineCreate(BaseModel):
     name: str
     description: Optional[str] = None
     location: Optional[str] = None
+    plant_id: Optional[str] = None     # default: the tenant's first plant (created if none)
 
 
 class LineUpdate(BaseModel):
@@ -152,6 +156,10 @@ class LineUpdate(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
     is_active: Optional[bool] = None
+    plant_id: Optional[str] = None
+    # explicit null clears; the machine must belong to this line
+    output_machine_id: Optional[str] = None
+    bottleneck_machine_id: Optional[str] = None
 
 
 # ── Machine ───────────────────────────────────────────────────────
@@ -165,6 +173,7 @@ class MachineOut(BaseModel):
     serial_number: Optional[str]
     status: MachineStatus
     last_seen_at: Optional[datetime] = None
+    ideal_cycle_time_s: Optional[float] = None
     created_at: datetime
     updated_at: datetime
 
@@ -176,6 +185,7 @@ class MachineCreate(BaseModel):
     name: str
     model: Optional[str] = None
     serial_number: Optional[str] = None
+    ideal_cycle_time_s: Optional[float] = Field(default=None, gt=0)
 
 
 class MachineUpdate(BaseModel):
@@ -184,6 +194,7 @@ class MachineUpdate(BaseModel):
     serial_number: Optional[str] = None
     status: Optional[MachineStatus] = None
     line_id: Optional[str] = None
+    ideal_cycle_time_s: Optional[float] = Field(default=None, gt=0)
 
 
 # ── Tag ───────────────────────────────────────────────────────────
@@ -204,6 +215,10 @@ class TagOut(BaseModel):
     max_value: Optional[float]
     poll_interval_ms: int
     is_active: bool
+    semantic_role: SemanticRole = SemanticRole.analog
+    position_id: Optional[str] = None
+    counter_max: Optional[int] = None
+    max_rate_per_s: Optional[float] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -222,6 +237,10 @@ class TagCreate(BaseModel):
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     poll_interval_ms: int = 1000
+    semantic_role: SemanticRole = SemanticRole.analog
+    position_id: Optional[str] = None
+    counter_max: Optional[int] = Field(default=None, gt=0)
+    max_rate_per_s: Optional[float] = Field(default=None, gt=0)
 
 
 class TagUpdate(BaseModel):
@@ -235,6 +254,12 @@ class TagUpdate(BaseModel):
     max_value: Optional[float] = None
     poll_interval_ms: Optional[int] = None
     is_active: Optional[bool] = None
+    # Fase 1 — explicit null clears position_id / counter_max / max_rate_per_s
+    machine_id: Optional[str] = None
+    semantic_role: Optional[SemanticRole] = None
+    position_id: Optional[str] = None
+    counter_max: Optional[int] = Field(default=None, gt=0)
+    max_rate_per_s: Optional[float] = Field(default=None, gt=0)
 
 
 # ── Alert Rule ────────────────────────────────────────────────────

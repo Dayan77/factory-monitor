@@ -62,12 +62,12 @@ export default function RegisterPage() {
               <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
           </span>
-          <span className="text-base font-bold text-white">FactoryConnect</span>
+          <span className="text-base font-bold text-gray-50">FactoryConnect</span>
         </Link>
 
         <div className="space-y-8">
           <div>
-            <h2 className="text-3xl font-bold text-white">Comece a monitorar<br />sua fábrica hoje.</h2>
+            <h2 className="text-3xl font-bold text-gray-50">Comece a monitorar<br />sua fábrica hoje.</h2>
             <p className="mt-4 text-gray-400">14 dias grátis, sem cartão de crédito. Configure em minutos.</p>
           </div>
           <div className="space-y-4">
@@ -103,12 +103,12 @@ export default function RegisterPage() {
                   <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
                 </svg>
               </span>
-              <span className="text-base font-bold text-white">FactoryConnect</span>
+              <span className="text-base font-bold text-gray-50">FactoryConnect</span>
             </Link>
           </div>
 
           <div>
-            <h1 className="text-2xl font-bold text-white">Criar conta gratuita</h1>
+            <h1 className="text-2xl font-bold text-gray-50">Criar conta gratuita</h1>
             <p className="mt-1 text-sm text-gray-500">14 dias de trial — sem compromisso.</p>
           </div>
 

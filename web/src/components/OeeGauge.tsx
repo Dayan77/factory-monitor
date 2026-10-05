@@ -18,9 +18,9 @@ export default function OeeGauge({ value, size = "md", label }: Props) {
   const dash = `${filled} ${circ}`;
 
   const color =
-    value >= 85 ? "#25a368"  // brand-500
-    : value >= 65 ? "#eab308" // yellow-500
-    : "#ef4444";               // red-500
+    value >= 85 ? "rgb(var(--c-ok-solid))"
+    : value >= 65 ? "rgb(var(--c-warn-solid))"
+    : "rgb(var(--c-danger-solid))";
 
   const fontSize = size === "lg" ? 28 : size === "md" ? 22 : 16;
 
@@ -36,7 +36,7 @@ export default function OeeGauge({ value, size = "md", label }: Props) {
         <circle
           cx={px / 2} cy={px / 2} r={r}
           fill="none"
-          stroke="#1f2937"
+          stroke="rgb(var(--gray-800))"
           strokeWidth={stroke}
           strokeDasharray={`${arc} ${circ}`}
           strokeLinecap="round"

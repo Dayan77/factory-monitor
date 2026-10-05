@@ -48,7 +48,10 @@ class ConnectionManager:
 
     async def broadcast(self, tenant_id: str, message: dict) -> None:
         dead = set()
-        for ws in self._connections.get(tenant_id, set()):
+        # Snapshot: clients connect/disconnect while we await send_json. Iterating the live set
+        # raised "Set changed size during iteration", which aborted the whole MQTT reading
+        # (no Influx write, no usage) — seen on the live stack with browsers reconnecting.
+        for ws in list(self._connections.get(tenant_id, ())):
             try:
                 await ws.send_json(message)
             except Exception:
@@ -138,6 +141,9 @@ async def sensor_stream(ws: WebSocket, tenant_id: str):
                 await ws.close(code=WS_UNAUTHORIZED)
                 break
     except WebSocketDisconnect:
+        pass
+    except RuntimeError:
+        # Starlette: receive after the socket was closed by a failed send (client already gone).
         pass
     finally:
         manager.disconnect(ws, tenant_id)

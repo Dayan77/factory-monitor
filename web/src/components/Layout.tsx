@@ -11,7 +11,7 @@ export default function Layout() {
   const [navOpen, setNavOpen] = useState(false);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-950">
+    <div className="flex h-screen overflow-hidden bg-canvas">
       <Sidebar open={navOpen} onClose={() => setNavOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header onMenu={() => setNavOpen((v) => !v)} menuOpen={navOpen} />

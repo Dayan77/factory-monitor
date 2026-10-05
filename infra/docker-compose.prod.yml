@@ -2,7 +2,11 @@
 #   docker compose --env-file /opt/factory-monitor/.env -f infra/docker-compose.prod.yml up -d
 # Imagens com versão fixa — atualize de propósito, nunca via :latest.
 # Usa o Traefik já instalado pelo Easypanel para roteamento.
-# Os containers server e web são expostos via labels do Traefik na rede easypanel.
+# Domínios (DNS A → VPS para os três):
+#   factoryconnect.tech        → site público estático (site/)        · www.factoryconnect.tech → 301 para o apex
+#   app.factoryconnect.tech    → app React (web) + API/WebSocket (server)
+#   Rotas antigas do app no apex (/login, /dashboard, /api, …) → 301/308 para app.factoryconnect.tech (mesmo caminho).
+# Os containers site, server e web são expostos via labels do Traefik na rede easypanel.
 
 services:
   # ── Databases ─────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=easypanel"
-      - "traefik.http.routers.fm-api.rule=Host(`factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`) || PathPrefix(`/metrics`))"
+      - "traefik.http.routers.fm-api.rule=Host(`app.factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`) || PathPrefix(`/metrics`))"
       - "traefik.http.routers.fm-api.priority=200"
       - "traefik.http.routers.fm-api.entrypoints=https"
       - "traefik.http.routers.fm-api.tls=true"
@@ -118,18 +122,75 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=easypanel"
-      - "traefik.http.routers.fm-web.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web.rule=Host(`app.factoryconnect.tech`)"
       - "traefik.http.routers.fm-web.entrypoints=https"
       - "traefik.http.routers.fm-web.tls=true"
       - "traefik.http.routers.fm-web.tls.certresolver=letsencrypt"
       - "traefik.http.services.fm-web.loadbalancer.server.port=80"
       # Redirecionar HTTP → HTTPS
-      - "traefik.http.routers.fm-web-http.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web-http.rule=Host(`app.factoryconnect.tech`)"
       - "traefik.http.routers.fm-web-http.entrypoints=http"
       - "traefik.http.routers.fm-web-http.middlewares=redirect-https"
       - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
     networks:
       - fm-net
+      - easypanel
+
+  # ── Site público (Astro estático + nginx) ─────────────────────────
+  site:
+    image: factory-monitor-site:latest
+    build:
+      context: ../site
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_APP_URL: https://app.factoryconnect.tech
+        PUBLIC_API_URL: https://app.factoryconnect.tech
+        PUBLIC_CONTACT_EMAIL: ${SITE_CONTACT_EMAIL:-}
+    container_name: fm_site
+    restart: always
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.services.fm-site.loadbalancer.server.port=80"
+      # factoryconnect.tech → site
+      - "traefik.http.routers.fm-site.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site.entrypoints=https"
+      - "traefik.http.routers.fm-site.tls=true"
+      - "traefik.http.routers.fm-site.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-site.service=fm-site"
+      # www.factoryconnect.tech → factoryconnect.tech (mesmo caminho)
+      - "traefik.http.routers.fm-site-www.rule=Host(`www.factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site-www.entrypoints=https"
+      - "traefik.http.routers.fm-site-www.tls=true"
+      - "traefik.http.routers.fm-site-www.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-site-www.middlewares=fm-www-to-apex"
+      - "traefik.http.routers.fm-site-www.service=fm-site"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.regex=^https?://www\\.factoryconnect\\.tech(:[0-9]+)?/(.*)"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.replacement=https://factoryconnect.tech/$${2}"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.permanent=true"
+      # Rotas antigas do app no apex → app.factoryconnect.tech (mantém caminho e query; POST /api vira 308)
+      - "traefik.http.routers.fm-legacy-app.rule=Host(`factoryconnect.tech`) && (Path(`/login`) || PathPrefix(`/login/`) || Path(`/register`) || PathPrefix(`/register/`) || Path(`/dashboard`) || PathPrefix(`/dashboard/`) || Path(`/factory`) || PathPrefix(`/factory/`) || Path(`/machines`) || PathPrefix(`/machines/`) || Path(`/lines`) || PathPrefix(`/lines/`) || Path(`/sensors`) || PathPrefix(`/sensors/`) || Path(`/cameras`) || PathPrefix(`/cameras/`) || Path(`/alerts`) || PathPrefix(`/alerts/`) || Path(`/ai`) || PathPrefix(`/ai/`) || Path(`/admin`) || PathPrefix(`/admin/`) || Path(`/api`) || PathPrefix(`/api/`) || Path(`/ws`) || PathPrefix(`/ws/`))"
+      - "traefik.http.routers.fm-legacy-app.priority=300"
+      - "traefik.http.routers.fm-legacy-app.entrypoints=https"
+      - "traefik.http.routers.fm-legacy-app.tls=true"
+      - "traefik.http.routers.fm-legacy-app.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-legacy-app.middlewares=fm-legacy-to-app"
+      - "traefik.http.routers.fm-legacy-app.service=fm-site"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.regex=^https?://factoryconnect\\.tech(:[0-9]+)?/(.*)"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.replacement=https://app.factoryconnect.tech/$${2}"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.permanent=true"
+      # HTTP → HTTPS (apex e www; o middleware redirect-https é definido no serviço web)
+      - "traefik.http.routers.fm-site-http.rule=Host(`factoryconnect.tech`) || Host(`www.factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site-http.entrypoints=http"
+      - "traefik.http.routers.fm-site-http.middlewares=redirect-https"
+      - "traefik.http.routers.fm-site-http.service=fm-site"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
       - easypanel
 
 networks:

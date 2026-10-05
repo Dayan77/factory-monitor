@@ -6,7 +6,10 @@
  */
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import type { AlertEvent, Camera, Line, Machine, SensorHistory, Tag } from "./types";
+import type {
+  AlertEvent, Camera, Component, ComponentCreateBody, LeadBody, Line, LineProduction, Machine, MachineUsage,
+  NominalLife, Position, PositionDetail, RemovalReason, SensorHistory, Tag, TreePlant, UsageHistory, UsageMeasure,
+} from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -152,4 +155,50 @@ export const adminApi = {
     api.patch(`/api/admin/tenants/${tenantId}/users/${userId}`, body),
   deleteUser:    (tenantId: string, userId: string) =>
     api.delete(`/api/admin/tenants/${tenantId}/users/${userId}`),
+};
+
+// ── Assets & usage (Fase 1) ───────────────────────────────────────
+
+export interface TimeWindow {
+  start?: string;
+  stop?: string;
+  bucket?: "1h" | "1d";
+}
+
+export const plantsApi = {
+  tree: () => api.get<TreePlant[]>("/api/plants/tree"),
+};
+
+export const positionsApi = {
+  list: (machineId: string) => api.get<Position[]>("/api/positions/", { params: { machine_id: machineId } }),
+  get: (id: string) => api.get<PositionDetail>(`/api/positions/${id}`),
+  install: (id: string, componentId: string) =>
+    api.post<PositionDetail>(`/api/positions/${id}/install`, { component_id: componentId }),
+};
+
+export const componentsApi = {
+  list: (params: { position_id?: string; in_stock?: boolean }) =>
+    api.get<Component[]>("/api/components/", { params }),
+  create: (body: ComponentCreateBody) => api.post<Component>("/api/components/", body),
+  update: (id: string, body: Partial<{ manufacturer: string | null; model: string | null; serial_number: string | null; nominal_life: NominalLife }>) =>
+    api.patch<Component>(`/api/components/${id}`, body),
+  remove: (id: string, reason: RemovalReason) => api.post<Component>(`/api/components/${id}/remove`, { reason }),
+};
+
+export const usageApi = {
+  machine: (machineId: string) => api.get<MachineUsage>(`/api/machines/${machineId}/usage`),
+  history: (
+    scope: { position_id: string } | { machine_id: string },
+    measure: UsageMeasure,
+    window: TimeWindow = {},
+  ) => api.get<UsageHistory>("/api/usage/history", { params: { ...scope, measure, bucket: "1h", ...window } }),
+  lineProduction: (lineId: string, window: TimeWindow = {}) =>
+    api.get<LineProduction>(`/api/lines/${lineId}/production`, { params: { bucket: "1h", ...window } }),
+};
+
+// ── Public (no auth) ──────────────────────────────────────────────
+
+export const publicApi = {
+  /** 202 on success (also for honeypot hits); 422 validation; 429 rate limit. */
+  createLead: (body: LeadBody) => axios.post<{ status: string }>(`${BASE_URL}/api/public/leads`, body, { timeout: 15_000 }),
 };

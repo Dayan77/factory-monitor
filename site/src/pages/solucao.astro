@@ -1,0 +1,81 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import CtaBand from "../components/CtaBand.astro";
+import Icon, { type IconName } from "../components/Icon.astro";
+
+const steps: { n: string; icon: IconName; t: string; lead: string; items: string[] }[] = [
+  {
+    n: "01", icon: "plug", t: "Coleta",
+    lead: "Tudo começa com dados confiáveis vindos direto da máquina — não de apontamentos manuais.",
+    items: [
+      "Gateway edge na rede da fábrica lê CLPs, inversores e sensores via Modbus TCP, OPC UA e MQTT",
+      "Contadores do CLP e contagem local de pulsos rápidos, com tratamento de reset e estouro de contador",
+      "Buffer local: sem internet, nada se perde",
+      "Cada sinal recebe um papel: contador de ciclos, estado de operação, peças boas, refugo, falha",
+    ],
+  },
+  {
+    n: "02", icon: "gauge", t: "Eficiência (OEE)",
+    lead: "Saiba quanto a linha produz, em que ritmo e onde perde tempo.",
+    items: [
+      "Contagem de produção e cadência (peças por hora) por linha",
+      "OEE = disponibilidade × desempenho × qualidade, conforme a ISO 22400",
+      "Paradas registradas automaticamente a partir do estado da máquina",
+      "Comparação entre máquinas, linhas e períodos",
+    ],
+  },
+  {
+    n: "03", icon: "wrench", t: "Manutenção (MTBF/MTTR)",
+    lead: "Planeje a manutenção pelo uso real de cada componente.",
+    items: [
+      "Acumuladores por componente: ciclos, horas de operação e partidas — total e desde a última troca",
+      "Indicadores de confiabilidade: MTBF, MTTR e disponibilidade",
+      "Planos por ciclos, horas ou dias (o que vier primeiro) e alertas de vida consumida",
+      "Taxonomia de falhas inspirada na ISO 14224",
+    ],
+  },
+  {
+    n: "04", icon: "trend", t: "Preditiva",
+    lead: "Com histórico de uso e de sinais, antecipe o desgaste antes da quebra.",
+    items: [
+      "Tendência de tempo de curso, corrente, vibração e temperatura",
+      "Previsão da data de troca a partir do ritmo de uso",
+      "Alertas de desvio do comportamento normal",
+    ],
+  },
+];
+---
+<Layout title="Solução: da coleta à manutenção preditiva" description="Coleta automática de dados de máquinas, eficiência produtiva (OEE), indicadores de manutenção (MTBF/MTTR) e manutenção preditiva — uma jornada em etapas com o FactoryConnect.">
+  <PageHero eyebrow="Solução" title="Da coleta à manutenção preditiva, em etapas" lead="Cada etapa se apoia na anterior. Você começa coletando dados de uma linha e evolui até antecipar falhas — sem projeto gigante e sem trocar equipamentos." />
+
+  <section class="container-x mt-16">
+    <ol class="relative grid gap-8">
+      {steps.map((s) => (
+        <li class="card reveal grid gap-6 md:grid-cols-[220px_1fr] md:p-8">
+          <div>
+            <span class="font-mono text-sm text-accent">{s.n}</span>
+            <div class="mt-2 flex items-center gap-3">
+              <span class="grid size-10 place-items-center rounded-xl bg-brand-500/12 text-accent"><Icon name={s.icon} size={22} /></span>
+              <h2 class="text-xl font-bold text-fg">{s.t}</h2>
+            </div>
+          </div>
+          <div>
+            <p class="text-fg">{s.lead}</p>
+            <ul class="mt-4 grid gap-2 sm:grid-cols-2">
+              {s.items.map((i) => (
+                <li class="flex gap-2 text-sm text-muted"><Icon name="check" size={18} class="mt-0.5 shrink-0 text-accent" />{i}</li>
+              ))}
+            </ul>
+          </div>
+        </li>
+      ))}
+    </ol>
+    <p class="mt-8 max-w-3xl text-sm text-muted">
+      Os recursos são entregues de forma incremental. Em uma conversa rápida mostramos o que já está disponível
+      para o seu tipo de máquina e o que está no planejamento — sem promessas vagas.
+    </p>
+  </section>
+
+  <CtaBand />
+</Layout>

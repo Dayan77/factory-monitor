@@ -1,7 +1,8 @@
 """
 Machine status derived from data.
 
-Rules (Fase 0 — until run_state/fault_state tags exist in Fase 1):
+Rules (Fase 0 behaviour; machines with a machine-level run_state tag get running/stopped from
+that tag instead — see services/usage/processor.py derive_machine_status, domain.md §1.1):
   * A reading arrives for any tag of a machine  → last_seen_at = the reading's
     source timestamp (payload `ts`, clamped by the MQTT subscriber; never moved
     backwards) and, if the reading is fresh (source ts within
@@ -71,7 +72,10 @@ class StatusChange:
 # moves backwards (GREATEST) and only fresh readings flip the status.
 _MARK_SEEN_SQL = text("""
 WITH prev AS (
-    SELECT m.id, m.status AS old_status
+    SELECT m.id, m.status AS old_status,
+           EXISTS (SELECT 1 FROM tags rt
+                    WHERE rt.machine_id = m.id AND rt.semantic_role = 'run_state'
+                      AND rt.position_id IS NULL AND rt.is_active) AS has_run_state
       FROM machines m
       JOIN tags t ON t.machine_id = m.id
      WHERE t.id = CAST(:tag_id AS uuid)
@@ -82,10 +86,11 @@ WITH prev AS (
 UPDATE machines m
    SET last_seen_at = GREATEST(COALESCE(m.last_seen_at, :seen_at), :seen_at),
        status = CASE WHEN CAST(:fresh AS boolean) AND m.status IN ('unknown', 'stopped')
+                          AND NOT prev.has_run_state
                      THEN 'running'::machinestatus ELSE m.status END
   FROM prev
  WHERE m.id = prev.id
-   AND ((CAST(:fresh AS boolean) AND m.status IN ('unknown', 'stopped'))
+   AND ((CAST(:fresh AS boolean) AND m.status IN ('unknown', 'stopped') AND NOT prev.has_run_state)
         OR m.last_seen_at IS NULL
         OR m.last_seen_at < :write_before)
 RETURNING m.id::text, m.tenant_id::text, m.name, m.status::text,

@@ -2,7 +2,7 @@ import clsx from "clsx";
 
 /** Placeholder block shown while data loads (keeps layout stable, no jumps). */
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden="true" className={clsx("animate-pulse rounded-md bg-gray-800", className)} />;
+  return <div aria-hidden="true" className={clsx("animate-pulse rounded-md bg-surface-2", className)} />;
 }
 
 /** Screen-reader friendly wrapper for a group of skeletons. */

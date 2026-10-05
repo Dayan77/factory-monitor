@@ -1,0 +1,6 @@
+node_modules
+dist
+.astro
+tests
+test-results
+*.md

@@ -1,0 +1,171 @@
+---
+import Layout from "../layouts/Layout.astro";
+import DashboardMock from "../components/DashboardMock.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import ArchitectureDiagram from "../components/ArchitectureDiagram.astro";
+import HierarchyDiagram from "../components/HierarchyDiagram.astro";
+import CtaBand from "../components/CtaBand.astro";
+import Icon from "../components/Icon.astro";
+import { REGISTER_URL, SITE_URL, DEFAULT_DESCRIPTION, APP_URL } from "../lib/site";
+
+const software = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "FactoryConnect",
+  applicationCategory: "BusinessApplication",
+  applicationSubCategory: "Monitoramento industrial (Indústria 4.0)",
+  operatingSystem: "Web",
+  url: APP_URL,
+  description: DEFAULT_DESCRIPTION,
+  inLanguage: "pt-BR",
+  publisher: { "@id": `${SITE_URL}/#organization` },
+  featureList: [
+    "Coleta de dados via Modbus TCP, OPC UA e MQTT",
+    "Eficiência produtiva (OEE) e cadência de linha",
+    "Indicadores de manutenção (MTBF, MTTR)",
+    "Uso por componente: ciclos, horas de operação e partidas",
+    "Alertas em tempo real",
+  ],
+};
+const website = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "FactoryConnect",
+  url: SITE_URL,
+  inLanguage: "pt-BR",
+  publisher: { "@id": `${SITE_URL}/#organization` },
+};
+
+const journey = [
+  { n: "01", t: "Coleta", d: "Conecte CLPs, inversores e sensores pelo gateway edge — Modbus TCP, OPC UA ou MQTT." },
+  { n: "02", t: "Eficiência", d: "Produção, cadência e OEE por máquina e linha, calculados a partir de dados reais." },
+  { n: "03", t: "Manutenção", d: "MTBF, MTTR e uso de cada componente para planejar a troca na hora certa." },
+  { n: "04", t: "Preditiva", d: "Tendências de desgaste e desvios antes que virem parada." },
+];
+---
+<Layout
+  title="FactoryConnect — o raio-x da sua fábrica"
+  description="Conecte suas máquinas e veja eficiência (OEE), manutenção (MTBF/MTTR) e o uso de cada componente em tempo real. Gateway edge com Modbus TCP, OPC UA e MQTT, implantação em dias."
+  jsonLd={[website, software]}
+>
+  <!-- Hero -->
+  <section class="relative overflow-hidden">
+    <div class="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(55%_60%_at_75%_10%,color-mix(in_oklab,var(--color-brand-500)_22%,transparent),transparent_70%)]"></div>
+    <div class="pointer-events-none absolute inset-0 -z-10 opacity-[.35] [background-image:linear-gradient(var(--color-line)_1px,transparent_1px),linear-gradient(90deg,var(--color-line)_1px,transparent_1px)] [background-size:48px_48px] [mask-image:radial-gradient(70%_60%_at_50%_0%,#000,transparent)]"></div>
+    <div class="container-x grid items-center gap-12 pb-16 pt-14 sm:pt-20 lg:grid-cols-[1.05fr_1fr] lg:pb-24">
+      <div>
+        <p class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-xs font-medium text-muted">
+          <span class="size-2 rounded-full bg-brand-500 pulse-dot"></span> Indústria 4.0 sem trocar o que já funciona
+        </p>
+        <h1 class="mt-5 text-4xl font-bold leading-[1.08] text-fg sm:text-6xl">
+          O <span class="text-accent">raio-x</span> da sua fábrica.
+        </h1>
+        <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted">
+          Eficiência, manutenção e o uso de cada componente — da linha inteira até a válvula —
+          em um só lugar, com dados que vêm direto das suas máquinas.
+        </p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href={REGISTER_URL} class="btn-primary px-6 text-base">Teste grátis</a>
+          <a href="/contato" class="btn-ghost px-6 text-base">Fale com a gente</a>
+        </div>
+        <ul class="mt-8 grid gap-2 text-sm text-muted sm:grid-cols-2">
+          {["Modbus TCP · OPC UA · MQTT", "Implantação em dias, não meses", "Funciona com CLPs que você já tem", "Dados isolados por empresa"].map((t) => (
+            <li class="flex items-center gap-2"><Icon name="check" size={18} class="text-accent shrink-0" />{t}</li>
+          ))}
+        </ul>
+      </div>
+      <div class="reveal lg:pl-4"><DashboardMock /></div>
+    </div>
+  </section>
+
+  <!-- Problem / value -->
+  <section class="container-x mt-8" aria-labelledby="valor">
+    <div class="max-w-2xl">
+      <p class="eyebrow">Por que FactoryConnect</p>
+      <h2 id="valor" class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Pare de decidir no escuro</h2>
+      <p class="mt-4 text-muted">Planilhas preenchidas no fim do turno e manutenção pelo calendário escondem as perdas reais. Com dados coletados automaticamente, cada equipe enxerga o que importa para ela.</p>
+    </div>
+    <div class="mt-10 grid gap-5 md:grid-cols-3">
+      <FeatureCard icon="gauge" title="Eficiência (OEE)">
+        Disponibilidade, desempenho e qualidade por máquina e linha, seguindo a ISO 22400. Veja onde a produção está sendo perdida.
+      </FeatureCard>
+      <FeatureCard icon="wrench" title="Manutenção (MTBF/MTTR)">
+        Falhas e paradas registradas pelos próprios sinais da máquina. Indicadores de confiabilidade calculados, não estimados.
+      </FeatureCard>
+      <FeatureCard icon="counter" title="Uso de cada componente">
+        Ciclos, horas de operação e partidas acumulados por componente — base para trocar peças pelo uso real, não pelo calendário.
+      </FeatureCard>
+    </div>
+  </section>
+
+  <!-- Journey -->
+  <section class="container-x mt-24" aria-labelledby="jornada">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div class="max-w-2xl">
+        <p class="eyebrow">A jornada</p>
+        <h2 id="jornada" class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Da coleta à manutenção preditiva</h2>
+      </div>
+      <a href="/solucao" class="text-sm font-semibold text-accent hover:underline">Conheça a solução →</a>
+    </div>
+    <ol class="mt-10 grid gap-5 md:grid-cols-4">
+      {journey.map((s) => (
+        <li class="card reveal relative">
+          <span class="font-mono text-sm text-accent">{s.n}</span>
+          <h3 class="mt-2 text-lg font-semibold text-fg">{s.t}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">{s.d}</p>
+        </li>
+      ))}
+    </ol>
+  </section>
+
+  <!-- How it works -->
+  <section class="container-x mt-24" aria-labelledby="como">
+    <div class="max-w-2xl">
+      <p class="eyebrow">Como funciona</p>
+      <h2 id="como" class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Um gateway na fábrica. Uma visão na nuvem.</h2>
+      <p class="mt-4 text-muted">O gateway edge lê os dados que suas máquinas já produzem, guarda tudo localmente se a internet cair e envia por conexão criptografada. Nada de abrir portas na sua rede.</p>
+    </div>
+    <div class="card reveal mt-10 p-4 sm:p-8"><ArchitectureDiagram /></div>
+    <div class="mt-6"><a href="/como-funciona" class="text-sm font-semibold text-accent hover:underline">Veja os detalhes técnicos →</a></div>
+  </section>
+
+  <!-- Audiences -->
+  <section class="container-x mt-24 grid gap-10 lg:grid-cols-2 lg:items-center" aria-labelledby="ativos">
+    <div class="reveal order-2 lg:order-1"><HierarchyDiagram /></div>
+    <div class="order-1 lg:order-2">
+      <p class="eyebrow">Ativos organizados</p>
+      <h2 id="ativos" class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Da planta até o componente</h2>
+      <p class="mt-4 text-muted">Organize sua fábrica em Planta → Linha → Máquina → Posição → Componente. Cada sinal recebe um papel (contador de ciclos, estado de operação, peças boas, refugo…) e vira indicador automaticamente.</p>
+      <div class="mt-8 grid gap-4 sm:grid-cols-2">
+        <a href="/para-manutencao" class="card group block transition-colors hover:border-brand-500/60">
+          <Icon name="wrench" class="text-accent" />
+          <h3 class="mt-3 font-semibold text-fg">Para Manutenção</h3>
+          <p class="mt-1 text-sm text-muted">Uso real por componente, histórico de falhas e MTBF.</p>
+          <span class="mt-3 inline-block text-sm font-semibold text-accent group-hover:underline">Saiba mais →</span>
+        </a>
+        <a href="/para-producao" class="card group block transition-colors hover:border-brand-500/60">
+          <Icon name="trend" class="text-accent" />
+          <h3 class="mt-3 font-semibold text-fg">Para Produção</h3>
+          <p class="mt-1 text-sm text-muted">Contagem de peças, cadência, paradas e OEE ao vivo.</p>
+          <span class="mt-3 inline-block text-sm font-semibold text-accent group-hover:underline">Saiba mais →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Trust -->
+  <section class="container-x mt-24" aria-labelledby="confianca">
+    <div class="max-w-2xl">
+      <p class="eyebrow">Confiança</p>
+      <h2 id="confianca" class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Feito para o chão de fábrica de verdade</h2>
+    </div>
+    <div class="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <FeatureCard icon="plug" title="Protocolos abertos">Modbus TCP, OPC UA e MQTT. Sem dependência de um único fabricante de CLP.</FeatureCard>
+      <FeatureCard icon="database" title="Sem perda de dados">Buffer local no gateway: se a internet cair, os dados são enviados quando ela voltar.</FeatureCard>
+      <FeatureCard icon="shield" title="Segurança por padrão">HTTPS, dados isolados por empresa e gateway que só faz conexões de saída.</FeatureCard>
+      <FeatureCard icon="rocket" title="Implantação em dias">Comece por uma linha, prove o valor e expanda no seu ritmo.</FeatureCard>
+    </div>
+  </section>
+
+  <CtaBand />
+</Layout>

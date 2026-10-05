@@ -33,7 +33,19 @@ class EdgeSettings(BaseSettings):
     # a healthy gateway reading stable values gets its machine marked offline.
     deadband_max_silence_s: float = 30.0
 
+    # A device timestamp (OPC UA SourceTimestamp) further than this from the gateway clock is
+    # not trusted: the gateway receive time is used instead (warned once per tag). Keeps live
+    # readings live on the server (it treats readings > 120 s old as replays).
+    max_clock_skew_s: float = 5.0
+
     encryption_key: str = ""    # 32-byte AES-256 key
+
+    # Mapa de dispositivos/tags (edge/src/plant_map.py). Quando definido, substitui MODBUS_HOST/MODBUS_TAGS.
+    plant_map_path: str = ""
+    gateway_id: str = ""        # sobrescreve o gateway_id do mapa
+    counter_db_path: str = "/tmp/edge_counters.db"   # contadores de borda (cycle_pulse), persistentes
+    pulse_poll_ms: int = 0      # 0 = usa o pulse_poll_ms do mapa (padrão 20 ms)
+    heartbeat_interval_s: float = 0.0   # 0 = usa o heartbeat_s do mapa (padrão 10 s)
 
 
 settings = EdgeSettings()
