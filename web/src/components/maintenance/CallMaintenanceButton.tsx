@@ -25,7 +25,12 @@ function callOutcome(wo: EmergencyCallResponse): Outcome {
     return { tone: "danger", text: `Chamado ${wo.number} aberto, mas ninguém foi notificado: não há ninguém de plantão nesta linha. Avise por rádio/telefone.` };
   }
   if (r.on_call_technicians === 0) {
-    return { tone: "warn", text: `Chamado ${wo.number} aberto. Ninguém de plantão nesta linha: o planejamento/gestão foi avisado (${r.notified_count} pessoa${r.notified_count > 1 ? "s" : ""}) para acionar um técnico.` };
+    // only planners / managers / admins count as "planejamento/gestão" — the line supervisor is not maintenance
+    const e = r.escalated_count ?? 0;
+    if (e === 0) {
+      return { tone: "danger", text: `Chamado ${wo.number} aberto, mas nenhuma pessoa da manutenção foi notificada: não há técnico de plantão nesta linha nem planejamento/gestão para acionar (só a supervisão da linha recebeu). Avise a manutenção por rádio/telefone.` };
+    }
+    return { tone: "warn", text: `Chamado ${wo.number} aberto. Ninguém de plantão nesta linha: o planejamento/gestão foi avisado (${e} pessoa${e > 1 ? "s" : ""}) para acionar um técnico.` };
   }
   const n = r.on_call_technicians;
   return { tone: "ok", text: `Manutenção chamada: ${wo.number}. ${n} técnico${n > 1 ? "s" : ""} de plantão notificado${n > 1 ? "s" : ""}.` };

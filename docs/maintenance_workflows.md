@@ -156,9 +156,11 @@ leitura de QR code da posição/componente (etiqueta na máquina com o `id` da p
 - **Parada por falha**: a parada `EQP-*` aparece em Paradas; o supervisor (ou o operador) toca **"Chamar
   manutenção"** → cria a solicitação/OS emergencial ligada à parada e à falha rascunho e notifica os técnicos de
   plantão da área (sem plantão na linha, escala para planejamento/gestão e admins). A resposta informa quem foi
-  avisado (`emergency_call.notified_count`, `on_call_technicians`, `warning`) e a tela nunca mostra "Manutenção
-  chamada" quando nenhum técnico de plantão foi notificado: aviso "ninguém de plantão nesta linha" (ou alerta
-  "ninguém foi notificado — avise por rádio/telefone"). A parada continua contando no OEE como `EQP-*` (disponibilidade) até a máquina voltar.
+  avisado (`emergency_call.notified_count`, `on_call_technicians`, `escalated_count`, `warning`) e a tela nunca
+  mostra "Manutenção chamada" quando nenhum técnico de plantão foi notificado: aviso "ninguém de plantão nesta
+  linha — o planejamento/gestão foi avisado (N pessoas)", onde N conta só planejadores/gestores/admins alcançados
+  (`escalated_count`; o supervisor da linha não é manutenção). Se nenhuma pessoa da manutenção foi alcançada (só o
+  supervisor, ou ninguém), alerta vermelho "avise a manutenção por rádio/telefone". A parada continua contando no OEE como `EQP-*` (disponibilidade) até a máquina voltar.
 - **Defeito sem parada** (vazamento de ar, ruído): **"Solicitar manutenção"** a partir da máquina/posição (QR) com
   foto → OS `open` para o planejador; não é falha enquanto não houver perda de função (domain.md §5.5).
 - **Liberação**: quando o técnico conclui uma OS que parou a máquina, o supervisor confirma "máquina liberada e

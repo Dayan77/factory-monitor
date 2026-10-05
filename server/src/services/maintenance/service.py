@@ -652,23 +652,35 @@ async def engine_emergency_work_order(db: AsyncSession, f: FailureRecord, title:
 @dataclass(frozen=True)
 class EmergencyCallResult:
     """Who an emergency call reached. `fallback` = no on-call technician covers the line, so the planners /
-    managers and admins of the area were called instead; `notified == 0` means nobody was reached and the caller
-    must be told (CLAUDE.md: never report a success that did not happen)."""
+    managers and admins of the area were called instead; `escalated` counts only those planners / managers /
+    admins actually reached (the line supervisors are counted in `notified` but are not maintenance people).
+    `notified == 0` means nobody was reached; `on_call_technicians == 0 and escalated == 0` means no maintenance
+    person was reached (at most the production supervisor). Both must be told to the caller (CLAUDE.md: never
+    report a success that did not happen)."""
     notified: int
     on_call_technicians: int
     fallback: bool
+    escalated: int = 0
+
+    @property
+    def maintenance_reached(self) -> bool:
+        return self.on_call_technicians > 0 or self.escalated > 0
 
     @property
     def warning(self) -> Optional[str]:
         if self.notified == 0:
             return "Ninguém foi notificado: não há técnico de plantão nem responsável cadastrado para esta linha. Avise por rádio/telefone."
+        if not self.maintenance_reached:
+            return ("Nenhuma pessoa da manutenção foi notificada: não há técnico de plantão nesta linha nem "
+                    "planejamento/gestão para acionar. Só a supervisão da linha recebeu o chamado. Avise a manutenção "
+                    "por rádio/telefone.")
         if self.on_call_technicians == 0:
             return "Não há técnico de plantão nesta linha: o chamado foi enviado ao planejamento/gestão para acionar alguém."
         return None
 
     def as_dict(self) -> dict:
         return {"notified_count": self.notified, "on_call_technicians": self.on_call_technicians,
-                "fallback": self.fallback, "warning": self.warning}
+                "fallback": self.fallback, "escalated_count": self.escalated, "warning": self.warning}
 
 
 async def emergency_call(db: AsyncSession, tenant_id: str, machine_id: str, title: str, body: Optional[str],
@@ -676,22 +688,28 @@ async def emergency_call(db: AsyncSession, tenant_id: str, machine_id: str, titl
     """Push + sound to the on-call technicians of the machine's line (technicians without a line restriction
     cover every line) and its supervisors (cannot be muted). When no on-call technician covers the line, the call
     escalates to the planners / managers of the area and the tenant admins, so a stopped machine is never left
-    with nobody called."""
+    with nobody called. The result counts technicians and escalation recipients separately from supervisors."""
     line_id = await machine_line(db, tenant_id, machine_id)
     techs = [u for u in await notif.users_with_roles(db, tenant_id, TECHNICIANS, line_id, on_call=True)
              if u.id != exclude_user]
     sups = await notif.users_with_roles(db, tenant_id, SUPERVISORS, line_id)
     users = techs + sups
     fallback = not techs
+    escalation = []
     if fallback:
-        users += await notif.users_with_roles(db, tenant_id, PLANNERS + ADMINS, line_id)
+        escalation = [u for u in await notif.users_with_roles(db, tenant_id, PLANNERS + ADMINS, line_id)
+                      if u.id != exclude_user]
+        users += escalation
     users = [u for u in users if u.id != exclude_user]
     ns = await notif.notify(db, tenant_id, users, "emergency_call", title, body=body, link=link,
                             data={**data, "sound": True, "no_on_call": fallback}, line_id=line_id)
     reached = {n.user_id for n in ns}
-    res = EmergencyCallResult(notified=len(reached), on_call_technicians=sum(1 for u in techs if u.id in reached),
-                              fallback=fallback)
-    if res.on_call_technicians == 0:
+    res = EmergencyCallResult(notified=len(reached), on_call_technicians=len({u.id for u in techs} & reached),
+                              fallback=fallback, escalated=len({u.id for u in escalation} & reached))
+    if not res.maintenance_reached:
+        log.error("emergency_call_no_maintenance_reached", tenant_id=tenant_id, machine_id=machine_id,
+                  line_id=line_id, notified=res.notified)
+    elif res.on_call_technicians == 0:
         log.warning("emergency_call_no_on_call", tenant_id=tenant_id, machine_id=machine_id, line_id=line_id,
-                    notified=res.notified)
+                    notified=res.notified, escalated=res.escalated)
     return res

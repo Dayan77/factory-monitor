@@ -294,7 +294,7 @@ function makeBackend(user) {
       const w = wo({ id: `wo-${st.seq}`, number: `OS-${st.seq++}`, type: "corrective", urgency: "emergency", state: "open", machine_id: body.machine_id, downtime_event_id: body.downtime_event_id, title: body.title, history: [{ at: iso(Date.now()), by: user.id, from_state: null, to_state: "open", note: body.note }] });
       st.wos.push(w);
       // response contract since the no-on-call fix: who was actually reached (maintenance_workflows §4)
-      return json({ ...out(w, user), emergency_call: { notified_count: 2, on_call_technicians: 1, fallback: false, warning: null } }, 201);
+      return json({ ...out(w, user), emergency_call: { notified_count: 2, on_call_technicians: 1, fallback: false, escalated_count: 0, warning: null } }, 201);
     }
     const mWo = /^\/api\/work-orders\/([^/]+)(?:\/([a-z-]+))?$/.exec(p);
     if (mWo) {

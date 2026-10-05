@@ -144,7 +144,7 @@ describe("Chamar manutenção", () => {
     const u = userEvent.setup();
     useAuthStore.setState({ user: SUP });
     vi.mocked(workOrdersApi.emergencyCall).mockResolvedValue(ok({ ...workOrder({ number: "OS-125", state: "open" }),
-      emergency_call: { notified_count: 2, on_call_technicians: 1, fallback: false, warning: null } }));
+      emergency_call: { notified_count: 2, on_call_technicians: 1, fallback: false, escalated_count: 0, warning: null } }));
     renderWithClient(<CallMaintenanceButton ev={ev} />);
     await u.click(screen.getByRole("button", { name: "Chamar manutenção" }));
     expect(await screen.findByText(/Manutenção chamada: OS-125\. 1 técnico de plantão notificado/)).toBeInTheDocument();
@@ -157,13 +157,29 @@ describe("Chamar manutenção", () => {
     const u = userEvent.setup();
     useAuthStore.setState({ user: SUP });
     vi.mocked(workOrdersApi.emergencyCall).mockResolvedValue(ok({ ...workOrder({ number: "OS-126", state: "open" }),
-      emergency_call: { notified_count: 2, on_call_technicians: 0, fallback: true, warning: "x" } }));
+      emergency_call: { notified_count: 3, on_call_technicians: 0, fallback: true, escalated_count: 2, warning: "x" } }));
     renderWithClient(<CallMaintenanceButton ev={ev} />);
     await u.click(screen.getByRole("button", { name: "Chamar manutenção" }));
     const msg = await screen.findByRole("alert");
     expect(msg).toHaveTextContent(/Ninguém de plantão nesta linha/);
     expect(msg).toHaveAttribute("data-tone", "warn");
+    expect(msg).toHaveTextContent(/planejamento\/gestão foi avisado \(2 pessoas\)/);
     expect(screen.queryByText(/Manutenção chamada/)).not.toBeInTheDocument();
+    useAuthStore.setState({ user: OPERATOR });
+  });
+
+  it("does not claim planning was notified when only the line supervisor was reached", async () => {
+    const u = userEvent.setup();
+    useAuthStore.setState({ user: SUP });
+    vi.mocked(workOrdersApi.emergencyCall).mockResolvedValue(ok({ ...workOrder({ number: "OS-128", state: "open" }),
+      emergency_call: { notified_count: 1, on_call_technicians: 0, fallback: true, escalated_count: 0, warning: "x" } }));
+    renderWithClient(<CallMaintenanceButton ev={ev} />);
+    await u.click(screen.getByRole("button", { name: "Chamar manutenção" }));
+    const msg = await screen.findByRole("alert");
+    expect(msg).toHaveTextContent(/nenhuma pessoa da manutenção foi notificada/);
+    expect(msg).toHaveTextContent(/rádio\/telefone/);
+    expect(msg).not.toHaveTextContent(/planejamento\/gestão foi avisado/);
+    expect(msg).toHaveAttribute("data-tone", "danger");
     useAuthStore.setState({ user: OPERATOR });
   });
 
@@ -171,7 +187,7 @@ describe("Chamar manutenção", () => {
     const u = userEvent.setup();
     useAuthStore.setState({ user: SUP });
     vi.mocked(workOrdersApi.emergencyCall).mockResolvedValue(ok({ ...workOrder({ number: "OS-127", state: "open" }),
-      emergency_call: { notified_count: 0, on_call_technicians: 0, fallback: true, warning: "x" } }));
+      emergency_call: { notified_count: 0, on_call_technicians: 0, fallback: true, escalated_count: 0, warning: "x" } }));
     renderWithClient(<CallMaintenanceButton ev={ev} />);
     await u.click(screen.getByRole("button", { name: "Chamar manutenção" }));
     const msg = await screen.findByRole("alert");

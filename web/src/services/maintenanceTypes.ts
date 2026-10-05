@@ -191,11 +191,14 @@ export interface WorkOrder {
 }
 
 /** Who an emergency call reached (POST /api/work-orders/emergency-call). `fallback` = no on-call technician
- *  covers the line, so planners / managers / admins were called; `notified_count === 0` = nobody was reached. */
+ *  covers the line, so planners / managers / admins were called; `escalated_count` = how many of those were
+ *  actually reached (`notified_count` also counts the line supervisors, who are not maintenance people);
+ *  `notified_count === 0` = nobody was reached. */
 export interface EmergencyCallReport {
   notified_count: number;
   on_call_technicians: number;
   fallback: boolean;
+  escalated_count: number;
   warning: string | null;
 }
 
