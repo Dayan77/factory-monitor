@@ -21,7 +21,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -49,18 +49,42 @@ services:
       retries: 10
     networks: [fm-net]
 
+  # ── MQTT Broker (autenticado; TLS para os gateways de campo) ──────
+  # Nunca anônimo em produção (o dev continua anônimo em infra/mosquitto/mosquitto.conf).
+  # Na partida, infra/mosquitto/prod/render.sh gera passwd/acl a partir de:
+  #   MQTT_USERNAME / MQTT_PASSWORD (.env)  → usuário do backend (lê factory/#)
+  #   $MQTT_GATEWAYS_DIR/gateways.conf      → 1 usuário por gateway, restrito a factory/<tenant>/#
+  #                                           (make mqtt-gateway-add GATEWAY=... TENANT=...)
+  # 1883 fica na rede interna (fm_server) e no loopback do VPS; os gateways usam 8883 com TLS
+  # (MQTT_TLS_ENABLED=true + certificado em $MQTT_TLS_CERT_DIR: fullchain.pem + privkey.pem — docs/operations.md §MQTT).
+  # PRÉ-REQUISITO do deploy (§6.4): credenciais no .env e gateways cadastrados — scripts/remote_deploy.sh
+  # confere antes de tocar em qualquer serviço.
   mosquitto:
     image: eclipse-mosquitto:2.0.22
     container_name: fm_mosquitto
     restart: always
+    entrypoint: ["/bin/sh", "/fm/entrypoint.sh"]
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    environment:
+      MQTT_SERVER_USERNAME: ${MQTT_USERNAME:?defina MQTT_USERNAME no .env (usuário MQTT do backend)}
+      MQTT_SERVER_PASSWORD: ${MQTT_PASSWORD:?defina MQTT_PASSWORD no .env (>= 16 caracteres)}
+      # TLS só quando o certificado estiver instalado (docs/operations.md §6.3–6.4): ligado sem
+      # fullchain.pem/privkey.pem o broker não sobe. Padrão desligado = compatível com o deploy anterior.
+      MQTT_TLS_ENABLED: ${MQTT_TLS_ENABLED:-false}
+      MQTT_TLS_PORT: "8883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/prod:/fm:ro
+      - ${MQTT_GATEWAYS_DIR:-../mqtt}:/mosquitto/gateways:ro
+      - ${MQTT_TLS_CERT_DIR:-../mqtt/certs}:/mosquitto/certs:ro
       - mosquitto-data:/mosquitto/data
-      - mosquitto-log:/mosquitto/log
     ports:
-      - "1883:1883"
+      - "${MQTT_TLS_PUBLISH:-8883}:8883"
+      # 1883 (autenticado, SEM TLS) só no loopback do VPS. Transição de gateways antigos sem TLS:
+      # MQTT_PLAIN_BIND=0.0.0.0 temporariamente (senha trafega em claro — remova assim que migrarem).
+      - "${MQTT_PLAIN_BIND:-127.0.0.1}:1883:1883"
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health -m ping -q 0 || exit 1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -p 1883 -u fm-health -P \"$$(cat /mosquitto/runtime/health.pw)\" -t health/ping -m ping -q 0 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -90,6 +114,9 @@ services:
       POSTGRES_HOST: postgres
       INFLUX_URL: http://influxdb:8086
       MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"     # listener interno (autenticado); TLS 8883 é para os gateways
+      # Proxies confiáveis p/ X-Forwarded-For (Traefik na rede easypanel). Nunca "*". docs/operations.md §IP do cliente
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
     depends_on:
       postgres:
         condition: service_healthy
@@ -100,7 +127,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=easypanel"
-      - "traefik.http.routers.fm-api.rule=Host(`app.factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`) || PathPrefix(`/metrics`))"
+      - "traefik.http.routers.fm-api.rule=Host(`app.factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))"
+      # /metrics NÃO é publicado: o Prometheus (profile monitoring) coleta pela rede interna fm-net.
       - "traefik.http.routers.fm-api.priority=200"
       - "traefik.http.routers.fm-api.entrypoints=https"
       - "traefik.http.routers.fm-api.tls=true"
@@ -193,6 +221,54 @@ services:
     networks:
       - easypanel
 
+  # ── Observabilidade (profile "monitoring") ────────────────────────
+  # COMPOSE_PROFILES=monitoring no .env (ou --profile monitoring). Nada é exposto publicamente:
+  # Grafana só em 127.0.0.1:3000 do VPS → acesso por túnel SSH (docs/operations.md §Observabilidade).
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.5.0
+    container_name: fm_prometheus
+    restart: always
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [fm-net]
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:12.1.1
+    container_name: fm_grafana
+    restart: always
+    # Recusa subir sem senha de admin (com ":?" no compose, o `config` falharia mesmo sem o profile ativo).
+    entrypoint: ["/bin/sh", "-c", "if [ $${#GF_SECURITY_ADMIN_PASSWORD} -lt 12 ]; then echo 'defina GRAFANA_ADMIN_PASSWORD (>= 12 caracteres) no .env' >&2; exit 1; fi; exec /run.sh"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    networks: [fm-net]
+
 networks:
   fm-net:
     driver: bridge
@@ -203,4 +279,5 @@ volumes:
   postgres-data:
   influxdb-data:
   mosquitto-data:
-  mosquitto-log:
+  prometheus-data:
+  grafana-data:

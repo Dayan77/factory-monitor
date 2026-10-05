@@ -7,9 +7,13 @@
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type {
-  AlertEvent, Camera, Component, ComponentCreateBody, LeadBody, Line, LineProduction, Machine, MachineUsage,
-  NominalLife, Position, PositionDetail, RemovalReason, SensorHistory, Tag, TreePlant, UsageHistory, UsageMeasure,
+  AlertEvent, CalendarException, CalendarExceptionBody, Camera, Component, ComponentCreateBody, DowntimeCreateBody,
+  DowntimeEvent, DowntimePatchBody, DowntimeQuery, LeadBody, Line, LineProduction, Machine, MachineProduct,
+  MachineProductBody, MachineUsage, NominalLife, OeeQuery, OeeResult, Overview, ParetoRow, Position, PositionDetail,
+  Product, ProductionRun, ReasonCode, ReasonCodeCreateBody, ReasonCodeUpdateBody, Reliability, RemovalReason,
+  SensorHistory, Shift, ShiftBody, ShiftReport, Tag, TreePlant, UsageHistory, UsageMeasure,
 } from "./types";
+import { normalizeOverview } from "./efficiency";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -194,6 +198,68 @@ export const usageApi = {
   ) => api.get<UsageHistory>("/api/usage/history", { params: { ...scope, measure, bucket: "1h", ...window } }),
   lineProduction: (lineId: string, window: TimeWindow = {}) =>
     api.get<LineProduction>(`/api/lines/${lineId}/production`, { params: { bucket: "1h", ...window } }),
+};
+
+// ── Eficiência produtiva (Fase 2) ─────────────────────────────────
+
+type Window = { start?: string; stop?: string };
+
+export const efficiencyApi = {
+  /** "Raio-X" of a plant (default: the tenant's first plant), normalized to the UI shape. */
+  overview: (plantId?: string) =>
+    api.get<unknown>("/api/overview", { params: plantId ? { plant_id: plantId } : undefined })
+      .then((r): Overview => normalizeOverview(r.data)),
+  oee: (q: OeeQuery) => api.get<OeeResult>("/api/oee", { params: q }),
+  pareto: (q: { scope: OeeQuery["scope"]; id: string } & Window) => api.get<ParetoRow[]>("/api/losses/pareto", { params: q }),
+  reliability: (q: { scope: "machine" | "line"; id: string } & Window) => api.get<Reliability>("/api/reliability", { params: q }),
+  shiftReport: (q: { line_id: string; productive_day: string; shift_id?: string }) =>
+    api.get<ShiftReport>("/api/reports/shift", { params: q }),
+};
+
+export const downtimeApi = {
+  list: (q: DowntimeQuery) => api.get<DowntimeEvent[]>("/api/downtime/", { params: q }),
+  justify: (id: string, body: DowntimePatchBody) => api.patch<DowntimeEvent>(`/api/downtime/${id}`, body),
+  create: (body: DowntimeCreateBody) => api.post<DowntimeEvent>("/api/downtime/", body),
+};
+
+export const reasonCodesApi = {
+  list: (includeInactive = false) =>
+    api.get<ReasonCode[]>("/api/reason-codes/", { params: includeInactive ? { include_inactive: true } : undefined }),
+  create: (body: ReasonCodeCreateBody) => api.post<ReasonCode>("/api/reason-codes/", body),
+  update: (id: string, body: ReasonCodeUpdateBody) => api.patch<ReasonCode>(`/api/reason-codes/${id}`, body),
+};
+
+export const shiftsApi = {
+  list: (plantId?: string) => api.get<Shift[]>("/api/shifts/", { params: plantId ? { plant_id: plantId } : undefined }),
+  create: (body: ShiftBody) => api.post<Shift>("/api/shifts/", body),
+  update: (id: string, body: Partial<ShiftBody>) => api.patch<Shift>(`/api/shifts/${id}`, body),
+  remove: (id: string) => api.delete(`/api/shifts/${id}`),
+};
+
+export const calendarApi = {
+  list: (plantId?: string) =>
+    api.get<CalendarException[]>("/api/calendar-exceptions/", { params: plantId ? { plant_id: plantId } : undefined }),
+  create: (body: CalendarExceptionBody) => api.post<CalendarException>("/api/calendar-exceptions/", body),
+  remove: (id: string) => api.delete(`/api/calendar-exceptions/${id}`),
+};
+
+export const productsApi = {
+  list: () => api.get<Product[]>("/api/products/"),
+  create: (body: { code: string; name: string }) => api.post<Product>("/api/products/", body),
+  update: (id: string, body: { code?: string; name?: string }) => api.patch<Product>(`/api/products/${id}`, body),
+  remove: (id: string) => api.delete(`/api/products/${id}`),
+  forMachine: (machineId: string) => api.get<MachineProduct[]>(`/api/machines/${machineId}/products`),
+  addToMachine: (machineId: string, body: MachineProductBody) =>
+    api.post<MachineProduct>(`/api/machines/${machineId}/products`, body),
+  updateOnMachine: (machineId: string, mpId: string, body: Partial<Omit<MachineProductBody, "product_id">>) =>
+    api.patch<MachineProduct>(`/api/machines/${machineId}/products/${mpId}`, body),
+  removeFromMachine: (machineId: string, mpId: string) => api.delete(`/api/machines/${machineId}/products/${mpId}`),
+};
+
+export const runsApi = {
+  list: (q: { machine_id?: string; open?: boolean }) => api.get<ProductionRun[]>("/api/production-runs/", { params: q }),
+  start: (body: { machine_id: string; product_id: string }) => api.post<ProductionRun>("/api/production-runs/", body),
+  stop: (id: string) => api.post<ProductionRun>(`/api/production-runs/${id}/stop`, {}),
 };
 
 // ── Public (no auth) ──────────────────────────────────────────────

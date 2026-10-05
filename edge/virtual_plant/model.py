@@ -2,26 +2,37 @@
 Modelo determinístico da Planta Manaus (sem I/O).
 
 Determinismo: o tempo simulado avança em passos fixos de `TICK_S` (0,1 s) e todos os eventos
-discretos (fim de ciclo, peça boa/refugo, golpes de cilindro, falhas e suas durações/códigos) usam um
-único `random.Random(seed)`. Mesma seed + mesmo tempo simulado ⇒ mesmos contadores, falhas e tempos de
-curso, independentemente da velocidade (`--speed`) ou do relógio real. Grandezas analógicas (rotação,
-corrente) usam outro gerador e são calculadas só na exportação: não fazem parte do contrato de
-determinismo e não consomem números do gerador principal.
+discretos (fim de ciclo, peça boa/refugo, golpes de cilindro, falhas e suas durações/códigos, micro-paradas,
+setups, falta de material) usam um único `random.Random(seed)` (ou nenhum sorteio, quando o evento é de
+calendário). Mesma seed + mesmo tempo simulado ⇒ mesmos contadores, falhas, eventos e tempos de curso,
+independentemente da velocidade (`--speed`) ou do relógio real. Grandezas analógicas (rotação, corrente) usam
+outro gerador e são calculadas só na exportação: não fazem parte do contrato de determinismo.
 
-Comportamento (resumo):
-- Torno CNC: ciclo ideal 45 s (+0–12 % de perda de velocidade). Eixo-árvore e servos ligam na fase de
-  corte (15 %–90 % do ciclo) → partidas do eixo-árvore = 1 por peça. Refugo 2 %.
-- Centro de Usinagem: ciclo ideal 90 s, 4 trocas de ferramenta por peça (garra +1 ciclo por troca),
-  bomba de refrigeração liga no corte. Refugo 1,5 %.
-- Linha de Montagem (célula acoplada): ciclo ideal 40 s. Fixação: A1, A2, A4 1 golpe/peça, A3 2 golpes;
-  robô: 1 ciclo de solda e N movimentos por eixo por peça; transportador roda enquanto a célula roda
-  (partidas = retomadas após falha/turno). Peças boas/refugo (1,5 %) contadas na saída (transportador).
-  Falha em qualquer máquina da célula para a célula inteira.
+Caminhos de OEE exercitados (docs/domain.md §4, kpis.md §1):
+- **Calendário** (padrão `layout.STANDARD_SHIFTS`): 3 turnos 06–14, 14–22, 22–06; em cada um 1 h de refeição e
+  2 cafés de 10 min (`PLN-01`). Fora do turno e nas pausas tudo para (run_state = 0, fault_state = 0).
+- **Produto e ciclo ideal** por (máquina, produto) (`layout.Machine.products`); a tag `product_code` publica o
+  `plc_code` do produto ativo. **Setup (`SET-01`) uma vez por turno**: em `setup_offset_s` após o início do
+  turno a máquina para por `setup_s` e troca para o próximo produto da lista (a receita muda no INÍCIO do
+  setup). O tempo de setup só corre em tempo produtivo (pausa no café/refeição).
+- **Perda de velocidade**: ciclo real = ideal × (1 + `speed_loss_pct`/100 + U(0, `speed_jitter_pct`/100)).
+- **Micro-paradas**: taxa constante `micro_stops_per_h` por hora EM OPERAÇÃO, duração U(15 s, 110 s) — sempre
+  < 120 s (limiar padrão), run_state = 0 e fault_state = 0.
+- **Falhas**: taxa constante por tempo em operação (MTBF), duração exponencial (MTTR, mínimo 30 s — as < 120 s
+  viram micro-paradas no servidor), código sorteado da tabela da máquina; a centena dá a categoria e o motivo
+  (`layout.FAULT_CATEGORIES`: 1xx mecânica EQP-01, 2xx elétrica EQP-02, 3xx automação EQP-04,
+  4xx pneumática EQP-03, 5xx ferramental EQP-05).
+- **Linha de Montagem** (célula acoplada fixação → robô → transportador): parada de uma máquina para a célula;
+  quem está a montante fica `blocked`, quem está a jusante fica `starved`. A célula é abastecida por um buffer
+  (`buffer_capacity_s` segundos de produção) alimentado pelo Centro de Usinagem: com o centro parado (falha,
+  setup) o buffer esvazia e a célula inteira fica `starved` (motivo sugerido `MAT-01`) até repor
+  `buffer_resume_s`.
+- **Refugo** por máquina (`scrap_rate`), sorteado por peça; o Centro com FLG-B faz 2 peças por ciclo.
 - Cilindros: contador do CLP de 16 bits (rola 65 535 → 0); tempo de curso = base + desgaste × vida
   acumulada + ruído; A2 tem degradação acelerada (+20 ms/1000 golpes) para exercitar alertas de desvio.
-- Falhas: taxa constante por tempo **em operação** (MTBF), duração exponencial (MTTR, mínimo 30 s),
-  código sorteado da tabela da máquina (layout.FAULT_CODES).
-- Turnos (opcional): fora do turno tudo para (run_state = 0, sem falha).
+
+`snapshot()["truth"]` traz a verdade de campo para o QA: eventos (falha, micro-parada, setup, starved, blocked)
+por máquina com início/duração em segundos simulados, produto ativo e tempos de run_state.
 """
 
 from __future__ import annotations
@@ -29,13 +40,16 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence, Union
 
-from .layout import FAULT_CODES, PLANTA_MANAUS, PlantLayout, signal_key
+from .layout import (
+    FAULT_CODES, PLANTA_MANAUS, Machine, MachineProduct, PlantLayout, ShiftDef, fault_category, signal_key,
+)
 
 TICK_S = 0.1
 U16 = 0x1_0000
 U32 = 0x1_0000_0000
+DAY_S = 86400
 
 
 # ── Turnos ────────────────────────────────────────────────────────────────────
@@ -55,9 +69,10 @@ def parse_shifts(spec: Optional[str]) -> list[tuple[int, int]]:
 
 
 def _hhmm(s: str) -> int:
-    h, m = s.strip().split(":")
-    v = int(h) * 3600 + int(m) * 60
-    if not 0 <= v <= 86400:
+    parts = s.strip().split(":")
+    h, m = parts[0], parts[1]
+    v = int(h) * 3600 + int(m) * 60 + (int(parts[2]) if len(parts) > 2 else 0)
+    if not 0 <= v <= DAY_S:
         raise ValueError(f"horário inválido: {s!r}")
     return v
 
@@ -65,11 +80,89 @@ def _hhmm(s: str) -> int:
 def in_shift(shifts: list[tuple[int, int]], second_of_day: float) -> bool:
     if not shifts:
         return True
-    t = second_of_day % 86400
+    t = second_of_day % DAY_S
     for a, b in shifts:
         if (a <= t < b) if a < b else (t >= a or t < b):
             return True
     return False
+
+
+@dataclass(frozen=True)
+class CalendarState:
+    production: bool                 # em turno e fora de pausa
+    shift: Optional[str] = None      # nome do turno (None = fora de turno)
+    shift_start: Optional[float] = None   # início desta instância do turno (s absolutos de planta)
+    in_break: bool = False
+    break_reason: Optional[str] = None
+
+
+class ShiftCalendar:
+    """Calendário semanal de turnos com pausas. Tempo de planta = segundos desde 00:00 do dia 0 (local)."""
+
+    def __init__(self, shifts: Sequence[ShiftDef], start_weekday: int = 0) -> None:
+        self.start_weekday = start_weekday
+        self._shifts = []
+        for sh in shifts:
+            a, b = _hhmm(sh.start_local), _hhmm(sh.end_local)
+            dur = (b - a) % DAY_S or DAY_S
+            breaks = []
+            for br in sh.breaks:
+                ra = (_hhmm(br.start_local) - a) % DAY_S
+                rb = (_hhmm(br.end_local) - a) % DAY_S
+                if not 0 <= ra < rb <= dur:
+                    raise ValueError(f"pausa {br.start_local}-{br.end_local} fora do turno {sh.name}")
+                breaks.append((ra, rb, br.reason_code))
+            self._shifts.append((sh.name, a, dur, frozenset(sh.weekdays), tuple(breaks)))
+
+    def __bool__(self) -> bool:
+        return bool(self._shifts)
+
+    def at(self, plant_s: float) -> CalendarState:
+        if not self._shifts:
+            return CalendarState(production=True)
+        day = int(plant_s // DAY_S)
+        for name, a, dur, weekdays, breaks in self._shifts:
+            for d in (day, day - 1):      # turno que começou hoje ou ontem (cruza a meia-noite)
+                start = d * DAY_S + a
+                if start <= plant_s < start + dur and (self.start_weekday + d) % 7 in weekdays:
+                    rel = plant_s - start
+                    for ra, rb, reason in breaks:
+                        if ra <= rel < rb:
+                            return CalendarState(False, name, start, True, reason)
+                    return CalendarState(True, name, start)
+        return CalendarState(production=False)
+
+
+def _legacy_shift_defs(spec: str) -> list[ShiftDef]:
+    out = []
+    for i, part in enumerate(spec.split(","), start=1):
+        a, b = part.strip().split("-")
+        out.append(ShiftDef(f"Turno {i}", a.strip(), b.strip(), (0, 1, 2, 3, 4, 5, 6)))
+    return out
+
+
+# ── Configuração ──────────────────────────────────────────────────────────────
+
+@dataclass
+class PlantConfig:
+    """Parâmetros do comportamento (padrões documentados no docstring do módulo)."""
+    speed_loss_pct: float = 5.0          # ciclo real ≥ ideal × (1 + speed_loss_pct/100)
+    speed_jitter_pct: float = 2.0        # + U(0, jitter) por ciclo
+    micro_stops_per_h: dict = field(default_factory=lambda: {"torno": 3.0, "centro": 2.0, "cell": 4.0})
+    micro_stop_s: tuple[float, float] = (15.0, 110.0)
+    setups: bool = True
+    setup_s: dict = field(default_factory=lambda: {"torno": 900.0, "centro": 1200.0, "cell": 720.0})
+    # após o início do turno (cai antes do 1º café em todos os turnos do calendário padrão)
+    setup_offset_s: dict = field(default_factory=lambda: {"torno": 3600.0, "centro": 4500.0, "cell": 6300.0})
+    scrap_rate: dict = field(default_factory=lambda: {"torno": 0.02, "centro": 0.015, "cell": 0.015})
+    buffer_capacity_s: float = 900.0     # buffer centro → célula, em segundos de produção da célula
+    buffer_refill_per_s: float = 2.0     # reposição enquanto o centro roda
+    buffer_resume_s: float = 60.0        # célula volta a rodar quando o buffer chega aqui
+
+    def with_micro_rate(self, per_h: Optional[float]) -> "PlantConfig":
+        if per_h is not None:
+            self.micro_stops_per_h = {k: per_h for k in self.micro_stops_per_h}
+        return self
 
 
 # ── Blocos ────────────────────────────────────────────────────────────────────
@@ -100,7 +193,9 @@ class FaultProcess:
             return False
         self.code = self.rng.choice(self.codes)
         self.remaining_s = max(30.0, round(self.rng.expovariate(1.0 / self.mttr_s), 1))
-        self.events.append({"start_s": round(now, 1), "duration_s": self.remaining_s, "code": self.code})
+        cat = fault_category(self.code)
+        self.events.append({"start_s": round(now, 1), "duration_s": self.remaining_s, "code": self.code,
+                            "category": cat["category"], "reason_code": cat["reason_code"]})
         self._run_left = self.rng.expovariate(1.0 / self.mtbf_s)
         return True
 
@@ -109,6 +204,107 @@ class FaultProcess:
         if self.remaining_s <= 1e-9:
             self.code = 0
             self.remaining_s = 0.0
+
+
+class MicroStopProcess:
+    """Micro-paradas (< limiar de 120 s) com taxa constante por hora em operação."""
+
+    def __init__(self, rng: random.Random, per_h: float, dur_s: tuple[float, float]) -> None:
+        self.rng = rng
+        self.per_h = per_h
+        self.dur_s = dur_s
+        self.remaining_s = 0.0
+        self.origin: Optional[int] = None     # célula: índice da máquina que parou
+        self.events: list[dict] = []
+        self._run_left = rng.expovariate(per_h / 3600.0) if per_h > 0 else math.inf
+
+    @property
+    def active(self) -> bool:
+        return self.remaining_s > 0
+
+    def tick_running(self, dt: float, now: float, n_origins: int = 0) -> bool:
+        self._run_left -= dt
+        if self._run_left > 0:
+            return False
+        lo, hi = self.dur_s
+        self.remaining_s = round(self.rng.uniform(lo, hi), 1)
+        self.origin = self.rng.randrange(n_origins) if n_origins else None
+        ev = {"start_s": round(now, 1), "duration_s": self.remaining_s}
+        if self.origin is not None:
+            ev["origin"] = self.origin
+        self.events.append(ev)
+        self._run_left = self.rng.expovariate(self.per_h / 3600.0)
+        return True
+
+    def tick(self, dt: float) -> None:
+        self.remaining_s -= dt
+        if self.remaining_s <= 1e-9:
+            self.remaining_s = 0.0
+            self.origin = None
+
+
+class SetupProcess:
+    """Troca de produto (`SET-01`) uma vez por instância de turno, em `offset_s` após o início."""
+
+    def __init__(self, products: Sequence[MachineProduct], duration_s: float, offset_s: float,
+                 enabled: bool) -> None:
+        self.products = list(products)
+        self.index = self.products.index(next(p for p in products if p.is_default)) if any(
+            p.is_default for p in products) else 0
+        self.duration_s = duration_s
+        self.offset_s = offset_s
+        self.enabled = enabled and len(self.products) > 1
+        self.remaining_s = 0.0
+        self._done_for: Optional[float] = None
+        self.events: list[dict] = []
+
+    @property
+    def product(self) -> MachineProduct:
+        return self.products[self.index]
+
+    @property
+    def active(self) -> bool:
+        return self.remaining_s > 0
+
+    def maybe_start(self, cal: CalendarState, plant_s: float, now: float) -> bool:
+        if not self.enabled or cal.shift_start is None or self._done_for == cal.shift_start:
+            return False
+        if plant_s < cal.shift_start + self.offset_s:
+            return False
+        self._done_for = cal.shift_start
+        prev = self.product.product
+        self.index = (self.index + 1) % len(self.products)
+        self.remaining_s = self.duration_s
+        self.events.append({"start_s": round(now, 1), "duration_s": self.duration_s, "reason_code": "SET-01",
+                            "from_product": prev, "to_product": self.product.product})
+        return True
+
+    def tick(self, dt: float) -> None:
+        self.remaining_s -= dt
+        if self.remaining_s <= 1e-9:
+            self.remaining_s = 0.0
+
+
+class IntervalRecorder:
+    """Registra intervalos de um estado booleano (ex.: starved) em segundos simulados."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+        self._start: Optional[float] = None
+
+    def update(self, on: bool, now: float) -> None:
+        if on and self._start is None:
+            self._start = now
+        elif not on and self._start is not None:
+            self.events.append({"start_s": round(self._start, 1), "duration_s": round(now - self._start, 1)})
+            self._start = None
+
+    def as_list(self, now: float) -> list[dict]:
+        out = list(self.events)
+        if self._start is not None:
+            out.append({"start_s": round(self._start, 1), "duration_s": None,
+                        "open_for_s": round(now - self._start, 1)})
+        return out
 
 
 class BoolTracker:
@@ -155,21 +351,27 @@ class Cylinder:
                 + self.degrade_ms_per_kcycle * self.strokes / 1000.0)
 
 
+def _machine(layout: PlantLayout, line_key: str, machine_key: str) -> Machine:
+    return next(m for line, m in layout.machines() if line.key == line_key and m.key == machine_key)
+
+
 # ── Máquinas ──────────────────────────────────────────────────────────────────
 
 class MachiningMachine:
-    """Torno / centro de usinagem: ciclo carga → corte → descarga, com falhas."""
+    """Torno / centro de usinagem: ciclo carga → corte → descarga, com falhas, micro-paradas e setup."""
 
     CUT_START, CUT_END = 0.15, 0.90
 
-    def __init__(self, rng: random.Random, key: str, ideal_cycle_s: float, scrap_rate: float,
+    def __init__(self, rng: random.Random, key: str, machine: Machine, cfg: PlantConfig, short: str,
                  mtbf_s: float, mttr_s: float, faults: bool, tool_changes: int = 0) -> None:
         self.rng = rng
         self.key = key
-        self.ideal = ideal_cycle_s
-        self.scrap_rate = scrap_rate
+        self.cfg = cfg
+        self.scrap_rate = cfg.scrap_rate[short]
         self.tool_changes = tool_changes
         self.fault = FaultProcess(rng, key, mtbf_s, mttr_s, enabled=faults)
+        self.micro = MicroStopProcess(rng, cfg.micro_stops_per_h[short], cfg.micro_stop_s)
+        self.setup = SetupProcess(machine.products, cfg.setup_s[short], cfg.setup_offset_s[short], cfg.setups)
         self.running = False
         self.cycle_t = 0.0
         self.cycle_len = self._new_cycle_len()
@@ -179,21 +381,38 @@ class MachiningMachine:
         self.gripper = 0
         self.cutting = False
 
-    def _new_cycle_len(self) -> float:
-        return round(self.ideal * (1.0 + self.rng.uniform(0.0, 0.12)), 1)
+    @property
+    def ideal(self) -> float:
+        return self.setup.product.ideal_cycle_time_s
 
-    def step(self, dt: float, now: float, shift_on: bool) -> None:
+    def _new_cycle_len(self) -> float:
+        loss = self.cfg.speed_loss_pct / 100.0 + self.rng.uniform(0.0, self.cfg.speed_jitter_pct / 100.0)
+        return round(self.ideal * (1.0 + loss), 1)
+
+    def _stop(self) -> None:
+        self.running = self.cutting = False
+
+    def step(self, dt: float, now: float, cal: CalendarState, plant_s: float) -> None:
         if self.fault.active:
             self.fault.tick_fault(dt)
-            self.running = self.cutting = False
-            return
-        if not shift_on:
-            self.running = self.cutting = False
-            return
+            return self._stop()
+        if self.micro.active:
+            self.micro.tick(dt)
+            return self._stop()
+        if not cal.production:
+            return self._stop()
+        if self.setup.active:
+            self.setup.tick(dt)
+            return self._stop()
+        if self.setup.maybe_start(cal, plant_s, now):
+            self.cycle_t, self.tc_done = 0.0, 0     # ciclo em curso abortado; novo produto → novo ciclo
+            self.cycle_len = self._new_cycle_len()
+            return self._stop()
         if self.fault.tick_running(dt, now):
-            self.running = self.cutting = False
             self.cycle_t, self.tc_done = 0.0, 0     # ciclo abortado: recomeça após o reparo
-            return
+            return self._stop()
+        if self.micro.tick_running(dt, now):
+            return self._stop()                     # ciclo pausado (retoma de onde parou)
         self.running = True
         self.cycle_t += dt
         frac = self.cycle_t / self.cycle_len
@@ -204,28 +423,33 @@ class MachiningMachine:
                 self.tc_done += 1
                 self.gripper = (self.gripper + 1) % U32
         if self.cycle_t >= self.cycle_len - 1e-9:
-            if self.rng.random() < self.scrap_rate:
-                self.scrap = (self.scrap + 1) % U32
-            else:
-                self.good = (self.good + 1) % U32
+            for _ in range(self.setup.product.parts_per_cycle):
+                if self.rng.random() < self.scrap_rate:
+                    self.scrap = (self.scrap + 1) % U32
+                else:
+                    self.good = (self.good + 1) % U32
             self.cycle_t, self.tc_done = 0.0, 0
             self.cycle_len = self._new_cycle_len()
             self.cutting = False
 
 
 class AssemblyCell:
-    """Robô de solda + estação de fixação (4 cilindros) + transportador de saída, acoplados."""
+    """Fixação → robô de solda → transportador de saída, acoplados, abastecidos por um buffer do centro."""
 
     WELD_START, WELD_END = 0.25, 0.80
     AXIS_MOVES = (14, 14, 10, 8, 8, 6)
+    FLOW = ("montagem.fixacao", "montagem.robo", "montagem.transportador")   # montante → jusante
 
-    def __init__(self, rng: random.Random, faults: bool) -> None:
+    def __init__(self, rng: random.Random, layout: PlantLayout, cfg: PlantConfig, faults: bool) -> None:
         self.rng = rng
-        self.ideal = 40.0
-        self.scrap_rate = 0.015
+        self.cfg = cfg
+        self.scrap_rate = cfg.scrap_rate["cell"]
         self.robot_fault = FaultProcess(rng, "montagem.robo", 3 * 3600, 6 * 60, faults)
         self.fix_fault = FaultProcess(rng, "montagem.fixacao", 4 * 3600, 4 * 60, faults)
         self.conv_fault = FaultProcess(rng, "montagem.transportador", 8 * 3600, 3 * 60, faults)
+        self.micro = MicroStopProcess(rng, cfg.micro_stops_per_h["cell"], cfg.micro_stop_s)
+        self.setup = SetupProcess(_machine(layout, "montagem", "fixacao").products, cfg.setup_s["cell"],
+                                  cfg.setup_offset_s["cell"], cfg.setups)
         self.cylinders = [
             # nome, frações do golpe, contador CLP inicial, vida inicial, base ms, desgaste ms/1000 ciclos
             Cylinder("A1", (0.05,), 12_000, 1_250_000, 180.0, 0.004, has_eos=True),
@@ -245,29 +469,69 @@ class AssemblyCell:
         self.axis = [0] * 6
         self.good = 0
         self.scrap = 0
+        self.buffer_s = cfg.buffer_capacity_s
+        self.supply_starved = False
+        self.stop_reason: Optional[str] = None
+        self.flags = {k: {"starved": False, "blocked": False} for k in self.FLOW}
+        self._any_flag = False
+        self.recorders = {(k, f): IntervalRecorder() for k in self.FLOW for f in ("starved", "blocked")}
+
+    @property
+    def ideal(self) -> float:
+        return self.setup.product.ideal_cycle_time_s
 
     def _new_cycle_len(self) -> float:
-        return round(self.ideal * (1.0 + self.rng.uniform(0.0, 0.10)), 1)
+        loss = self.cfg.speed_loss_pct / 100.0 + self.rng.uniform(0.0, self.cfg.speed_jitter_pct / 100.0)
+        return round(self.ideal * (1.0 + loss), 1)
 
     @property
     def faults(self) -> list[FaultProcess]:
         return [self.robot_fault, self.fix_fault, self.conv_fault]
 
-    def step(self, dt: float, now: float, shift_on: bool) -> None:
+    def _fault_of(self, key: str) -> FaultProcess:
+        return {"montagem.robo": self.robot_fault, "montagem.fixacao": self.fix_fault,
+                "montagem.transportador": self.conv_fault}[key]
+
+    def _reset_cycle(self) -> None:
+        self.cycle_t = 0.0
+        self.done_strokes = {c.name: 0 for c in self.cylinders}
+
+    def _run(self, dt: float, now: float, cal: CalendarState, plant_s: float) -> None:
+        self.stop_reason = None
         if any(f.active for f in self.faults):
             for f in self.faults:
                 if f.active:
                     f.tick_fault(dt)
-            self.running = self.welding = False
+            self.running, self.stop_reason = False, "fault"
             return
-        if not shift_on:
-            self.running = self.welding = False
+        if self.micro.active:
+            self.micro.tick(dt)
+            self.running, self.stop_reason = False, "micro"
             return
+        if not cal.production:
+            self.running, self.stop_reason = False, "calendar"
+            return
+        if self.setup.active:
+            self.setup.tick(dt)
+            self.running, self.stop_reason = False, "setup"
+            return
+        if self.setup.maybe_start(cal, plant_s, now):
+            self._reset_cycle()
+            self.cycle_len = self._new_cycle_len()
+            self.running, self.stop_reason = False, "setup"
+            return
+        if self.supply_starved:
+            if self.buffer_s < self.cfg.buffer_resume_s:
+                self.running, self.stop_reason = False, "supply"
+                return
+            self.supply_starved = False
         started = [f.tick_running(dt, now) for f in self.faults]
         if any(started):
-            self.running = self.welding = False
-            self.cycle_t = 0.0
-            self.done_strokes = {c.name: 0 for c in self.cylinders}
+            self.running, self.stop_reason = False, "fault"
+            self._reset_cycle()
+            return
+        if self.micro.tick_running(dt, now, n_origins=len(self.FLOW)):
+            self.running, self.stop_reason = False, "micro"
             return
         self.running = True
         self.cycle_t += dt
@@ -280,18 +544,55 @@ class AssemblyCell:
         if self.cycle_t >= self.cycle_len - 1e-9:
             self.weld_cycles = (self.weld_cycles + 1) % U32
             self.axis = [(a + n) % U32 for a, n in zip(self.axis, self.AXIS_MOVES)]
-            if self.rng.random() < self.scrap_rate:
-                self.scrap = (self.scrap + 1) % U32
-            else:
-                self.good = (self.good + 1) % U32
-            self.cycle_t = 0.0
-            self.done_strokes = {c.name: 0 for c in self.cylinders}
+            for _ in range(self.setup.product.parts_per_cycle):
+                if self.rng.random() < self.scrap_rate:
+                    self.scrap = (self.scrap + 1) % U32
+                else:
+                    self.good = (self.good + 1) % U32
+            self._reset_cycle()
             self.cycle_len = self._new_cycle_len()
+
+    def step(self, dt: float, now: float, cal: CalendarState, plant_s: float, upstream_running: bool) -> None:
+        self._run(dt, now, cal, plant_s)
+        if not self.running:
+            self.welding = False
+        # buffer centro → célula (determinístico, sem sorteio)
+        if upstream_running:
+            self.buffer_s = min(self.cfg.buffer_capacity_s, self.buffer_s + self.cfg.buffer_refill_per_s * dt)
+        if self.running:
+            self.buffer_s -= dt
+            if self.buffer_s <= 1e-9:
+                self.buffer_s = 0.0
+                self.supply_starved = True
+        self._update_flags(now)
+
+    def _update_flags(self, now: float) -> None:
+        if self.stop_reason not in ("fault", "micro", "supply") and not self._any_flag:
+            return                       # caminho quente: rodando/pausa/setup sem flags ativas
+        if self.stop_reason == "fault":
+            origins = {i for i, k in enumerate(self.FLOW) if self._fault_of(k).active}
+        elif self.stop_reason == "micro" and self.micro.origin is not None:
+            origins = {self.micro.origin}
+        else:
+            origins = set()
+        for i, k in enumerate(self.FLOW):
+            if origins:
+                starved = i not in origins and any(j < i for j in origins)
+                blocked = i not in origins and any(j > i for j in origins)
+            else:
+                starved = self.stop_reason == "supply"
+                blocked = False
+            self.flags[k]["starved"] = starved
+            self.flags[k]["blocked"] = blocked
+            self.recorders[(k, "starved")].update(starved, now)
+            self.recorders[(k, "blocked")].update(blocked, now)
+        self._any_flag = any(f["starved"] or f["blocked"] for f in self.flags.values())
 
 
 # ── Planta ────────────────────────────────────────────────────────────────────
 
 ANALOG_ROLES = {"analog", "speed", "current"}
+ShiftsArg = Union[None, str, Sequence[ShiftDef]]
 
 
 class PlantModel:
@@ -300,42 +601,66 @@ class PlantModel:
         seed: int = 42,
         layout: PlantLayout = PLANTA_MANAUS,
         faults: bool = True,
-        shifts: Optional[str] = None,
+        shifts: ShiftsArg = "standard",
         start_second_of_day: int = 6 * 3600,
+        start_weekday: int = 0,
+        config: Optional[PlantConfig] = None,
     ) -> None:
+        """`shifts`: "standard" (calendário do layout, com pausas), None/"" (24 h, sem setups),
+        uma especificação "06:00-14:00,14:00-22:00" (sem pausas) ou uma lista de `ShiftDef`."""
         self.seed = seed
         self.layout = layout
+        self.config = config or PlantConfig()
         self.rng = random.Random(seed)
         self.noise = random.Random(seed ^ 0x5EED_A5A5)
-        self.shifts = parse_shifts(shifts)
+        if shifts == "standard":
+            defs: Sequence[ShiftDef] = layout.shifts
+        elif not shifts:
+            defs = ()
+        elif isinstance(shifts, str):
+            defs = _legacy_shift_defs(shifts)
+        else:
+            defs = shifts
+        self.calendar = ShiftCalendar(defs, start_weekday)
+        self.shifts = [(_hhmm(d.start_local), _hhmm(d.end_local)) for d in defs]
         self.start_sod = start_second_of_day
         self.ticks = 0
-        self.torno = MachiningMachine(self.rng, "usinagem.torno", 45.0, 0.02, 2 * 3600, 5 * 60, faults)
-        self.centro = MachiningMachine(self.rng, "usinagem.centro", 90.0, 0.015, 3 * 3600, 8 * 60, faults,
-                                       tool_changes=4)
-        self.cell = AssemblyCell(self.rng, faults)
+        cfg = self.config
+        self.torno = MachiningMachine(self.rng, "usinagem.torno", _machine(layout, "usinagem", "torno"), cfg,
+                                      "torno", 2 * 3600, 5 * 60, faults)
+        self.centro = MachiningMachine(self.rng, "usinagem.centro", _machine(layout, "usinagem", "centro"), cfg,
+                                       "centro", 3 * 3600, 8 * 60, faults, tool_changes=4)
+        self.cell = AssemblyCell(self.rng, layout, cfg, faults)
+        self.cal_state = self.calendar.at(self.start_sod)
         self.trackers: dict[str, BoolTracker] = {}
         self._keys = {signal_key(line, m, s) for line, m in layout.machines() for s in m.signals}
         self._roles = {signal_key(line, m, s): s.role for line, m in layout.machines() for s in m.signals}
         for key, role in self._roles.items():
             if role == "run_state":
                 self.trackers[key] = BoolTracker()
+        self._plc_code = {p.code: p.plc_code for p in layout.products}
 
     # tempo
     @property
     def sim_time_s(self) -> float:
         return round(self.ticks * TICK_S, 1)
 
+    def plant_seconds(self, sim_time_s: Optional[float] = None) -> float:
+        """Segundos de planta (desde 00:00 local do dia 0) para um tempo simulado."""
+        return self.start_sod + (self.sim_time_s if sim_time_s is None else sim_time_s)
+
     def step(self) -> None:
         now = (self.ticks + 1) * TICK_S
-        shift_on = in_shift(self.shifts, self.start_sod + now)
-        self.torno.step(TICK_S, now, shift_on)
-        self.centro.step(TICK_S, now, shift_on)
-        self.cell.step(TICK_S, now, shift_on)
+        plant_s = self.start_sod + now
+        cal = self.calendar.at(plant_s)
+        self.cal_state = cal
+        self.torno.step(TICK_S, now, cal, plant_s)
+        self.centro.step(TICK_S, now, cal, plant_s)
+        self.cell.step(TICK_S, now, cal, plant_s, upstream_running=self.centro.running)
         self.ticks += 1
-        values = self._discrete()
+        values = self._run_states()
         for key, tr in self.trackers.items():
-            tr.update(bool(values[key]), TICK_S)
+            tr.update(values[key], TICK_S)
 
     def advance_to(self, sim_time_s: float, max_ticks: Optional[int] = None) -> int:
         """Avança em passos inteiros até sim_time_s (nunca volta). Retorna quantos passos deu."""
@@ -351,8 +676,21 @@ class PlantModel:
         self.advance_to(self.sim_time_s + seconds)
 
     # valores
+    def _run_states(self) -> dict[str, bool]:
+        """Só os sinais run_state (caminho quente do passo de 0,1 s; o teste garante = _discrete())."""
+        t, c, cell = self.torno, self.centro, self.cell
+        return {
+            "usinagem.torno.run_state": t.running, "usinagem.torno.spindle.run": t.cutting,
+            "usinagem.torno.servo_x.run": t.cutting, "usinagem.torno.servo_z.run": t.cutting,
+            "usinagem.centro.run_state": c.running, "usinagem.centro.spindle.run": c.cutting,
+            "usinagem.centro.coolant.run": c.cutting, "montagem.robo.run_state": cell.running,
+            "montagem.fixacao.run_state": cell.running, "montagem.transportador.motor.run": cell.running,
+        }
+
     def _discrete(self) -> dict[str, float | int | bool]:
         t, c, cell = self.torno, self.centro, self.cell
+        cell_code = self._plc_code[cell.setup.product.product]
+        fl = cell.flags
         v: dict[str, float | int | bool] = {
             "usinagem.torno.run_state": t.running,
             "usinagem.torno.fault_state": t.fault.code,
@@ -361,6 +699,7 @@ class PlantModel:
             "usinagem.torno.spindle.run": t.cutting,
             "usinagem.torno.servo_x.run": t.cutting,
             "usinagem.torno.servo_z.run": t.cutting,
+            "usinagem.torno.product_code": self._plc_code[t.setup.product.product],
             "usinagem.centro.run_state": c.running,
             "usinagem.centro.fault_state": c.fault.code,
             "usinagem.centro.parts_good": c.good,
@@ -368,6 +707,7 @@ class PlantModel:
             "usinagem.centro.spindle.run": c.cutting,
             "usinagem.centro.gripper.cycles": c.gripper,
             "usinagem.centro.coolant.run": c.cutting,
+            "usinagem.centro.product_code": self._plc_code[c.setup.product.product],
             "montagem.robo.run_state": cell.running,
             "montagem.robo.fault_state": cell.robot_fault.code,
             "montagem.robo.weld_cycles": cell.weld_cycles,
@@ -378,6 +718,10 @@ class PlantModel:
             "montagem.transportador.parts_good": cell.good,
             "montagem.transportador.parts_scrap": cell.scrap,
         }
+        for k in AssemblyCell.FLOW:
+            v[f"{k}.product_code"] = cell_code
+            v[f"{k}.starved"] = fl[k]["starved"]
+            v[f"{k}.blocked"] = fl[k]["blocked"]
         for i, n in enumerate(cell.axis, start=1):
             v[f"montagem.robo.axis{i}.cycles"] = n
         for cyl in cell.cylinders:
@@ -421,12 +765,30 @@ class PlantModel:
         a1 = next(c for c in self.cell.cylinders if c.has_eos)
         return {"montagem.fixacao.a1.eos": a1.strokes}
 
+    def _events(self) -> dict[str, dict[str, list]]:
+        now = self.sim_time_s
+        t, c, cell = self.torno, self.centro, self.cell
+        out = {
+            t.key: {"micro_stops": t.micro.events, "setups": t.setup.events},
+            c.key: {"micro_stops": c.micro.events, "setups": c.setup.events},
+        }
+        for i, k in enumerate(cell.FLOW):
+            out[k] = {
+                # micro-parada da célula: atribuída à máquina de origem (as outras ficam starved/blocked)
+                "micro_stops": [e for e in cell.micro.events if e.get("origin") == i],
+                "setups": cell.setup.events,
+                "starved": cell.recorders[(k, "starved")].as_list(now),
+                "blocked": cell.recorders[(k, "blocked")].as_list(now),
+            }
+        return out
+
     def snapshot(self) -> dict:
         """Estado determinístico (sem analógicos) + verdade de campo para o QA."""
         cell = self.cell
         faults = {
             f.key: f.events for f in (self.torno.fault, self.centro.fault, *cell.faults)
         }
+        cal = self.cal_state
         return {
             "seed": self.seed,
             "sim_time_s": self.sim_time_s,
@@ -438,5 +800,14 @@ class PlantModel:
                                        "stroke_ms": c.stroke_ms} for c in cell.cylinders},
                 "pulse_targets": self.pulse_targets(),
                 "faults": faults,
+                "events": self._events(),
+                "products": {
+                    self.torno.key: self.torno.setup.product.product,
+                    self.centro.key: self.centro.setup.product.product,
+                    **{k: cell.setup.product.product for k in cell.FLOW},
+                },
+                "calendar": {"production": cal.production, "shift": cal.shift, "in_break": cal.in_break,
+                             "plant_s": round(self.plant_seconds(), 1)},
+                "buffer_s": round(cell.buffer_s, 1),
             },
         }

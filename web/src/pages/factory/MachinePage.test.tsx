@@ -33,7 +33,7 @@ describe("MachinePage", () => {
     expect(screen.getByRole("navigation", { name: "Navegação estrutural" })).toHaveTextContent("Linha 1 — Montagem");
     const prod = screen.getByRole("region", { name: "Produção de hoje" });
     expect(await within(prod).findByText("980")).toBeInTheDocument();
-    expect(within(prod).getByText("2% do total")).toBeInTheDocument();
+    expect(within(prod).getByText("2,0 % do total")).toBeInTheDocument();
     expect(within(prod).getByText("Componentes acima de 90%")).toBeInTheDocument();
     expect(within(prod).getByText("Planejar a troca")).toBeInTheDocument();
   });

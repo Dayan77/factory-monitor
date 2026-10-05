@@ -5,7 +5,9 @@ describe("titleFor", () => {
   it("nested factory routes keep the section title", () => {
     expect(titleFor("/factory")).toBe("Fábrica");
     expect(titleFor("/factory/machines/abc")).toBe("Fábrica");
-    expect(titleFor("/dashboard")).toBe("Dashboard");
+    expect(titleFor("/dashboard")).toBe("Raio-X");
+    expect(titleFor("/reports/shift")).toBe("Relatórios");
+    expect(titleFor("/settings/production")).toBe("Configurações");
     expect(titleFor("/nope")).toBe("Factory Monitor");
   });
 });

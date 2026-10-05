@@ -21,13 +21,13 @@ describe("LifeBar", () => {
     const { container } = render(<LifeBar fraction={0.72} label="Vida — cilindro" />);
     const bar = screen.getByRole("progressbar", { name: "Vida — cilindro" });
     expect(bar).toHaveAttribute("aria-valuenow", "72");
-    expect(screen.getByText("72%")).toBeInTheDocument();
+    expect(screen.getByText("72,0 %")).toBeInTheDocument();
     expect(container.querySelector("[data-band]")).toHaveAttribute("data-band", "warn");
   });
 
   it("does not truncate values above 100% (fill is clamped, number is not)", () => {
     render(<LifeBar fraction={1.05} />);
-    expect(screen.getByText("105%")).toBeInTheDocument();
+    expect(screen.getByText("105,0 %")).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "105");
   });
 

@@ -1,0 +1,226 @@
+"""
+OEE / Pareto / reliability by scope (machine | line | plant) — kpis.md §1.6:
+  * machine: its own events, data and counters, PRI of (machine, product);
+  * line: the output machine (Line.output_machine_id) for PQ/GQ and APT, and the line PRI =
+    PRI of the bottleneck (Line.bottleneck_machine_id) for the product, else the output machine's;
+  * plant: sum of the components of its lines.
+All aggregation sums components and recomputes the ratios (never a mean of percentages).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
+from zoneinfo import ZoneInfo
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...models import Line, Machine, Plant
+from ..usage import queries as uq
+from ..validation import is_uuid
+from . import kpi
+from .calendar import Calendar, ShiftInstance
+from .engine import (MachineData, ProductPri, components, failures, load_calendar, load_machine_data,
+                     machine_infos, operating_seconds, product_pri, reason_meta, short_faults, window_components,
+                     windows)
+
+MAX_RANGE_DAYS = 400
+MAX_HOUR_POINTS = 24 * 62
+
+
+@dataclass
+class Unit:
+    """One production unit of a scope: machine data + the PRI used for it."""
+    md: MachineData
+    pri: Optional[ProductPri] = None
+    label: str = ""
+
+
+@dataclass
+class Scope:
+    kind: str
+    id: str
+    tenant_id: str
+    tz: ZoneInfo
+    cal: Calendar
+    plant_id: str
+    machine_ids: list[str] = field(default_factory=list)       # reliability: every machine in scope
+    units_spec: list[tuple[str, Optional[str]]] = field(default_factory=list)   # (unit machine, pri machine)
+    reason: Optional[str] = None
+
+
+def _404(label: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} não encontrado(a).")
+
+
+async def resolve_scope(db: AsyncSession, tenant_id: str, kind: str, scope_id: str) -> Scope:
+    if not is_uuid(scope_id or ""):
+        raise _404({"machine": "Máquina", "line": "Linha", "plant": "Planta"}.get(kind, "Escopo"))
+    if kind == "machine":
+        infos = await machine_infos(db, tenant_id, [scope_id])
+        if scope_id not in infos:
+            raise _404("Máquina")
+        info = infos[scope_id]
+        cal = await load_calendar(db, tenant_id, info.plant_id, info.tz)
+        return Scope(kind, scope_id, tenant_id, info.tz, cal, info.plant_id, [scope_id], [(scope_id, None)])
+    if kind == "line":
+        line = (await db.execute(select(Line).where(Line.id == scope_id, Line.tenant_id == tenant_id))).scalar_one_or_none()
+        if line is None:
+            raise _404("Linha")
+        return await _line_scope(db, tenant_id, line)
+    if kind == "plant":
+        plant = (await db.execute(select(Plant).where(Plant.id == scope_id, Plant.tenant_id == tenant_id))).scalar_one_or_none()
+        if plant is None:
+            raise _404("Planta")
+        tz = uq.tzinfo(plant.timezone)
+        cal = await load_calendar(db, tenant_id, plant.id, tz)
+        lines = (await db.execute(select(Line).where(Line.tenant_id == tenant_id, Line.plant_id == plant.id)
+                                  .order_by(Line.name))).scalars().all()
+        sc = Scope(kind, scope_id, tenant_id, tz, cal, plant.id)
+        for ln in lines:
+            ls = await _line_scope(db, tenant_id, ln, cal, tz)
+            sc.machine_ids += ls.machine_ids
+            sc.units_spec += ls.units_spec
+        if not sc.units_spec:
+            sc.reason = "no_output_machine"
+        return sc
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="scope: machine | line | plant")
+
+
+async def _line_scope(db: AsyncSession, tenant_id: str, line: Line, cal: Optional[Calendar] = None,
+                      tz: Optional[ZoneInfo] = None) -> Scope:
+    if tz is None:
+        tzname = (await db.execute(select(Plant.timezone).where(Plant.id == line.plant_id))).scalar_one()
+        tz = uq.tzinfo(tzname)
+    if cal is None:
+        cal = await load_calendar(db, tenant_id, line.plant_id, tz)
+    mids = (await db.execute(select(Machine.id).where(Machine.tenant_id == tenant_id, Machine.line_id == line.id)
+                             .order_by(Machine.name))).scalars().all()
+    sc = Scope("line", line.id, tenant_id, tz, cal, line.plant_id, list(mids))
+    if line.output_machine_id:
+        sc.units_spec = [(line.output_machine_id, line.bottleneck_machine_id)]
+    else:
+        sc.reason = "no_output_machine"
+    return sc
+
+
+async def load_units(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime) -> list[Unit]:
+    ids = {m for m, _ in sc.units_spec} | {b for _, b in sc.units_spec if b}
+    infos = await machine_infos(db, sc.tenant_id, ids)
+    units = []
+    for mid, bott in sc.units_spec:
+        if mid not in infos:
+            continue
+        md = await load_machine_data(db, infos[mid], sc.cal, start, stop, now)
+        pri = None
+        if bott and bott != mid and bott in infos:
+            bp = await product_pri(db, sc.tenant_id, infos[bott])
+            pri = ProductPri(pri={**md.pri.pri, **bp.pri}, default_product=md.pri.default_product,
+                             fallback_pri=bp.pri.get(md.pri.default_product) if md.pri.default_product in bp.pri
+                             else (bp.fallback_pri or md.pri.fallback_pri))
+        units.append(Unit(md, pri, infos[mid].name))
+    return units
+
+
+def parse_window(sc: Scope, start: Optional[datetime], stop: Optional[datetime], now: datetime,
+                 group_by: str = "none") -> tuple[datetime, datetime]:
+    if start is not None and start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if stop is not None and stop.tzinfo is None:
+        stop = stop.replace(tzinfo=timezone.utc)
+    start = start or uq.local_midnight_utc(now, sc.tz)
+    stop = stop or now
+    if stop <= start:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="stop deve ser após start.")
+    if stop - start > timedelta(days=MAX_RANGE_DAYS):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"Intervalo máximo: {MAX_RANGE_DAYS} dias.")
+    if group_by == "hour" and (stop - start) > timedelta(hours=MAX_HOUR_POINTS):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="group_by=hour: intervalo máximo de 62 dias.")
+    return start, stop
+
+
+def total_components(units: list[Unit], start: datetime, stop: datetime, now: datetime) -> kpi.Components:
+    c = kpi.Components()
+    for u in units:
+        c.add(components(u.md, start, stop, now, u.pri))
+    if not units:
+        c.calendar_s = max((min(stop, now) - start).total_seconds(), 0.0)
+    elif len(units) > 1:
+        c.calendar_s = max((min(stop, now) - start).total_seconds(), 0.0) * len(units)
+    return c
+
+
+def oee_payload(sc: Scope, c: kpi.Components, start: datetime, stop: datetime, granularity: str) -> dict:
+    r = kpi.oee(c)
+    if sc.reason and not c.pot_s:
+        r["reason"] = sc.reason
+    return {"scope": sc.kind, "id": sc.id, "period_start": start, "period_end": stop, "granularity": granularity,
+            "calendar_default": bool(getattr(sc.cal, "default", False)), **r, "points": []}
+
+
+async def oee_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, group_by: str, now: datetime) -> dict:
+    units = await load_units(db, sc, start, stop, now)
+    points, parts = [], []
+    if group_by != "none":
+        for w in windows(sc.cal, sc.tz, start, stop, group_by):
+            wc = kpi.Components()
+            for u in units:
+                wc.add(window_components(u.md, w, now, u.pri))
+            if len(units) > 1:
+                wc.calendar_s = max((min(w.end, now) - w.start).total_seconds(), 0.0) * len(units)
+            elif not units:
+                wc.calendar_s = max((min(w.end, now) - w.start).total_seconds(), 0.0)
+            parts.append(wc)
+            r = kpi.oee(wc)
+            points.append({"t": w.start, "end": w.end, "label": w.label, "availability": r["availability"],
+                           "performance": r["performance"], "quality": r["quality"], "oee": r["oee"],
+                           "teep": r["teep"], "pbt_s": r["pbt_s"], "good": wc.good, "scrap": wc.scrap})
+    if group_by in ("shift", "day"):
+        # S3-8: the total of a grouped query is the sum of its points (same shift instances)
+        c = kpi.total(parts)
+        # calendar time (TEEP): the days of the window (D10); for shifts, the window itself
+        c.calendar_s = (sum(p.calendar_s for p in parts) if group_by == "day"
+                        else max((min(stop, now) - start).total_seconds(), 0.0) * max(1, len(units)))
+    else:
+        c = total_components(units, start, stop, now)
+    out = oee_payload(sc, c, start, stop, group_by if group_by != "none" else "interval")
+    out["points"] = points
+    return out
+
+
+async def pareto_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime,
+                     by: str = "code") -> list[dict]:
+    units = await load_units(db, sc, start, stop, now)
+    c = total_components(units, start, stop, now)
+    return kpi.pareto(c, await reason_meta(db, sc.tenant_id), by=by)
+
+
+async def reliability_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime) -> dict:
+    end = min(stop, now)
+    op = await operating_seconds(db, sc.tenant_id, sc.machine_ids, start, end)
+    fl = await failures(db, sc.tenant_id, sc.machine_ids, start, end)
+    sf = await short_faults(db, sc.tenant_id, sc.machine_ids, start, end)
+    r = kpi.reliability(op, fl, sf)
+    return {"scope": sc.kind, "id": sc.id, "period_start": start, "period_end": stop, **r}
+
+
+def instances_of_day(cal: Calendar, day: date, shift_id: Optional[str] = None) -> list[ShiftInstance]:
+    return [i for i in cal.day_instances(day) if shift_id is None or i.shift_id == shift_id]
+
+
+def productive_today(cal: Calendar, now: datetime) -> date:
+    inst = cal.instance_at(now)
+    return inst.productive_day if inst else now.astimezone(cal.tz).date()
+
+
+def day_components(units: list[Unit], insts: list[ShiftInstance], now: datetime) -> kpi.Components:
+    c = kpi.Components()
+    for u in units:
+        for i in insts:
+            c.add(components(u.md, i.start, i.end, now, u.pri))
+    return c

@@ -7,7 +7,8 @@ Formato (version 1):
       "version": 1, "gateway_id": "gw-...", "tenant_id": "<uuid>|null",
       "heartbeat_s": 10, "pulse_poll_ms": 20,
       "sources": [
-        {"id": "opcua-plc",  "protocol": "opcua",  "endpoint": "opc.tcp://host:4840/path/", "publishing_interval_ms": 250},
+        {"id": "opcua-plc",  "protocol": "opcua",  "endpoint": "opc.tcp://host:4840/path/", "publishing_interval_ms": 250,
+         "timestamps": "source", "max_clock_skew_s": 2},   # política de timestamp (edge/src/clock.py)
         {"id": "modbus-plc", "protocol": "modbus", "host": "host", "port": 502}
       ],
       "tags": [
@@ -29,6 +30,12 @@ Regras (docs/domain.md §3):
 - `cycle_pulse` é contado por borda no edge (polling rápido, `pulse_poll_ms`) e publicado como contador
   acumulado persistido em SQLite; só é aceito em bit Modbus (coil/discrete).
 - Tag sem `tag_id` (ainda não provisionada) é ignorada com aviso — o servidor recusaria o tópico.
+- `sources[].timestamps`: `gateway` (padrão) ou `source` (relógio do CLP confiável; só OPC UA);
+  `sources[].device_heartbeat` (OPC UA): o dispositivo re-carimba valores parados → assinatura notifica também
+  mudança só de timestamp (DataChangeTrigger StatusValueTimestamp);
+  `sources[].max_clock_skew_s`: número > 0 (padrão 2) ou `off`. Ver edge/src/clock.py.
+- `signal_role` (opcional): papel de borda quando o servidor ainda não tem o papel (Sprint 3: `product_code`
+  = código do produto no CLP, `starved`, `blocked`); esses sinais discretos também não passam por deadband.
 """
 
 from __future__ import annotations
@@ -40,10 +47,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
 
+from .clock import POLICIES, parse_max_skew
+
 SEMANTIC_ROLES = {
     "analog", "cycle_counter", "cycle_pulse", "run_state", "part_counter_good", "part_counter_scrap",
     "part_counter_total", "fault_state", "stroke_time", "speed", "current",
 }
+SIGNAL_ROLES = {"product_code", "starved", "blocked"}   # `signal_role` de borda (discretos, sem deadband)
 DEADBAND_ROLES = {"analog", "speed", "current"}      # só grandezas contínuas usam deadband
 COUNTER_ROLES = {"cycle_counter", "cycle_pulse", "part_counter_good", "part_counter_scrap", "part_counter_total"}
 MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
@@ -54,6 +64,17 @@ _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 class PlantMapError(ValueError):
     pass
+
+
+def _flag(raw, sid: str) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    txt = str(raw).strip().lower()
+    if txt in ("1", "true", "yes", "on"):
+        return True
+    if txt in ("0", "false", "no", "off", ""):
+        return False
+    raise PlantMapError(f"source {sid}: booleano inválido {raw!r}")
 
 
 def expand_env(value, env: Mapping[str, str]):
@@ -83,6 +104,9 @@ class SourceConfig:
     host: str = ""
     port: int = 502
     publishing_interval_ms: int = 500
+    timestamps: str = "gateway"     # "gateway" | "source" (edge/src/clock.py)
+    device_heartbeat: bool = False  # OPC UA: o dispositivo re-carimba valores parados (notificar por timestamp)
+    max_clock_skew_s: Optional[float] = 2.0
 
 
 @dataclass
@@ -101,10 +125,11 @@ class MapTag:
     scale: float = 1.0
     offset: float = 0.0
     poll_interval_ms: int = 1000
+    signal_role: Optional[str] = None
 
     @property
     def bypass_deadband(self) -> bool:
-        return self.semantic_role not in DEADBAND_ROLES
+        return self.semantic_role not in DEADBAND_ROLES or self.signal_role in SIGNAL_ROLES
 
     @property
     def is_pulse(self) -> bool:
@@ -142,15 +167,27 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
         sid, proto = raw.get("id"), raw.get("protocol")
         if not sid or sid in sources:
             raise PlantMapError(f"source sem id ou duplicada: {sid!r}")
+        policy = raw.get("timestamps") or "gateway"
+        if policy not in POLICIES:
+            raise PlantMapError(f"source {sid}: timestamps inválido {policy!r} (use gateway|source)")
+        try:
+            max_skew = parse_max_skew(raw.get("max_clock_skew_s", 2.0))
+        except ValueError as e:
+            raise PlantMapError(f"source {sid}: {e}") from None
         if proto == "opcua":
             if not raw.get("endpoint"):
                 raise PlantMapError(f"source {sid}: endpoint obrigatório")
             sources[sid] = SourceConfig(sid, proto, endpoint=raw["endpoint"],
-                                        publishing_interval_ms=int(raw.get("publishing_interval_ms", 500)))
+                                        publishing_interval_ms=int(raw.get("publishing_interval_ms", 500)),
+                                        timestamps=policy, max_clock_skew_s=max_skew,
+                                        device_heartbeat=_flag(raw.get("device_heartbeat", False), sid))
         elif proto == "modbus":
             if not raw.get("host"):
                 raise PlantMapError(f"source {sid}: host obrigatório")
-            sources[sid] = SourceConfig(sid, proto, host=raw["host"], port=int(raw.get("port", 502)))
+            if policy == "source":
+                raise PlantMapError(f"source {sid}: Modbus não traz timestamp do CLP (use timestamps=gateway)")
+            sources[sid] = SourceConfig(sid, proto, host=raw["host"], port=int(raw.get("port", 502)),
+                                        max_clock_skew_s=max_skew)
         else:
             raise PlantMapError(f"source {sid}: protocolo inválido {proto!r}")
 
@@ -183,6 +220,9 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
                 raise PlantMapError(f"tag {key}: register_type inválido {rt!r}")
             if role == "cycle_pulse" and rt not in MODBUS_BIT_TYPES:
                 raise PlantMapError(f"tag {key}: cycle_pulse exige register_type coil/discrete")
+        signal_role = raw.get("signal_role") or None
+        if signal_role is not None and signal_role not in SIGNAL_ROLES:
+            raise PlantMapError(f"tag {key}: signal_role inválido {signal_role!r}")
         counter_max = raw.get("counter_max")
         if counter_max is not None and (not isinstance(counter_max, int) or counter_max <= 0):
             raise PlantMapError(f"tag {key}: counter_max inválido {counter_max!r}")
@@ -193,7 +233,7 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
             unit_id=int(raw.get("unit_id", 1)), register_type=raw.get("register_type", "holding"),
             data_type_plc=raw.get("data_type_plc", "uint16"), word_order=raw.get("word_order", "big"),
             scale=float(raw.get("scale", 1.0)), offset=float(raw.get("offset", 0.0)),
-            poll_interval_ms=int(raw.get("poll_interval_ms", 1000)),
+            poll_interval_ms=int(raw.get("poll_interval_ms", 1000)), signal_role=signal_role,
         )
         if tag.tag_id is None:
             skipped.append(key)

@@ -554,4 +554,196 @@ acima ou em domain.md. Os cenários de ouro em [`docs/scenarios/`](scenarios/REA
   (d) Parado durante pausa planejada **não** gera `DowntimeEvent`.
 
 Em aberto para o Sprint 3 (sem decisão ainda, nenhum cenário depende disso): parada que começa como `stopped` e vira
-`error` no meio (um evento com motivo sugerido `EQP-*`, ou dois eventos?).
+`error` no meio (um evento com motivo sugerido `EQP-*`, ou dois eventos?) → **decidido no Sprint 3: um evento (D1 abaixo)**.
+
+## Decisões Sprint 3
+
+Decisões tomadas na implementação do motor de paradas/OEE (`server/src/services/oee/`). Normativas como os
+esclarecimentos acima; os testes `server/tests/test_oee_*.py` e o cenário C as exercitam.
+
+- **D1 — Parada que vira falha no meio** (pergunta em aberto acima): é **um** `DowntimeEvent` (do início da
+  parada até a volta a `running`), com motivo sugerido `EQP-*` (mapa `fault_code_map` da máquina; código não
+  mapeado → `EQP-01`). O `FailureRecord` rascunho tem `failed_at` = instante em que `fault_state` ficou ≠ 0 (não o
+  início da parada) e `restored_at` = fim da parada; o MTTR usa esse intervalo (C24c). Uma falha com código só
+  durante parte de uma parada fundida (C24a) também torna o evento inteiro `EQP-*`.
+- **D2 — Motivo efetivo.** Pareto/OEE usam `reason_code` do operador; sem ele, o sugerido (`EQP-*` da falha);
+  sem os dois, `UNK-01`. Ao fim do turno, evento sem motivo **e** sem sugestão recebe `reason_code = UNK-01`
+  (regra 4); evento com sugestão `EQP-*` mantém `reason_code` nulo até o operador confirmar. "Não justificada" =
+  `reason_code` nulo ou `UNK-01`.
+- **D3 — FailureRecord automático** para toda parada cujo motivo efetivo é `EQP-*` (severidade padrão `critical`
+  — a parada perdeu a função; o técnico pode rebaixar para `degraded`). Uma parada dividida por turno tem **uma**
+  falha (ligada ao primeiro evento). Se o operador reclassificar para um motivo não `EQP-*`, o rascunho é apagado.
+- **D4 — Partes da parada.** O limiar é aplicado à parada contígua inteira (com dados); depois ela é cortada nos
+  turnos (um evento por instância de turno, `stop_start` comum) e a parte fora do tempo programado não vira evento.
+  Um pedaço inteiramente dentro de pausa planejada não vira evento (C24d). Micro-paradas: a perda conta só a parte
+  dentro do tempo programado e fora de pausa; a ocorrência é contada uma vez, na primeira hora/turno em que cai.
+- **D5 — Sem dados.** Um buraco de dados corta a parada (o estado durante o buraco é desconhecido); a parada
+  cortada só é finalizada quando os dados voltam (ou após 24 h de silêncio). Sem dados = tempo programado fora de
+  pausas/paradas planejadas e fora de paradas não planejadas declaradas, sem leitura válida (C11); sai do PBT.
+  `data_coverage` = (tempo do POT com dados ou com parada declarada) / POT — máquina sem nenhum dado no período
+  tem cobertura 0 e A/P/Q/OEE `null` (`insufficient_data`). Parada manual declarada sobre um buraco conta como ADOT.
+- **D6 — Planta sem turnos cadastrados** usa um calendário implícito de 24 h (todo dia 00:00–24:00 local) para
+  detecção e OEE, sinalizado por `calendar_default = true` na resposta. Com qualquer turno cadastrado, vale só o
+  calendário.
+- **D7 — Contagens horárias.** Peças, horas de operação e micro-paradas ficam em buckets horários. Micro-paradas
+  entram na janela que contém o início do pedaço dentro do turno. **Peças**: entra na janela a parte do bucket que
+  cai dentro da janela **e** dentro das instâncias de turno (POT), proporcional à sobreposição (peças supostas
+  uniformes na hora; a hora corrente pelo tempo decorrido) — janelas vizinhas nunca contam duas vezes e a soma das
+  partes é o total. Janelas e turnos alinhados à hora cheia são exatos; quando algum bucket foi repartido a
+  resposta traz `counts_prorated = true` e a UI avisa "contagem proporcional" (ex.: turno 05:30–14:00, consulta
+  09:30–09:45). Antes, um bucket só contava inteiro se o seu início caísse na janela — 09:30–09:45 dava 0 peças e
+  OEE 0. A produção de um
+  bucket é repartida entre as ordens (`ProductionRun`) pela sobreposição com a hora; a parte sem ordem usa o
+  produto padrão da máquina (`product_unknown = true`); sem produto padrão, o `ideal_cycle_time_s` da máquina;
+  produto sem PRI cadastrado → P e OEE `null` (`insufficient_data`).
+- **D8 — `run_state` de posição.** Máquina sem `run_state` próprio usa o da primeira posição (por criação) que o
+  tenha — para paradas, MTBF (C23) e cadência em operação (ex.: transportador cujo `run_state` é o do motor).
+  Sem nenhum `run_state`, paradas vêm do intervalo entre ciclos (contador de ciclos da máquina; senão
+  `part_counter_total`; senão `part_counter_good`) com o PRI do produto padrão.
+- **D9 — Turnos.** `weekdays`: 0 = segunda … 6 = domingo, avaliado no dia produtivo (o do início). Turnos ativos
+  da mesma planta não podem se sobrepor (409). `planned_stop` sem horário cobre o turno (com `shift_id`) ou o dia.
+- **D10 — TEEP por janela.** Tempo calendário = duração da janela consultada (limitada a "agora"); com
+  `group_by=day`, a parte do dia local dentro da janela. Na planta (soma de linhas) o tempo calendário também é
+  somado por linha.
+- **D11 — Versões de turno.** O calendário não reescreve o passado. Editar horário, dias ou pausas, ou desativar um
+  turno que já vigorou em algum dia produtivo anterior, **encerra a versão** (`valid_to` = dia anterior a
+  `effective_from`, padrão hoje no fuso da planta) e cria uma nova (`valid_from = effective_from`, devolvida pelo
+  `PATCH`, com outro `id`); exceções do turno a partir dessa data passam para a nova versão. Mudar só o nome é no
+  lugar. `DELETE` de turno com paradas registradas → 409 (desative); turno que já vigorou é encerrado (ontem) em vez
+  de apagado; só um turno criado hoje sem paradas é apagado. `GET /api/shifts/` lista as versões vigentes
+  (`include_history=true` inclui as encerradas). Um turno **novo** vale também para os dias anteriores (não havia
+  versão antes dele). A UI avisa, antes de salvar, que os dias anteriores mantêm o horário antigo.
+- **D12 — Dados atrasados no detector de paradas.** O MQTT grava leituras concorrentemente e o gateway descarrega o
+  buffer depois de reconectar, então leituras chegam ao InfluxDB fora de ordem. O detector (i) só avança o checkpoint
+  sobre leituras que já estavam visíveis há `downtime_settle_s` (30 s); (ii) uma leitura gravada mais de
+  `downtime_settle_s` depois do próprio timestamp marca a máquina (`late_from`) e a próxima passada volta ao último
+  snapshot anterior (`downtime_detector_snapshots`, um a cada 15 min, 7 dias) e re-detecta: eventos por início
+  (automáticos que deixaram de existir são removidos — os que o operador já tratou ficam, com log), micro-paradas
+  restauradas do snapshot (nunca contadas duas vezes) e cobertura re-derivada; (iii) dentro de uma parada longa o
+  checkpoint guarda o início dela (`down_since`), sem reler a parada inteira a cada passada. Dados mais antigos que
+  o horizonte são gravados mas não re-detectados (log `downtime.detector.late_beyond_horizon`).
+
+## Esclarecimentos Sprint 3
+
+Revisão do contrato do Sprint 3 (OEE/paradas/Pareto pela API, motor em `server/src/services/oee/`) procurando
+pontos em que duas implementações — ou a API e a UI — dariam números diferentes. Normativos como C1–C24 e D1–D10;
+têm prioridade sobre texto ambíguo acima. O cenário de ouro **D** ([`docs/scenarios/`](scenarios/README.md#cenário-d--linha-com-gargalo-vários-turnos-e-dias-sprint-3))
+exercita cada item; o código entre parênteses diz onde. As divergências encontradas na revisão (S3-1, S3-4, S3-5,
+S3-6, S3-7, S3-8) foram corrigidas; `docs/scenarios/test_scenario_d.py` não tem mais `xfail`.
+
+### S3-1 — OEE quando PBT = 0
+
+- A resposta é **HTTP 200** (nunca 404/422/500 para um escopo válido sem tempo planejado) com `availability`,
+  `performance`, `quality` e `oee` = `null` e `reason`:
+  - `no_planned_time` — `POT − PDOT = 0`: feriado, fim de semana sem turno, turno inteiro em parada planejada;
+  - `insufficient_data` — havia tempo planejado, mas todo ele sem dados (`data_coverage = 0`, D5);
+  - `no_output_machine` — linha sem máquina de saída cadastrada (e por isso sem POT).
+- **TEEP e Loading continuam definidos** sempre que o tempo calendário > 0: `Loading = PBT / calendário = 0` e
+  `TEEP = Σ PRI·GQ dentro do POT / calendário = 0` (zero real: o ativo não gerou valor naquele tempo; o dia entra
+  na média de TEEP do mês). Exceção: com `reason = insufficient_data` o TEEP é `null` (não se sabe o que foi feito).
+  (D: feriado 12/10 → OEE `null`, Loading 0, TEEP 0; o TEEP do período 0,250347 inclui os 1 440 min do feriado.)
+- `data_coverage` com POT = 0 é `null`. Cadências e `micro_stops_per_apt_hour` com denominador 0 são `null`.
+- Pareto com PBT = 0: **lista vazia** (sem linhas de 0 min com `pct = null`). Com PBT > 0, linhas com 0 min PODEM
+  ser omitidas; `pct` nunca é `null` quando o total de perdas é > 0.
+- Agregação: um dia/turno com PBT = 0 contribui com 0 para todas as somas (é neutro no OEE do período) e com o seu
+  tempo calendário para o TEEP.
+
+### S3-2 — Desempenho > 100 %
+
+- `P` **não** é truncado e `ideal_cycle_time_suspect = true` quando `P > 1` (estritamente). A, Q e OEE são
+  calculados normalmente a partir das somas (o OEE também não é truncado). A UI mostra o valor e o aviso
+  "tempo de ciclo ideal suspeito — revisar o cadastro (máquina, produto) ou a contagem".
+- Agregação: soma-se **antes** de qualquer limitação — o P do dia é `Σ S / Σ APT` com os componentes brutos,
+  nunca a soma de perdas de velocidade já truncadas dos turnos.
+- Pareto: a perda de velocidade (`APT − Σ PRI·PQ − micro`) negativa vira **0** e o flag acompanha a resposta; nesse
+  caso `Σ perdas ≠ PBT − Σ PRI·GQ` e o total do Pareto é a soma das linhas. Nenhuma outra linha é ajustada.
+- Pontos horários (`group_by=hour`) com P > 1 por arredondamento de contagem (uma peça a mais numa hora) recebem o
+  mesmo flag; a UI PODE suprimir o aviso em pontos horários se o turno não tiver P > 1.
+
+### S3-3 — Produto desconhecido
+
+Ordem de resolução do PRI das peças de cada bucket horário (D7):
+1. a(s) `ProductionRun` que se sobrepõe(m) à hora — peças repartidas pela fração da hora coberta por cada uma;
+2. a fração da hora **sem** ordem vai para o produto padrão da máquina (`is_default`), com `product_unknown = true`;
+3. sem produto padrão: `Machine.ideal_cycle_time_s`, também com `product_unknown = true`;
+4. sem nenhum PRI: P, Q e OEE `null` com `reason = insufficient_data`; **A continua** sendo calculada (não depende
+   de PRI). O TEEP também fica `null`.
+
+Para que (2) não reparta peças de um produto para outro, a troca de produto DEVE ser contígua: **a ordem nova abre
+no início do setup** (o setup pertence à ordem que ele prepara) e a ação "trocar produto" fecha a ordem anterior
+no mesmo instante — nunca há buraco entre ordens consecutivas. (D: SUP-100 06:00–11:00, SUP-200 a partir de 11:00,
+setup `SET-01` 11:00–11:30 dentro da ordem nova.) Quando a máquina tiver a tag `product_code` (receita do CLP), ela
+PODE abrir/fechar as ordens automaticamente (Sprint 4). `product_unknown = true` na resposta faz a UI mostrar
+"produto não informado em parte do período".
+
+### S3-4 — Paradas planejadas (`PLN-*`) informadas fora das pausas
+
+- **Antes do turno** o lugar delas é o calendário (`planned_stop` com horário, `shift_id` opcional, D9): PDOT.
+- **Durante/depois do turno**, uma parada detectada (ou manual) reclassificada com `PLN-01`, `PLN-02`, `PLN-04` ou
+  `PLN-05` vira `planned = true` e a sua parte dentro do tempo programado e **fora** das pausas do turno vai para
+  **PDOT** (sai do PBT); a parte que coincide com uma pausa não é contada duas vezes (união de intervalos); a parte
+  fora do POT é ignorada. Uma parada não planejada que se sobrepõe a uma planejada perde a parte sobreposta (a
+  planejada prevalece). Ao (§2.6): `PLN-01/02/04/05` saem de T_req. (D: DDS `PLN-02` 14:00–14:15 → PDOT 45 e
+  PBT 395 no S4; T_req 395.)
+- **`PLN-03` (preventiva) informada sem estar no calendário antes do início do turno é `MNT-02`** (domain.md §4.1):
+  a API DEVE responder 422 com a sugestão `MNT-02` quando o operador tentar `PLN-03` numa parada que não está coberta
+  por um `planned_stop PLN-03` do calendário (`detail = {message, suggested_reason_code: "MNT-02"}`; vale para
+  `POST /api/downtime/` e `PATCH /api/downtime/{id}`; "coberta" = a parada se sobrepõe à janela PLN-03).
+- Pausas de turno e exceções `planned_stop`/`extra_shift` só aceitam motivo **planejado** existente (`PLN-*` ou
+  código do tenant com `planned = true`), senão 422 — uma pausa com `EQP-*` tiraria perda real do PBT e do Pareto.
+- Toda reclassificação para `PLN-*` fica auditada (`justified_by`, `justified_at`) e aparece em separado no relatório
+  de turno ("paradas planejadas declaradas no turno"), porque reduz o PBT e melhora A. O tenant PODE exigir papel
+  supervisor para ela (configuração; padrão: operador pode).
+- Parada manual `PLN-*` sobre um buraco de dados conta como coberta (D5) e como PDOT.
+
+### S3-5 — Arredondamento e precisão dos valores da API
+
+- **Frações** (A, P, Q, OEE, TEEP, Loading, Ao, `data_coverage`, `pct` e `cumulative_pct` do Pareto, `life`):
+  `float` IEEE-754 de 64 bits **sem arredondamento** no servidor; calculadas sempre a partir das somas em
+  segundos (nunca de valores já arredondados). Nunca `NaN`/`Infinity` no JSON: indefinido é `null` + `reason`.
+- **Tempos**: segundos (`*_s`) em `float`, resolução de milissegundo (timestamps de origem); minutos/horas só na UI.
+  **Contagens** (`produced`, `good`, `scrap`, `micro_stop_count`, `events`, `failures`): inteiros no total do
+  período/turno; repartições por produto dentro de uma hora (S3-3) PODEM ser fracionárias e só aparecem no
+  detalhamento por produto.
+- **Timestamps** em ISO 8601 com fuso (`Z`); datas de dia produtivo (`productive_day`) como `YYYY-MM-DD` local.
+- **Testes**: tolerância absoluta `1e-6` para frações, relativa `1e-6` para valores > 1; `pct` do Pareto `5e-7`.
+- **UI** (pt-BR, `Intl.NumberFormat`): percentuais com **1 casa** (`75,4 %`), arredondamento meio-para-cima do valor
+  bruto; o acumulado do Pareto é calculado do bruto (a última linha mostra sempre `100,0 %`, mesmo que a soma das
+  linhas arredondadas dê 99,9 %); MTBF/MTTR com 1 casa (`1 733,3 h`, `83,3 min`); MCBF e contagens inteiros com
+  separador de milhar; durações ≥ 10 min sem casas, < 10 min com 1 casa. Nenhum KPI é recalculado na UI a partir de
+  valores arredondados. (`formatPct` em web/src/utils/format.ts; espaço não separável antes do `%`.)
+
+### S3-6 — Feriado e o turno que entra nele
+
+Exceções de calendário valem para o **dia produtivo**: `holiday` em 12/10 remove os turnos que **começam** em 12/10.
+O turno C que começa às 22:00 de 11/10 roda até 06:00 do feriado e é de 11/10 (C19). Para não programá-lo, o
+planejador cadastra também `holiday` com `shift_id = C` em 11/10 (o mesmo recurso cancela um turno de um dia só:
+no D, o C de 13/10). Um turno extra que se sobrepõe a uma instância de turno ativa do mesmo dia DEVE ser
+rejeitado (409, como D9), senão o POT contaria o tempo duas vezes — inclusive contra outro turno extra do mesmo
+período (`POST`/`PATCH /api/calendar-exceptions/`).
+
+### S3-7 — Produção fora do calendário
+
+Peças contadas fora de qualquer instância de turno (teste da manutenção no feriado, linha rodando sem turno extra
+cadastrado) **não** entram em PQ/GQ do OEE nem no numerador do TEEP — entrariam sem o tempo correspondente e
+inflariam P. São devolvidas em `produced_outside_schedule` (boas/refugo/total) e a UI avisa "produção fora do
+calendário — cadastrar turno extra?". Continuam no histórico de produção (`/api/production`, buckets). (D: 12 peças
+em 12/10 09:00–10:00.)
+
+### S3-8 — Total de uma consulta agrupada
+
+Com `group_by=shift|day`, o total da resposta DEVE ser a **soma dos componentes dos pontos** (mesmas instâncias de
+turno), para que série e total nunca discordem. Sem `group_by`, a janela é tratada como intervalo livre: as
+instâncias de turno são cortadas em `[start, stop)`, o que inclui o rabo do turno noturno da véspera quando
+`start` é meia-noite — por isso as telas "ontem/hoje" usam o dia produtivo (relatório de turno ou `group_by=day`),
+nunca um intervalo 00:00–00:00. O tempo calendário do TEEP agrupado por dia é 1 440 min por dia produtivo da
+janela (D10); com `group_by=shift`, o tempo calendário é a janela consultada.
+
+### S3-9 — Buraco de dados com contagem
+
+Peças reveladas pela primeira leitura depois de um buraco **contam** (o contador do CLP é a verdade da quantidade,
+C9) e o buraco continua fora do PBT (D5). Isso superestima P do período na proporção do buraco; o aviso de
+`data_coverage < 0,95` é o sinal para o supervisor **declarar** o que aconteceu (parada manual → ADOT e coberto,
+ou nada, se a linha rodou). No D o buraco não tem peças (a linha estava parada): sem declaração, S4 fica com
+PBT 395 e OEE 0,891139; com `UTL-01` declarada, PBT 435 e OEE 0,809195 — por isso a parada sem dados deve ser
+justificada no fluxo de paradas, como as demais.

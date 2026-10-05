@@ -13,6 +13,11 @@ Runtime da planta virtual: liga o modelo determinístico a servidores reais.
 
 Tempo: o modelo avança `speed` segundos simulados por segundo real, sempre em passos inteiros, então o
 estado num dado tempo simulado não depende do relógio real. Timestamps publicados são o relógio real (UTC).
+
+Playback de cenário (`ScenarioModel`, edge/virtual_plant/scenario.py): o modelo entrega cada mudança com o seu
+instante exato (`drain_changes()`); o runtime escreve TODAS, em ordem, cada uma com SourceTimestamp = relógio
+do dispositivo naquele instante (`device_time()`), mesmo várias do mesmo nó num só ciclo de atualização — o
+gateway assina com fila (queue size) e recebe cada transição com o seu timestamp.
 """
 
 from __future__ import annotations
@@ -162,9 +167,11 @@ class VirtualPlantRuntime:
         self._nodes: dict[str, ua.NodeId] = {}
         self._last: dict[str, object] = {}
         self._tasks: list[asyncio.Task] = []
+        self._sim_task: Optional[asyncio.Task] = None
         self._runner: Optional[web.AppRunner] = None
         self._running = False
         self.lag_s = 0.0
+        self._finished_logged = False
         self.started_at: Optional[datetime] = None
 
     @property
@@ -172,7 +179,9 @@ class VirtualPlantRuntime:
         return f"opc.tcp://{self.host}:{self.opcua_port}{OPCUA_PATH}"
 
     # ── start/stop ────────────────────────────────────────────────────────
-    async def start(self) -> None:
+    async def start(self, paused: bool = False) -> None:
+        """Sobe os servidores. `paused=True`: tempo simulado parado até `resume()` (playback de cenário
+        espera o gateway assinar para não perder as primeiras transições)."""
         await self._start_opcua()
         units = sorted({a.unit_id for a in self.addresses if a.protocol == "modbus"})
         self.modbus = ModbusPlc(self.host, self.modbus_port, units)
@@ -182,9 +191,38 @@ class VirtualPlantRuntime:
             await self._start_http()
         self._running = True
         self.started_at = datetime.now(timezone.utc)
-        self._tasks = [asyncio.create_task(self._sim_loop()), asyncio.create_task(self._pulse_loop())]
-        log.info("virtual_plant.started opcua=%s modbus=%s:%s speed=%s seed=%s",
-                 self.opcua_endpoint, self.host, self.modbus_port, self.speed, self.model.seed)
+        self._tasks = [asyncio.create_task(self._pulse_loop())]
+        if not paused:
+            self.resume()
+        log.info("virtual_plant.started opcua=%s modbus=%s:%s speed=%s seed=%s paused=%s",
+                 self.opcua_endpoint, self.host, self.modbus_port, self.speed, self.model.seed, paused)
+
+    def resume(self) -> None:
+        """(Re)inicia o tempo simulado a partir do tempo atual do modelo."""
+        if self._sim_task is None or self._sim_task.done():
+            self._sim_task = asyncio.create_task(self._sim_loop())
+            self._tasks.append(self._sim_task)
+
+    def monitored_items(self) -> int:
+        """Quantos itens OPC UA estão assinados agora (clientes como o gateway)."""
+        try:
+            subs = self.opcua.iserver.subscription_service.subscriptions.values()
+            return sum(len(sub.monitored_item_srv._monitored_items) for sub in subs)
+        except AttributeError:
+            return 0
+
+    async def wait_for_subscribers(self, min_items: int = 1, settle_s: float = 1.0,
+                                   timeout: Optional[float] = None) -> bool:
+        """Espera um cliente OPC UA assinar ao menos `min_items` itens (+ `settle_s` para receber os
+        valores iniciais). Retorna False no timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + timeout
+        while self.monitored_items() < min_items:
+            if deadline is not None and loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(settle_s)
+        return True
 
     async def stop(self) -> None:
         self._running = False
@@ -196,6 +234,7 @@ class VirtualPlantRuntime:
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
         self._tasks = []
+        self._sim_task = None
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
@@ -215,12 +254,13 @@ class VirtualPlantRuntime:
 
     async def freeze(self) -> None:
         """Para o tempo simulado (servidores seguem no ar com os últimos valores). Útil em testes/QA."""
-        if self._tasks:
-            self._tasks[0].cancel()
+        if self._sim_task is not None:
+            self._sim_task.cancel()
             try:
-                await self._tasks[0]
+                await self._sim_task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            self._sim_task = None
         await self._push()
 
     # ── OPC UA ────────────────────────────────────────────────────────────
@@ -263,7 +303,31 @@ class VirtualPlantRuntime:
         return int(value)
 
     # ── loops ─────────────────────────────────────────────────────────────
+    async def _write(self, key: str, value, ts: datetime) -> None:
+        a = self.by_key[key]
+        self._last[key] = value
+        if a.protocol == "opcua" and self.opcua is not None:
+            vt = getattr(ua.VariantType, OPCUA_VARIANT[a.signal.kind])
+            await self.opcua.write_attribute_value(
+                self._nodes[key],
+                ua.DataValue(Value=ua.Variant(self._opc_value(a, value), vt),
+                             SourceTimestamp=ts, ServerTimestamp=datetime.now(timezone.utc)),
+            )
+        elif a.protocol == "modbus" and self.modbus is not None:
+            area = "di" if a.register_type == "discrete" else "hr"
+            self.modbus.write(a.unit_id, area, a.register, encode_modbus(a, value))
+
     async def _push(self, force: bool = False) -> None:
+        drain = getattr(self.model, "drain_changes", None)
+        if drain is not None:          # playback: cada mudança com o seu instante exato
+            if force:
+                ts = self.model.device_time(self.model.sim_time_s)
+                for key, value in self.model.values().items():
+                    if self.by_key[key].signal.role != "cycle_pulse":
+                        await self._write(key, value, ts)
+            for t, key, value in drain():
+                await self._write(key, value, self.model.device_time(t))
+            return
         values = self.model.values()
         now = datetime.now(timezone.utc)
         for key, value in values.items():
@@ -273,17 +337,7 @@ class VirtualPlantRuntime:
             analog = a.signal.role in ANALOG_ROLES
             if not force and not analog and self._last.get(key) == value:
                 continue
-            self._last[key] = value
-            if a.protocol == "opcua" and self.opcua is not None:
-                vt = getattr(ua.VariantType, OPCUA_VARIANT[a.signal.kind])
-                await self.opcua.write_attribute_value(
-                    self._nodes[key],
-                    ua.DataValue(Value=ua.Variant(self._opc_value(a, value), vt),
-                                 SourceTimestamp=now, ServerTimestamp=now),
-                )
-            elif a.protocol == "modbus" and self.modbus is not None:
-                area = "di" if a.register_type == "discrete" else "hr"
-                self.modbus.write(a.unit_id, area, a.register, encode_modbus(a, value))
+            await self._write(key, value, now)
 
     async def _sim_loop(self) -> None:
         t0 = time.monotonic()
@@ -298,6 +352,10 @@ class VirtualPlantRuntime:
                 log.warning("virtual_plant.lagging lag_s=%.1f — reduza --speed", self.lag_s)
                 warned = True
             await self._push()
+            if getattr(self.model, "finished", False) and not self._finished_logged:
+                self._finished_logged = True
+                log.info("virtual_plant.scenario_finished sim_time_s=%s — servidores seguem no ar com o "
+                         "estado final", self.model.sim_time_s)
             await asyncio.sleep(self.update_s if self.lag_s < 1 else 0)
 
     async def _pulse_loop(self) -> None:

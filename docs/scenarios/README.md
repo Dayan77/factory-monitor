@@ -10,10 +10,14 @@ Entradas exatas e resultados esperados que o QA usa para **provar os números de
 | [`scenario_a_usage.json`](scenario_a_usage.json) | A — Uso | 2 | contador de 16 bits com rollover, reset de CLP, leitura corrompida, duplicata e fora de ordem → `cycles_total`; `run_state` de motor com quedas < 1 s (debounce) e buraco de dados → `hours_total`, `starts_total`; `life_consumed_pct` e `projected_end_date` |
 | [`scenario_b_production.json`](scenario_b_production.json) | B — Produção | 2 | contadores de peças boas/refugo da máquina de saída num turno que cruza a meia-noite → boas/refugo/total, cadência por hora no fuso da planta, agrupamento por dia |
 | [`scenario_c_oee_shift.json`](scenario_c_oee_shift.json) | C — OEE (prévia) | 3 | turno de 8 h com pausas, falhas com código, micro-paradas abaixo/acima do limiar → A, P, Q, OEE, MTBF, MTTR, Ao, Pareto de perdas |
+| [`scenario_d_line_multiday.json`](scenario_d_line_multiday.json) | D — Linha, vários turnos e dias | 3 | linha com gargalo, mix de 2 produtos com 1 setup, turno que cruza a meia-noite (e entra no feriado), feriado, turno de um dia só cancelado, turno extra, DDS reclassificado `PLN-02`, buraco de dados → OEE por turno/dia/período, TEEP, `data_coverage`, Pareto |
+| [`scenario_e_maintenance.json`](scenario_e_maintenance.json) | E — Manutenção | 4 | planos por ciclos/horas/partidas/calendário (o que vier primeiro), ciclo de vida das OS, troca de componente zerando o plano, falhas por posição → % do intervalo, próxima data/uso, PMP, cumprimento da programação, backlog, MTBF/MCBF/MTTR por posição/tipo/fabricante, MTTF por fabricante/modelo |
 | [`test_golden_scenarios.py`](test_golden_scenarios.py) | — | — | oráculo independente que recalcula todo `expected` a partir das entradas + conformidade com `server/src/services/usage/core.py` |
+| [`test_scenario_d.py`](test_scenario_d.py) | — | — | oráculo do D + conformidade com o motor de OEE (`server/src/services/oee/`: calendário → janelas → componentes → `kpi.oee`/`kpi.pareto`); divergências conhecidas ficam `xfail` com o código do esclarecimento |
+| [`test_scenario_e.py`](test_scenario_e.py) | — | — | oráculo do E (o módulo de manutenção é do Sprint 4; os testes da API dele carregam o mesmo JSON) |
 
 ```bash
-.venv/bin/python -m pytest docs/scenarios -q      # 21 testes; o oráculo não depende do servidor
+.venv/bin/python -m pytest docs/scenarios -q      # o oráculo não depende do servidor; a conformidade é pulada se o server não importar
 ```
 
 ## Convenções
@@ -256,6 +260,222 @@ A = 357,5 / 480 = 0,744792.
 
 ---
 
+## Cenário D — Linha com gargalo, vários turnos e dias (Sprint 3)
+
+Prova a agregação **turno → dia produtivo → período** de uma **linha** e tudo o que o calendário pode fazer com o
+tempo: turno que cruza a meia-noite, feriado, turno de um dia só cancelado, turno extra, parada planejada declarada
+no turno, buraco de dados. Regras usadas: kpis.md §1, C19, C22–C24, Decisões D2/D4/D5/D7/D9/D10 e os
+**Esclarecimentos Sprint 3** (S3-1 … S3-9).
+
+### Ativos, produtos e PRI
+
+Linha de Montagem: saída = **Transportador de Saída** (dele vêm paradas, APT e peças), gargalo = **Robô de Solda**
+(dele vem o PRI da linha, kpis.md §1.6).
+
+| Produto | PRI do gargalo (linha) | PRI do transportador (só `scope=machine`) |
+|---|---|---|
+| SUP-100 (padrão) | **48 s** = 0,8 min | 30 s |
+| SUP-200 | **60 s** = 1,0 min | 30 s |
+
+### Calendário e consulta
+
+Turnos: A 06–14 (seg–sex, refeição 10:00–10:30), B 14–22 (seg–sex, refeição 18:00–18:30), C 22–06
+(dia produtivo dom–qui, refeição 02:00–02:30). Exceções: **sáb 10/10** turno extra 06–14 com as pausas do A;
+**seg 12/10** feriado (remove A, B e C do dia 12); **ter 13/10** `holiday` só do turno C (o PCP cancelou o C de terça).
+
+Consulta: `scope=line`, `start = 2026-10-10 00:00`, `stop = 2026-10-14 00:00` local (04:00Z → 04:00Z),
+`group_by=shift` e `group_by=day`. Começar no sábado evita o rabo de um turno C da véspera (sexta não tem C).
+
+| Instância | Dia produtivo | Local | Por quê |
+|---|---|---|---|
+| S1 Turno A (extra) | sáb 10/10 | 10/10 06:00–14:00 | `extra_shift` com as pausas do A |
+| S2 Turno C | dom 11/10 | 11/10 22:00 → **12/10 06:00** | cruza a meia-noite e termina na manhã do feriado; pertence a domingo (C19) e o feriado de segunda **não** o remove (S3-6) |
+| — | seg 12/10 | — | feriado: POT = 0 |
+| S3 Turno A | ter 13/10 | 13/10 06:00–14:00 | — |
+| S4 Turno B | ter 13/10 | 13/10 14:00–22:00 | — (o C de terça foi cancelado) |
+
+### Paradas da máquina de saída (≥ 120 s) e o que mais aconteceu
+
+| Turno | Local | min | Motivo efetivo | Observação |
+|---|---|---|---|---|
+| S1 | 07:15–07:35 | 20 | `MAT-01` | o robô (gargalo) parou por colisão 07:13–07:33: na linha só conta a falta de peça na saída — somar a falha do robô também daria ADOT 163 |
+| S1 | 11:40–11:50 | 10 | `OPR-01` | equipe reduzida no turno extra |
+| S2 | dom 23:45 → seg 00:20 | 35 | `EQP-01` (falha 151) | atravessa a meia-noite **dentro** do turno: um evento, todo no S2 |
+| S2 | 03:10–03:22 | 12 | `MAT-01` | — |
+| S3 | 08:00–08:15 | 15 | `EQP-02` (falha 251) | — |
+| S3 | 11:00–11:30 | 30 | `SET-01` | setup SUP-100 → SUP-200; a ordem do SUP-200 abre às 11:00, no início do setup (S3-3) |
+| S4 | 14:00–14:15 | 15 | **`PLN-02`** | DDS fora do calendário: detectado como parada e reclassificado pelo supervisor → **PDOT** (S3-4) |
+| S4 | 16:10–16:16 | 6 | `UNK-01` | ninguém justificou (D2) |
+| S4 | 19:00–19:40 | 40 | — | **sem dados**: última leitura 18:59:00 + 60 s (C11); os contadores não avançaram; ninguém declarou → sai do PBT (D5) |
+| S4 | 20:30–20:45 | 15 | `MAT-01` | — |
+| seg 12/10 | 09:00–10:00 | — | — | feriado: a manutenção rodou a linha para testar a correia → **12 peças fora do calendário** (S3-7) |
+
+Micro-paradas (< 120 s): S1 4 (80 + 100 + 90 + 90 s = 6 min), S2 3 (4,5 min), S3 5 (7,5 min), S4 2 (3 min).
+Produção (GQ/PQ): S1 SUP-100 470/480; S2 SUP-100 441/450; S3 SUP-100 294/300 (06–11) + SUP-200 126/130 (11–14);
+S4 SUP-200 352/360. O JSON traz as peças por hora (o QA publica os contadores hora a hora), as ordens e as
+transições de `run_state`/`fault_state` da saída.
+
+### Por turno (S = Σ PRI·PQ, G = Σ PRI·GQ, em min)
+
+| | POT | PDOT | sem dados | **PBT** | ADOT | **APT** | S | G | A | P | Q | **OEE** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| S1 | 480 | 30 | 0 | 450 | 30 | 420 | 480 × 0,8 = 384 | 376 | 0,933333 | 0,914286 | 0,979167 | **0,835556** |
+| S2 | 480 | 30 | 0 | 450 | 47 | 403 | 360 | 352,8 | 0,895556 | 0,893300 | 0,980000 | **0,784000** |
+| S3 | 480 | 30 | 0 | 450 | 45 | 405 | 300 × 0,8 + 130 × 1 = 370 | 235,2 + 126 = 361,2 | 0,900000 | 0,913580 | 0,976216 | **0,802667** |
+| S4 | 480 | 30 + 15 | 40 | **395** | 21 | 374 | 360 | 352 | 0,946835 | 0,962567 | 0,977778 | **0,891139** |
+
+- S3 com mix: Q = 361,2 / 370 = 0,976216 (ponderado pelo PRI, §1.4); GQ/PQ = 420/430 = 0,976744 seria o erro.
+- S4: `data_coverage` = (480 − 40) / 480 = **0,916667** < 0,95 → a UI mostra "dados incompletos".
+  Se o supervisor declarar `UTL-01` 19:00–19:40 (variante no JSON): o buraco vira ADOT e coberto (D5) →
+  PBT 435, ADOT 61, A = 0,859770, OEE = 352 / 435 = 0,809195, cobertura 1.
+- Ao (§2.6): S1 1; S2 (450 − 35) / 450 = 0,922222; S3 0,966667; S4: T_req = 480 − 30 − 15 (`PLN-02`) − 40 = 395, Ao = 1.
+- Perda de velocidade = APT − S − micro: S1 30; S2 38,5; S3 27,5; S4 11.
+
+### Por dia produtivo (tempo calendário 1 440 min/dia)
+
+| Dia | PBT | APT | G | A | P | Q | OEE | Loading | TEEP |
+|---|---|---|---|---|---|---|---|---|---|
+| sáb 10/10 | 450 | 420 | 376 | 0,933333 | 0,914286 | 0,979167 | 0,835556 | 0,312500 | 0,261111 |
+| dom 11/10 | 450 | 403 | 352,8 | 0,895556 | 0,893300 | 0,980000 | 0,784000 | 0,312500 | 0,245000 |
+| seg 12/10 (feriado) | 0 | 0 | 0 | `null` | `null` | `null` | **`null`** (`no_planned_time`) | **0** | **0** (S3-1) |
+| ter 13/10 | 845 | 779 | 713,2 | 0,921893 | 0,937099 | 0,976986 | 0,844024 | 0,586806 | 0,495278 |
+
+Produção por dia produtivo: 480 · **450** (o C de domingo inteiro, inclusive 00:00–06:00 de segunda) · 0 · 790.
+Por dia calendário local (errado com calendário de turnos) daria 480 · 117 · 345 (inclui as 12 do teste) · 790.
+
+### Período (4 dias produtivos, 5 760 min de calendário)
+
+POT 1 920; PDOT 135; sem dados 40 → **PBT 1 745**; ADOT 143 → **APT 1 602**; PQ 1 720, GQ 1 683;
+S = 1 474; G = 1 442; micro-paradas 14 = 21 min.
+
+| KPI | conta | esperado |
+|---|---|---|
+| A | 1 602 / 1 745 | **0,918052** |
+| P | 1 474 / 1 602 | **0,920100** |
+| Q | 1 442 / 1 474 | **0,978290** |
+| OEE | 1 442 / 1 745 | **0,826361** |
+| Loading | 1 745 / 5 760 | 0,302951 |
+| TEEP | 1 442 / 5 760 | **0,250347** |
+| `data_coverage` | 1 880 / 1 920 | 0,979167 |
+| Ao | (1 745 − 50) / 1 745 | 0,971347 |
+
+O total é a **soma dos componentes** dos dias (S3-8); as 12 peças do feriado ficam fora (S3-7) e são devolvidas
+em `produced_outside_schedule`.
+
+Pareto (total = PBT − G = 1 745 − 1 442 = **303 min**; velocidade = 1 602 − 1 474 − 21 = 107; qualidade = 1 474 − 1 442 = 32):
+
+| # | perda | min | % | acumulado |
+|---|---|---|---|---|
+| 1 | perda de velocidade | 107 | 35,31 % | 35,31 % |
+| 2 | `MAT-01` falta de material | 47 | 15,51 % | 50,83 % |
+| 3 | `EQP-01` falha mecânica | 35 | 11,55 % | 62,38 % |
+| 4 | qualidade (refugo) | 32 | 10,56 % | 72,94 % |
+| 5 | `SET-01` setup | 30 | 9,90 % | 82,84 % |
+| 6 | micro-paradas | 21 | 6,93 % | 89,77 % |
+| 7 | `EQP-02` falha elétrica | 15 | 4,95 % | 94,72 % |
+| 8 | `OPR-01` falta de operador | 10 | 3,30 % | 98,02 % |
+| 9 | `UNK-01` não justificada | 6 | 1,98 % | 100 % |
+
+Por categoria: velocidade 107 · EQP 50 · MAT 47 · qualidade 32 · SET 30 · micro 21 · OPR 10 · UNK 6.
+O `PLN-02` e o buraco de dados não são perdas (estão fora do PBT).
+
+Respostas erradas: média dos OEEs dos turnos 0,828340; média dos dias 0,821193; PRI da máquina de saída
+(30 s) → P 0,536829 e OEE 0,482235 (é o valor certo para `scope=machine` do transportador); somar a falha do robô
+→ ADOT 163; buraco tratado como operação → S4 PBT 435 e A 0,951724; peças do feriado no OEE → 0,831862;
+TEEP do feriado `null`.
+
+Conformidade com o motor (`test_scenario_d.py`): janelas de turno e de dia, soma do período, Pareto por código e
+por categoria e `scope=machine` conferem com o servidor. Duas divergências ficam `xfail` até o backend corrigir:
+TEEP do feriado (o motor devolve `null`, S3-1) e o total sem `group_by`, que soma as peças fora do calendário (S3-7/S3-8).
+
+---
+
+## Cenário E — Manutenção (Sprint 4)
+
+Avaliado em **2026-12-01 08:00 local** (hoje = 01/12). Mês de referência: **novembro/2026**. Confiabilidade em
+janela de **12 meses** (01/12/2025 → 01/12/2026). Regras: domain.md §5, kpis.md §2–§4 e os **Esclarecimentos de
+manutenção (Sprint 4)** S4-1 … S4-12 em domain.md. Ritmo = uso dos últimos 14 dias / 14.
+Como planejador, técnico e supervisor chegam a estes números no dia a dia:
+[`docs/maintenance_workflows.md`](../maintenance_workflows.md).
+
+### Planos (o que vier primeiro)
+
+| Plano | Âncora | Intervalos | Desde a última manutenção | % por gatilho | `consumed` / estado | Vence em (gatilho) | Próximo uso |
+|---|---|---|---|---|---|---|---|
+| PL1 vedações A1 | Cilindro A1 | 2 000 000 ciclos / 180 d | 340 000 ciclos, 19 d (zerado pela troca do cilindro em 12/11, S4-2) | 0,17 / 0,105556 | 0,17 `ok` | 1 660 000 / 18 000 = 92,2 → 93 d → **2027-03-04** (ciclos) | 9 200 000 ciclos |
+| PL2 vedações A2 | Cilindro A2 | 2 000 000 ciclos / 180 d | 1 780 000, 169 d | 0,89 / 0,938889 | 0,938889 `due_soon` | calendário 15/06 + 180 = **2026-12-12** (11 d) antes dos ciclos (13 d) | 9 320 000 ciclos |
+| PL3 rolamentos | Motor do transportador | 4 000 h / 30 000 partidas / 365 d | 3 200 h, 24 600, 225 d | 0,80 / **0,82** / 0,616438 | 0,82 `due_soon` (gatilho de maior %: partidas) | horas 800 / 20 = **40 d → 2027-01-10**; partidas 45 d → 2027-01-15 | 45 800 h ou 320 000 partidas |
+| PL4 óleo do redutor | Eixo 1 | 5 000 h / 365 d | 5 150 h, 346 d | **1,03** / 0,947945 | 1,03 `due` (< 1,10) | vencido: 0 d, **2026-12-01** (`past_due`) | 38 000 h |
+| PL5 NR-12 | Estação de Fixação | 30 d | 28 d | 0,933333 | `due_soon` | 03/11 + 30 = **2026-12-03** | — |
+| PL6 filtro de ar | Estação de Fixação | 7 d | 26 d | 3,714286 | `overdue` (≥ 1,10) | vencido: **2026-12-01** | — |
+
+PL3 é a pegadinha: `consumed` usa o gatilho de **maior %** (partidas, 0,82), mas a data é a do gatilho que
+**vence primeiro** (horas, 40 dias) — usar a data das partidas daria 2027-01-15 (S4-3).
+
+### Componentes instalados: % de vida e fim projetado (kpis.md §4.1–4.2)
+
+| Componente | Vida nominal | Uso desde a instalação | % vida (medida) | Fim projetado |
+|---|---|---|---|---|
+| C-A1-3 SMC CP96 (A1, instalado 12/11) | 6 000 000 ciclos | 340 000 | 0,056667 (ciclos) | 315 d → 2027-10-12 |
+| C-A2-2 SMC CP96 (A2) | 6 000 000 ciclos | 3 200 000 | 0,533333 (ciclos) | 156 d → 2027-05-06 |
+| M-1 WEG W22 (motor) | 30 000 h / 200 000 partidas | 21 000 h / 150 000 | **0,75 (partidas)** | partidas 417 d → 2028-01-22 |
+| R-1 ABB redutor eixo 1 | 20 000 h | 17 200 h | **0,86** (`attention`) | 175 d → 2027-05-25 |
+
+### Ordens de serviço de novembro
+
+| OS | Tipo | Programada p/ | Programada em | Situação em 01/12 | Horas (apont./est.) | PMP | Cumprimento |
+|---|---|---|---|---|---|---|---|
+| 101 | preventiva (PL5) | 03/11 | 29/10 | fechada 03/11 | 2,0 | planejada | no prazo |
+| 103 | corretiva emergencial (falha F4, troca C-A1-2 → C-A1-3) | — | — | fechada 12/11 | 3,0 | **não planejada** | — |
+| 104 | preditiva | 10/11 | 06/11 | concluída 10/11 | 1,5 | planejada | no prazo |
+| 106 | corretiva programada | 18/11 | 13/11 | concluída **19/11** | 2,5 | planejada | **atrasada** |
+| 107 | melhoria | 24/11 | 20/11 | concluída 24/11 | 4,0 | planejada | no prazo |
+| 108 | corretiva emergencial (F7) | — | — | concluída 20/11 | 1,0 | não planejada | — |
+| 109 | corretiva emergencial (F9) | — | — | concluída 26/11 | 2,0 | não planejada | — |
+| 110 | preventiva (PL4) | 28/11 | 20/11 | `scheduled` — **vencida** | 0 / 6,0 | — | não feita |
+| 113 | melhoria | 16/11 | 10/11 | `on_hold` (peça) — vencida | 2,0 / 8,0 | — (não concluída) | não feita |
+| 115 | preventiva | 05/11 | 30/10 | cancelada `superseded` | — | — | **fora do denominador** |
+| 116 | preventiva (PL6) | 12/11 | 06/11 | cancelada (`production_conflict`) | — | — | não feita |
+| 117 | preditiva | 30/11 | 26/11 | `in_progress` — vencida | 0,5 / 2,0 | — | não feita |
+| 118 | preventiva | 17/11 | 12/11 | concluída 17/11 | 1,0 | planejada | no prazo |
+| 120 | preditiva | 20/11 | 13/11 | concluída 20/11 | 0,5 | planejada | no prazo |
+| 121 | corretiva programada | 26/11 | **25/11** (depois do congelamento de seg 23/11) | concluída 26/11 | 1,5 | planejada | **fora do denominador** |
+
+Fora de novembro ou ainda não aprovadas: OS-099 (concluída em 30/10, fora do PMP), OS-112 (`approved`, 3,0 h),
+OS-114 (`scheduled` p/ 03/12, 1,5 h), rascunhos OS-111 (PL3), OS-122 (PL6, recriada após o cancelamento da 116,
+S4-4) e OS-123 (PL5).
+
+- **PMP** (OS concluídas em novembro, por `labor_hours`): planejadas 2 + 1,5 + 2,5 + 4 + 1 + 0,5 + 1,5 = 13; total
+  13 + 3 + 1 + 2 = 19 → **13 / 19 = 0,684211**. (Somar as horas das OS abertas 113 e 117 daria 0,720930.)
+- **Cumprimento da programação**: denominador = 10 (101, 104, 106, 107, 110, 113, 116, 117, 118, 120); no prazo 5
+  → **0,500000**. Atrasada 1 (106), não feitas 4. Contar a 121 daria 0,545455; contar a 115 daria 0,454545.
+- **Backlog** (approved/scheduled/on_hold/in_progress, horas **restantes**, S4-7): 110 6,0 + 112 3,0 + 113 (8 − 2) 6,0
+  + 114 1,5 + 117 (2 − 0,5) 1,5 = **18,0 h** em 5 OS; capacidade 1 técnico × 44 h − 4 h de ausência = 40 h/semana
+  → **0,45 semana**. Vencidas: 110, 113, 117 = 3 OS, 13,5 h. Rascunhos não são backlog (com eles: 21,5 h).
+
+### Confiabilidade (12 meses; n = falhas `critical`/`degraded`)
+
+| Grupo | Horas | Ciclos | Falhas | MTBF (h) | MCBF (ciclos) | MTTR (min) |
+|---|---|---|---|---|---|---|
+| Cilindro A1 | 5 200 | 6 000 000 | 3 (F1, F2, F4; F3 é incipiente, F0 é anterior à janela) | **1 733,333** | **2 000 000** | (90 + 40 + 120) / 3 = **83,333** |
+| Cilindro A2 | 5 200 | 6 000 000 | 1 | 5 200 | 6 000 000 | 30 |
+| Motor do transportador | 6 800 | — | 2 | 3 400 | — | (150 + 45) / 2 = 97,5 |
+| Eixo 1 | 5 600 | 9 000 000 | 2 (F8 achada em inspeção, sem parada) | 2 800 | 4 500 000 | **75** (só F9 tem restabelecimento, S4-10) |
+| tipo `pneumatic_cylinder` | 10 400 | 12 000 000 | 4 | 2 600 | 3 000 000 | 70 |
+| cilindros **Festo** | 1 400 + 3 500 + 2 400 = 7 300 | 8 460 000 | 3 | 2 433,333 | **2 820 000** | 83,333 |
+| cilindros **SMC** | 300 + 2 800 = 3 100 | 3 540 000 | 1 | 3 100 | 3 540 000 | 30 |
+
+Por fabricante, a falha vai para o **componente instalado** no instante da falha e o uso é o de cada componente
+dentro da janela (S4-9). **MTTF/MCTF** por fabricante/modelo (todo o histórico, idade na remoção):
+Festo DSBC-50-100 = (2 600 000 + 4 060 000 + 3 140 000) / 3 = **3 266 666,7 ciclos**, 3 falhas e 2 suspensões
+(5 900 000 e 4 000 000 — trocas preventivas, não entram na média; incluí-las daria 3 940 000);
+SMC CP96 `null` (`no_failures`, 2 em serviço); WEG W22 = **23 800 h** (1 falha); ABB `null`.
+
+O oráculo também valida cada histórico de OS contra o diagrama de estados (domain.md §5.3) e rejeita as transições
+de `rejected_transitions` (422).
+
+---
+
 ## Como o QA roda de ponta a ponta
 
 1. **Unidade/serviço** (já automatizado): `pytest docs/scenarios` — oráculo + `core.py` do servidor.
@@ -279,3 +499,16 @@ A = 357,5 / 480 = 0,744792.
    o teste de fumaça, não para o ouro.
 4. **Cenário C**: entra como teste de aceite do motor de OEE/paradas do Sprint 3 (alimentar `signals` + motivos do
    operador + contagens; comparar com `expected`).
+5. **Cenário D** (ponta a ponta, mesmo caminho do C): criar o calendário (`shifts` + `exceptions`), os produtos e o
+   PRI por (máquina, produto) do JSON, a linha com `output_machine` e `bottleneck_machine`; publicar as
+   `signals_output_machine.transitions` com heartbeat a cada 10 s **exceto** entre `last_reading_utc` e o fim de
+   cada `data_gaps`, e os contadores de peças com os totais acumulados de `production_by_hour` (uma leitura no fim de
+   cada hora); abrir as `production_runs`; rodar o detector; justificar as paradas com `operator_reason_code`
+   (o 16:10 fica sem motivo → `UNK-01`; o 14:00 é reclassificado `PLN-02`). Conferir `GET /api/oee?scope=line`
+   com `group_by=shift` e `group_by=day` (pontos = `expected.shifts`/`expected.days`, total = `expected.period`),
+   `GET /api/losses/pareto?scope=line` e `by=category`, e `GET /api/reports/shift` de cada turno. Deslocar o tempo
+   como nos cenários A/B (dias inteiros, inclusive as datas das `exceptions`; o dia da semana importa para o calendário, então deslocar
+   em múltiplos de 7 dias).
+6. **Cenário E**: teste de aceite do módulo de manutenção do Sprint 4 — semear posições, componentes (com o uso
+   desde a instalação), falhas, planos (com `last_reset`) e OS (reproduzindo `history` pela API de transições);
+   conferir `expected` pelos endpoints de planos, componentes, OS, PMP/cumprimento/backlog e confiabilidade.

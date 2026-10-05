@@ -374,3 +374,131 @@ Regras:
 | MTBF vs MCBF | MTBF em **horas de operação**; MCBF em **ciclos** — use MCBF para pneumática, garras, robôs |
 | Posição | lugar funcional permanente na máquina |
 | Componente | item físico com nº de série instalado numa posição |
+
+---
+
+## Esclarecimentos de manutenção (Sprint 4)
+
+Revisão de §5 e kpis.md §2–§4 para o módulo de manutenção do Sprint 4, procurando pontos em que duas
+implementações dariam números diferentes. Normativos (DEVE); têm prioridade sobre texto ambíguo acima. O cenário de
+ouro **E** ([`docs/scenarios/scenario_e_maintenance.json`](scenarios/README.md#cenário-e--manutenção-sprint-4)) exercita
+cada item e `docs/scenarios/test_scenario_e.py` é o oráculo. O dia a dia de quem usa estas regras está em
+[`docs/maintenance_workflows.md`](maintenance_workflows.md).
+
+### S4-1 — Gatilho de calendário
+
+- Dias usados = **dias corridos entre datas locais** (fuso da planta, C17): `hoje − data_local(last_reset.at)`.
+  Hora do dia não importa (uma OS concluída às 23:50 conta o dia inteiro como "dia 0").
+- Data de vencimento do calendário = `data_local(last_reset.at) + interval_days` (devolvida em `calendar_due_date`,
+  mesmo quando outro gatilho vence antes). `consumed_days = dias usados / interval_days`.
+- Referência (`last_reset`) = `completed_at` da última OS do plano concluída, ou da troca de componente que zerou o
+  plano (S4-2); sem nenhuma, a criação do plano.
+- (E: PL2 15/06 + 180 = **12/12**, 169 dias usados → 0,938889.)
+
+### S4-2 — Troca de componente zera os planos da posição
+
+- Ao concluir uma OS com `component_replacement` (qualquer tipo), os planos **ancorados na posição** com
+  `reset_on_replacement = true` recebem `last_reset = {at: completed_at, position_usage: usage_total da posição
+  naquele instante}`. Planos ancorados na **máquina** (ex.: inspeção NR-12, filtro de ar) não são afetados.
+- O uso desde a manutenção é sempre `usage_total da posição agora − last_reset.position_usage` — nunca o contador do
+  componente — de modo que um reset físico do CLP (§3.3) ou a troca não geram uso negativo.
+- O componente removido fica com `position_id = null`, `removed_at = completed_at` e mantém `usage_since_install`
+  (idade na remoção). O novo nasce com 0 e `installed_at = completed_at`; os dois intervalos nunca se sobrepõem.
+- (E: OS-103 troca C-A1-2 → C-A1-3 em 12/11 com a posição em 7 200 000 ciclos → PL1 recomeça; PL5/PL6 não.)
+
+### S4-3 — "O que vier primeiro": estado × data × próximo uso
+
+- `consumed = max_i(consumed_i)` e `consumed_trigger` = o gatilho desse máximo → define o **estado**
+  (`ok` < 0,8 ≤ `due_soon` < 1,0 ≤ `due` < 1,0 + tolerância ≤ `overdue`; tolerância padrão 0,10).
+- A **data** (`next_due_date`, `days_to_due`) é a mais cedo entre os gatilhos e `due_trigger` = o gatilho dessa
+  data; empate de data → o de maior `consumed_i`. `consumed_trigger` e `due_trigger` PODEM ser diferentes e a UI
+  mostra os dois ("82 % (partidas) · vence em 40 dias por horas").
+- Gatilho de uso: `dias = ceil((intervalo − uso) / ritmo − ε)` com ritmo de 14 dias corridos (kpis.md §4.2, C18);
+  ritmo 0 → esse gatilho não projeta data (os outros sim; todos sem data → `null`, `no_recent_usage`).
+- Vencido (`consumed ≥ 1`): `days_to_due = 0`, `next_due_date = hoje`, `past_due = true`.
+- `next_due_usage` = **valor absoluto** do contador da posição em que o plano vence:
+  `last_reset.position_usage + intervalo` — é o número que o técnico compara com o horímetro/contador da máquina.
+- (E: PL3 82 % por partidas, mas vence por horas em 40 d → 10/01/2027; pela data das partidas daria 15/01.)
+
+### S4-4 — Geração automática de OS pelo plano
+
+- Ao cruzar `consumed ≥ 0,8` o servidor cria **uma** OS `draft` do plano (`type = wo_type`,
+  `estimated_hours` e checklist do plano) e notifica o planejador.
+- Invariante: plano com `consumed ≥ 0,8` tem **exatamente uma** OS em `draft … on_hold` (antes de `completed`).
+  Se essa OS for cancelada (qualquer motivo) e o plano ainda estiver ≥ 0,8, uma nova `draft` é criada na hora
+  (E: OS-116 cancelada por conflito com a produção → OS-122). Não se criam duplicatas a cada recálculo.
+- Só a **conclusão** da OS do plano zera o plano (§5.4); `scheduled`/`in_progress` não (E: PL4 continua `due`
+  com a OS-110 programada).
+
+### S4-5 — Ciclo de vida da OS
+
+- Transições válidas: as do diagrama §5.3, mais `on_hold → scheduled` (reprogramar quando a peça chega) e o atalho
+  `open → in_progress` **só** para `corrective` com `urgency = emergency`. Qualquer outra → **422** com a lista das
+  transições permitidas a partir do estado atual.
+- `completed` e `closed` não reabrem (abrir nova OS ligada à anterior). `cancelled` só antes de `completed` e com
+  `cancel_reason` obrigatório (`superseded`, `production_conflict`, `duplicate`, `not_needed`, `other`).
+- `scheduled_at` = instante da transição para `scheduled` (base do congelamento, S4-6); reprogramar muda
+  `scheduled_for` e **não** muda `scheduled_at` da semana já congelada.
+- **OS atrasada** (lista "vencidas"): `scheduled_for < hoje` (data local) e estado antes de `completed`.
+- Horas: `labor_hours` = soma dos apontamentos dos técnicos (tempo em `on_hold` não conta);
+  `remaining_hours` é informado pelo técnico ao pausar/apontar; sem ele, `max(estimated − labor, 0)`.
+
+### S4-6 — PMP e cumprimento da programação
+
+- **PMP**: OS com transição para `completed` dentro do período (por `completed_at`, fuso da planta), com o
+  `labor_hours` final. OS abertas não entram (nem as horas já apontadas). OS fechadas (`closed`) contam pela data de
+  `completed`, não de `closed`.
+- **Cumprimento**: período pela data local `scheduled_for`. O congelamento é **segunda-feira 00:00 local** da semana
+  de `scheduled_for`: OS com `scheduled_at` depois disso é "encaixe" (`scheduled_after_freeze`) e sai do
+  denominador (E: OS-121). `cancelled` com `superseded` sai do denominador; qualquer outro cancelamento é **não
+  feita**. No prazo = data local de `completed_at` ≤ `scheduled_for` + tolerância (padrão 0 dias); concluída depois =
+  atrasada; não concluída até o fim do período = não feita. A resposta lista `excluded` com o motivo.
+- Corretiva emergencial não tem `scheduled_for` e nunca entra no cumprimento.
+
+### S4-7 — Backlog
+
+- Estados que contam: `approved`, `scheduled`, `on_hold`, `in_progress`. **Não** contam `draft` (gerada pelo plano,
+  ainda não aceita) nem `open` (pedido ainda não aprovado) — são devolvidos à parte (`drafts_not_in_backlog`,
+  `requests_pending`).
+- Horas = **restantes** (S4-5), nunca a estimativa cheia de uma OS já iniciada.
+- Capacidade semanal = técnicos × horas/semana do calendário da manutenção − ausências previstas da semana corrente.
+  Vencidas = backlog com `scheduled_for < hoje` (+ OS de planos `overdue`, sem duplicar).
+
+### S4-8 — Janela e contagem de falhas para MTBF/MCBF/MTTR
+
+- Janela padrão da tela de confiabilidade: **12 meses** encerrando hoje 00:00 local, `[start, stop)` por
+  `failed_at`. `n` = falhas `critical` + `degraded`; `incipient` devolvida em `incipient` (kpis.md §2).
+- Uso (horas/ciclos) = o acumulado **da posição** dentro da janela (buckets, §3.5), não o do componente atual.
+  Horas sem `run_state` próprio vêm da máquina (C13) e a resposta diz a fonte.
+- Agregação de grupo (máquina, tipo, fabricante): soma de usos ÷ soma de falhas — nunca média de MTBFs.
+
+### S4-9 — Atribuição a tipo, fabricante e modelo
+
+- A falha vai para o **componente instalado na posição em `failed_at`** (não o atual). Se `component_id` não foi
+  informado, o servidor o preenche por esse critério.
+- O uso de cada fabricante é a soma do uso de **cada componente** dentro da janela (o componente só acumula enquanto
+  instalado). A soma dos fabricantes de um tipo é igual ao tipo (n e uso).
+- (E: no Cilindro A1 há falhas de dois cilindros Festo; o SMC C-A1-3 só tem 19 dias e nenhuma falha.)
+
+### S4-10 — MTTR só com restabelecimento
+
+- Entram as falhas com `restored_at` (pararam a produção e voltaram). Falha achada em inspeção/preventiva sem parada
+  (`restored_at = null`) conta em `n` (MTBF/MCBF) e **não** no MTTR; falha ainda aberta fica fora do MTTR até fechar.
+- A resposta traz `restored` (quantas falhas formaram a média). Tratar o restabelecimento ausente como 0 min é erro
+  (E: Eixo 1 daria 37,5 em vez de 75).
+
+### S4-11 — MTTF/MCTF por fabricante/modelo
+
+- Todo o histórico (não só a janela). Medida = a da vida nominal do tipo (ciclos para cilindros, horas para
+  motores/redutores). Média de `usage_since_install` dos componentes **removidos com `removal_reason = failure`**.
+- Removidos por outro motivo = `suspensions`; instalados = `in_service`; ambos devolvidos e fora da média.
+  Nenhuma falha → `null` com `reason = no_failures` (nunca 0 nem a média das suspensões).
+- A UI mostra "n = 3 falhas, 2 suspensões" ao lado do valor e, com `failures < 3`, o aviso "amostra pequena".
+
+### S4-12 — Vida dos componentes instalados
+
+- Só componentes com `removed_at = null`. `life = max_m(life_m)` (`life_measure`); RUL = a medida com a **menor
+  data** (empate → maior % de vida), que pode diferir de `life_measure` — mesma regra de S4-3.
+- Alertas: `attention` ≥ 0,80, `nominal_reached` ≥ 1,00 (sem truncar). Um componente com vida nominal atingida não
+  gera OS sozinho: só se houver plano; a tela "componentes" lista e o planejador decide.
+- (E: R-1 redutor 0,86 → `attention`, fim projetado 25/05/2027; M-1 75 % por partidas.)

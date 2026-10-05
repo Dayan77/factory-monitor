@@ -10,6 +10,7 @@ AES-256-GCM envelope — see edge/src/security/payload_crypto.py for the exact f
 """
 
 import json
+import ssl
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -21,6 +22,14 @@ from ..security.payload_crypto import PayloadCipher
 log = structlog.get_logger()
 
 PAYLOAD_VERSION = 1
+
+
+def tls_context(ca_cert: str = "") -> ssl.SSLContext:
+    """Client TLS context: system CAs, or the PEM bundle at `ca_cert`. Hostname checked."""
+    ctx = ssl.create_default_context(cafile=ca_cert or None)
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    return ctx
 
 
 def format_ts(ts: datetime) -> str:
@@ -39,11 +48,16 @@ class MqttPublisher:
         username: str = "",
         password: str = "",
         encryption_key: str = "",
+        tls: bool = False,
+        ca_cert: str = "",
     ) -> None:
         self._host = host
         self._port = port
         self._username = username or None
         self._password = password or None
+        # TLS (broker of production on 8883): verified certificate + host name; a missing/invalid CA
+        # file fails at startup (never silently falls back to plaintext).
+        self._tls_context: Optional[ssl.SSLContext] = tls_context(ca_cert) if tls else None
         # Raises ValueError on a malformed key: fail at startup, never publish in clear by mistake.
         self._cipher: Optional[PayloadCipher] = PayloadCipher.from_setting(encryption_key)
         self._client: Optional[aiomqtt.Client] = None
@@ -61,12 +75,14 @@ class MqttPublisher:
                 port=self._port,
                 username=self._username,
                 password=self._password,
+                tls_context=self._tls_context,
             )
             await self._client.__aenter__()
             self.is_connected = True
             log.info(
                 "mqtt_publisher.connected",
                 host=self._host, port=self._port, encrypted=self.encryption_enabled,
+                tls=self._tls_context is not None,
             )
         except Exception as e:  # noqa: BLE001
             self._client = None

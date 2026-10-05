@@ -16,7 +16,7 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -49,6 +49,9 @@ async def create_lead(body: LeadCreate, request: Request, background: Background
         return ACCEPTED
     h = ip_hash(client_ip(request))
     since = datetime.now(timezone.utc) - timedelta(hours=1)
+    # Serialise the count-then-insert per IP (transaction-scoped advisory lock): concurrent posts
+    # from one IP used to all see the same count and all pass the limit (Sprint 2 review).
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": "lead:" + h})
     recent = (await db.execute(
         select(func.count()).select_from(Lead).where(Lead.ip_hash == h, Lead.created_at >= since)
     )).scalar_one()

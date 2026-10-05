@@ -83,3 +83,81 @@ async def test_seed_demo_plant_idempotent(tenants, db):
                                                                      Tag.machine_id == a1.machine_id))).scalar_one()
     assert n == 3
 
+
+
+async def test_seed_demo_production_from_virtual_plant_map(db):
+    """Fase 2 seed from the virtual plant map: 3 shifts with 1 h meal + 2 × 10 min coffee, products +
+    PRI per (machine, product), bottleneck, fault → reason maps, open runs only for single-product machines.
+    Idempotent."""
+    import json
+    from conftest import _make_tenant
+    from src.db import AsyncSessionLocal
+    from src.models import Line, Machine, MachineProduct, Product, ProductionRun, Shift
+    from src.services.oee.calendar import span_minutes
+    doc = json.loads(MAP.read_text(encoding="utf-8"))
+    async with AsyncSessionLocal() as s:
+        t = await _make_tenant(s, "SEED3")
+        await s.commit()
+    async with AsyncSessionLocal() as s:
+        await seed_dev.seed_demo_plant(s, t.id, doc)
+    async with AsyncSessionLocal() as s:
+        first = await seed_dev.seed_demo_production(s, t.id, doc)
+    async with AsyncSessionLocal() as s:
+        second = await seed_dev.seed_demo_production(s, t.id, doc)
+    n_machines = sum(len(ln["machines"]) for ln in doc["assets"]["lines"])
+    single = {m["name"] for ln in doc["assets"]["lines"] for m in ln["machines"]
+              if len(seed_dev._machine_products(ln, m)) == 1}
+    assert len(single) < n_machines                        # the virtual plant changes product (SET-01)
+    assert first["shifts"] == 3 and first["products"] >= 2 and first["runs"] == len(single)
+    assert second == {"shifts": 0, "products": 0, "machine_products": 0, "runs": 0}
+    shifts = (await db.execute(select(Shift).where(Shift.tenant_id == t.id).order_by(Shift.start_local))).scalars().all()
+    assert [(x.start_local, x.end_local) for x in shifts] == [("06:00", "14:00"), ("14:00", "22:00"), ("22:00", "06:00")]
+    for x in shifts:
+        assert set(x.weekdays) >= {0, 1, 2, 3, 4, 5}
+        assert sorted(span_minutes(b["start_local"], b["end_local"]) for b in x.breaks) == [10, 10, 60]
+    machines = {m.name: m for m in (await db.execute(select(Machine).where(Machine.tenant_id == t.id))).scalars()}
+    prods = {p.id: p.code for p in (await db.execute(select(Product).where(Product.tenant_id == t.id))).scalars()}
+    mps = (await db.execute(select(MachineProduct).where(MachineProduct.tenant_id == t.id))).scalars().all()
+    default = {mp.machine_id: (prods[mp.product_id], mp.ideal_cycle_time_s) for mp in mps if mp.is_default}
+    assert default[machines["Torno CNC"].id] == ("EIXO-20", 45)
+    assert len(default) == n_machines                      # every machine has a default product + PRI
+    assert machines["Torno CNC"].ideal_cycle_time_s == 45
+    assert all(m.fault_code_map and all(v.startswith("EQP-") for v in m.fault_code_map.values())
+               for m in machines.values())
+    usinagem = (await db.execute(select(Line).where(Line.tenant_id == t.id, Line.name == "Linha de Usinagem"))).scalar_one()
+    assert usinagem.bottleneck_machine_id == machines["Centro de Usinagem"].id      # 90 s > 45 s
+    # open runs only where the product never changes; a machine whose PLC changes product (SET-01 →
+    # product_code) gets none, so its OEE says "produto não informado" instead of using the wrong PRI
+    runs = (await db.execute(select(ProductionRun).where(ProductionRun.tenant_id == t.id))).scalars().all()
+    assert {r.machine_id for r in runs} == {machines[n].id for n in single} and all(r.ended_at is None for r in runs)
+    assert machines["Centro de Usinagem"].id not in {r.machine_id for r in runs}
+    one = {**doc, "assets": {**doc["assets"], "lines": [{**ln, "machines": [
+        {**m, "products": m["products"][:1]} for m in ln["machines"]]} for ln in doc["assets"]["lines"]]}}
+    from conftest import _make_tenant as _mk
+    async with AsyncSessionLocal() as s:
+        t1 = await _mk(s, "SEED3B")
+        await s.commit()
+    async with AsyncSessionLocal() as s:
+        await seed_dev.seed_demo_plant(s, t1.id, one)
+    async with AsyncSessionLocal() as s:
+        assert (await seed_dev.seed_demo_production(s, t1.id, one))["runs"] == n_machines   # single product
+
+
+async def test_seed_demo_production_fallback_without_map_data(db):
+    """A map without shifts/products (older edge) → Mon–Sat shifts and one product per line."""
+    from conftest import _make_tenant
+    from src.db import AsyncSessionLocal
+    from src.models import Shift
+    async with AsyncSessionLocal() as s:
+        t = await _make_tenant(s, "SEED4")
+        await s.commit()
+    doc = {**DOC, "assets": {**DOC["assets"], "lines": [
+        {**DOC["assets"]["lines"][0], "name": "Linha de Montagem",
+         "machines": [{**DOC["assets"]["lines"][0]["machines"][0], "ideal_cycle_time_s": 40.0}]}]}}
+    async with AsyncSessionLocal() as s:
+        await seed_dev.seed_demo_plant(s, t.id, doc)
+    async with AsyncSessionLocal() as s:
+        st = await seed_dev.seed_demo_production(s, t.id, doc)
+    assert st == {"shifts": 3, "products": 1, "machine_products": 1, "runs": 1}
+    shifts = (await db.execute(select(Shift).where(Shift.tenant_id == t.id))).scalars().all()
+    assert all(x.weekdays == [0, 1, 2, 3, 4, 5] for x in shifts)

@@ -6,7 +6,8 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import LandingPage from "@/pages/LandingPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
-import DashboardPage from "@/pages/DashboardPage";
+import RaioXPage from "@/pages/efficiency/RaioXPage";
+import StopsPage from "@/pages/efficiency/StopsPage";
 import LinesPage from "@/pages/LinesPage";
 import MachinesPage from "@/pages/MachinesPage";
 import AlertsPage from "@/pages/AlertsPage";
@@ -17,6 +18,11 @@ const CamerasPage = lazy(() => import("@/pages/CamerasPage"));
 const FactoryPage = lazy(() => import("@/pages/factory/FactoryPage"));
 const LinePage = lazy(() => import("@/pages/factory/LinePage"));
 const MachinePage = lazy(() => import("@/pages/factory/MachinePage"));
+const OeePage = lazy(() => import("@/pages/efficiency/OeePage"));
+const TimelinePage = lazy(() => import("@/pages/efficiency/TimelinePage"));
+const ShiftReportPage = lazy(() => import("@/pages/efficiency/ShiftReportPage"));
+const TvPage = lazy(() => import("@/pages/efficiency/TvPage"));
+const ProductionSettingsPage = lazy(() => import("@/pages/settings/ProductionSettingsPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -44,8 +50,15 @@ export default function App() {
 
           {/* App protegido */}
           <Route element={<ProtectedRoute />}>
+            {/* Andon / TV: full screen, no app chrome */}
+            <Route path="/tv/lines/:lineId" element={<TvPage />} />
             <Route element={<Layout />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<RaioXPage />} />
+              <Route path="/oee"       element={<OeePage />} />
+              <Route path="/timeline"  element={<TimelinePage />} />
+              <Route path="/stops"     element={<StopsPage />} />
+              <Route path="/reports/shift" element={<ShiftReportPage />} />
+              <Route path="/settings/production" element={<ProductionSettingsPage />} />
               <Route path="/factory"   element={<FactoryPage />} />
               <Route path="/factory/lines/:lineId" element={<LinePage />} />
               <Route path="/factory/machines/:machineId" element={<MachinePage />} />

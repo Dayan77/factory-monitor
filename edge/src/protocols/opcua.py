@@ -5,8 +5,11 @@ Tag address format: "ns=2;i=1001"   (numeric node ID)
                     "ns=2;s=Temp1"  (string node ID)
 
 With `source_timestamps=True` the callback receives a third argument: the DataValue SourceTimestamp
-(UTC, set by the PLC/server), falling back to ServerTimestamp, or None. `connected` is True while
+(UTC, set by the PLC/server), falling back to ServerTimestamp, or None — and `initial=True` for the first
+notification of each monitored item after (re)subscribing, whose SourceTimestamp is the value's last
+change (possibly hours old), not a delivery-time sample (edge/src/clock.py). `connected` is True while
 the session and subscription are up (the gateway only refreshes heartbeats of connected sources).
+Monitored items are created with a queue (`queue_size`, default 64): intermediate changes are kept.
 """
 
 import asyncio
@@ -42,6 +45,11 @@ class _SubscriptionHandler:
         self._on_reading = on_reading
         self._source_ts = source_timestamps
         self._loop = asyncio.get_running_loop()
+        self._seen: set = set()            # monitored items already notified since (re)subscribing
+
+    def status_change_notification(self, status) -> None:
+        # subscription re-created / transferred by asyncua: the next values are initial again
+        self._seen.clear()
 
     def datachange_notification(self, node: Node, val, data) -> None:
         cfg = self._tag_map.get(node.nodeid)
@@ -54,7 +62,9 @@ class _SubscriptionHandler:
             return
         if self._source_ts:
             ts = _source_timestamp(data)
-            coro = self._on_reading(cfg.tag_id, value, ts)
+            initial = node.nodeid not in self._seen
+            self._seen.add(node.nodeid)
+            coro = self._on_reading(cfg.tag_id, value, ts, initial=initial)
         else:
             coro = self._on_reading(cfg.tag_id, value)
         asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -80,8 +90,18 @@ class OpcUaDriver:
         publishing_interval_ms: int = 500,
         reconnect_delay_s: float = 5.0,
         source_timestamps: bool = False,
+        queue_size: int = 64,
+        notify_on_timestamp: bool = False,
     ) -> None:
         self._endpoint = endpoint
+        # Server-side queue per monitored item: every change between two publishes is delivered
+        # (with its own SourceTimestamp) instead of only the last one — a short stop that starts
+        # and ends within one publishing interval is not lost.
+        self._queue_size = queue_size
+        # DataChangeTrigger.StatusValueTimestamp: a re-write of the same value with a newer SourceTimestamp
+        # (device heartbeat) is notified too. Only for devices that re-stamp on purpose (plant map
+        # `device_heartbeat`), never for servers that re-stamp every scan.
+        self._notify_on_timestamp = notify_on_timestamp
         self._tags = tags or []
         self._on_reading = on_reading
         self._publishing_interval = publishing_interval_ms
@@ -108,7 +128,11 @@ class OpcUaDriver:
 
                     handler = _SubscriptionHandler(tag_map, self._on_reading, self._source_ts)
                     sub = await client.create_subscription(self._publishing_interval, handler)
-                    await sub.subscribe_data_change(nodes)
+                    if self._notify_on_timestamp:
+                        mfilter = ua.DataChangeFilter(Trigger=ua.DataChangeTrigger.StatusValueTimestamp)
+                        await sub._subscribe(nodes, mfilter=mfilter, queuesize=self._queue_size)
+                    else:
+                        await sub.subscribe_data_change(nodes, queuesize=self._queue_size)
                     self.connected = True
 
                     while self._running:

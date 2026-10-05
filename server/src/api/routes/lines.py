@@ -10,6 +10,7 @@ from ...models import User, UserRole, Line, Machine, Plant
 from ...auth import get_current_user, require_roles
 from ...services.assets import default_plant
 from ...services.usage import queries as uq
+from ...services.oee.engine import operating_seconds
 from ...services.validation import is_uuid
 from ..patching import apply_patch
 from ..schemas import LineOut, LineCreate, LineUpdate
@@ -105,7 +106,9 @@ async def line_production(
     bucket: str = Query(default="1h", pattern="^(1h|1d)$"),
 ):
     """Production of the line = part counters of its output machine (domain.md §1, kpis.md §1.9).
-    Hourly bucket granularity: `start` is floored to the hour."""
+    Counts live in hourly buckets, so the window is aligned to them: `start` is floored to the hour
+    (bucket=1d: to the plant's local midnight) and the returned `start` is the aligned one — the
+    counts, the points and the cadence all refer to that same window (Sprint 2 QA finding)."""
     line = await _get_line_or_404(line_id, user.tenant_id, db)
     tz_name = (await db.execute(select(Plant.timezone).where(Plant.id == line.plant_id))).scalar_one_or_none()
     tz = uq.tzinfo(tz_name)
@@ -114,6 +117,8 @@ async def line_production(
     stop = _aware(stop) or now
     if stop <= start:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="stop deve ser após start.")
+    start = (uq.local_midnight_utc(start, tz) if bucket == "1d"
+             else start.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0))
     out = LineProductionOut(line_id=line.id, output_machine_id=line.output_machine_id, start=start, stop=stop)
     mid = line.output_machine_id
     if mid is None:
@@ -126,7 +131,9 @@ async def line_production(
     out.good, out.scrap, out.total = prod["good"], prod["scrap"], prod["total"]
     elapsed_h = (min(stop, now) - start).total_seconds() / 3600.0
     out.cadence_per_hour = out.total / elapsed_h if elapsed_h > 0 else None
-    run_h = vals.get("operating_seconds", 0.0) / 3600.0
+    # Σ run_state = 1 of the output machine — or of its position run_state when the machine has
+    # none (e.g. the output conveyor's motor; Sprint 2 QA: cadence_running_per_hour was null).
+    run_h = await operating_seconds(db, user.tenant_id, [mid], start, stop) / 3600.0
     out.cadence_running_per_hour = out.total / run_h if run_h > 0 else None
     hist = await uq.history(db, user.tenant_id, "machine", mid, ["good", "scrap", "total"], start, stop, bucket, tz)
     for t, v in hist.items():

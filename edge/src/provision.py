@@ -26,6 +26,21 @@ criar; rodar de novo não duplica nada e devolve os mesmos ids. Campos divergent
     cliente caso o servidor ignore o parâmetro). Listas podem vir como [..] ou {"items": [..]}.
     Opcional (aviso se não suportado): PATCH /api/lines/{id} {output_machine_id},
     PATCH /api/positions/{id} {counter_tag_id}.
+
+Sprint 3 (OEE) — calendário, produtos e tempo de ciclo ideal por (máquina, produto):
+
+    POST /api/shifts/    {plant_id, name, start_local, end_local, weekdays,
+                          breaks: [{start_local, end_local, reason_code}]}       (casado por nome na planta)
+    POST /api/products/  {code, name}                                            (casado por code)
+    POST /api/machines/{id}/products  {product_id, ideal_cycle_time_s, parts_per_cycle, is_default}
+    GET  /api/shifts/?plant_id=, GET /api/products/, GET /api/machines/{id}/products
+    Divergências: PATCH /api/shifts/{id}, PATCH /api/products/{id}, PATCH /api/machines/{id}/products/{mp_id}
+    (aviso se não suportado). `weekdays`: 0 = segunda … 6 = domingo. Horários "HH:MM" (o servidor pode
+    devolver "HH:MM:SS"; a comparação normaliza).
+    Servidor sem esses endpoints (404/405) → aviso e segue (ativos/tags continuam sendo provisionados).
+    Máquina: `fault_code_map` {código → motivo} é aplicado com PATCH só se o servidor expõe o campo.
+    Tags de produto atual / starved / blocked vão com o `semantic_role` do mapa (hoje `analog`; o papel de
+    borda fica em `signal_role`, ver edge/virtual_plant/layout.py SERVER_ROLE).
 """
 
 from __future__ import annotations
@@ -48,6 +63,24 @@ DEFAULT_OUT = EDGE_DIR / "config" / "plant.local.json"
 DEFAULT_SERVER_URL = "http://localhost:8000"
 
 PROTOCOL = {"opcua": "opc_ua", "modbus": "modbus_tcp"}
+_MISSING = (404, 405)
+
+
+def _hhmm(v: Any) -> Any:
+    """'06:00:00' → '06:00' (comparação de horários locais)."""
+    if isinstance(v, str) and len(v) >= 5 and v[2] == ":":
+        return v[:5]
+    return v
+
+
+def _shift_view(item: dict) -> dict:
+    return {
+        "start_local": _hhmm(item.get("start_local")),
+        "end_local": _hhmm(item.get("end_local")),
+        "weekdays": sorted(item.get("weekdays") or []),
+        "breaks": sorted((_hhmm(b.get("start_local")), _hhmm(b.get("end_local")), b.get("reason_code"))
+                         for b in item.get("breaks") or []),
+    }
 
 
 class ProvisionError(RuntimeError):
@@ -179,6 +212,9 @@ class Provisioner:
                                   {"name": p["name"], "timezone": p.get("timezone"), "address": p.get("address")},
                                   f"planta {p['name']}", updatable=("timezone", "address"))
         ids["plant"] = plant["id"]
+        ids["shifts"] = await self._ensure_shifts(plant["id"], p.get("shifts") or [])
+        product_ids = await self._ensure_products(assets.get("products") or [])
+        ids["products"] = product_ids
 
         machine_ids: dict[tuple[str, str], str] = {}
         position_ids: dict[tuple[str, str, str], str] = {}
@@ -198,6 +234,11 @@ class Provisioner:
                 )
                 machine_ids[(line["name"], m["name"])] = mach["id"]
                 ids["machines"][f"{line['name']}/{m['name']}"] = mach["id"]
+                if m.get("fault_code_map") and "fault_code_map" in mach:
+                    await self._patch_diff(f"/api/machines/{mach['id']}", mach,
+                                           {"fault_code_map": m["fault_code_map"]}, f"máquina {m['name']}")
+                if m.get("products"):
+                    await self._ensure_machine_products(mach["id"], m["products"], product_ids, m["name"])
                 for pos in m.get("positions", []):
                     pz = await self.ensure(
                         "positions", {"name": pos["name"], "machine_id": mach["id"]},
@@ -289,6 +330,103 @@ class Provisioner:
         out["server_url"] = self.api.base
         out["asset_ids"] = ids
         return out
+
+    async def _optional_list(self, path: str, params: Optional[dict], what: str) -> Optional[list[dict]]:
+        """GET de coleção do Sprint 3: None (com aviso) se o servidor ainda não tem o endpoint."""
+        status, body = await self.api.request("GET", path, params=params)
+        if status in _MISSING:
+            self._warn(f"servidor sem {path} ({status}): {what} não provisionados")
+            return None
+        if status != 200:
+            raise ProvisionError(f"GET {path} → {status}: {str(body)[:300]}")
+        return _items(body)
+
+    async def _ensure_shifts(self, plant_id: str, shifts: list[dict]) -> dict[str, str]:
+        ids: dict[str, str] = {}
+        if not shifts:
+            return ids
+        existing = await self._optional_list("/api/shifts/", {"plant_id": plant_id}, "turnos")
+        if existing is None:
+            return ids
+        existing = [x for x in existing if x.get("plant_id") in (plant_id, None)]
+        for sh in shifts:
+            body = {
+                "plant_id": plant_id, "name": sh["name"], "start_local": sh["start_local"],
+                "end_local": sh["end_local"], "weekdays": list(sh.get("weekdays") or []),
+                "breaks": [{"start_local": b["start_local"], "end_local": b["end_local"],
+                            "reason_code": b.get("reason_code", "PLN-01")} for b in sh.get("breaks") or []],
+            }
+            label = f"turno {sh['name']}"
+            found = next((x for x in existing if x.get("name") == sh["name"]), None)
+            if found is None:
+                found = await self.api.create("/api/shifts/", body)
+                self.stats["created"] += 1
+                self.log(f"  + {label}")
+            elif _shift_view(found) != _shift_view(body):
+                patch = {k: v for k, v in body.items() if k != "plant_id"}
+                status, data = await self.api.request("PATCH", f"/api/shifts/{found['id']}", json_body=patch)
+                if status in (200, 201) and isinstance(data, dict) and _shift_view(data) == _shift_view(body):
+                    self.stats["updated"] += 1
+                    self.log(f"  ~ {label}: atualizado")
+                else:
+                    self._warn(f"{label}: PATCH não aplicado ({status})")
+            else:
+                self.stats["unchanged"] += 1
+            ids[sh["name"]] = found["id"]
+        return ids
+
+    async def _ensure_products(self, products: list[dict]) -> dict[str, str]:
+        ids: dict[str, str] = {}
+        if not products:
+            return ids
+        existing = await self._optional_list("/api/products/", None, "produtos")
+        if existing is None:
+            return ids
+        for p in products:
+            label = f"produto {p['code']}"
+            found = next((x for x in existing if x.get("code") == p["code"]), None)
+            if found is None:
+                found = await self.api.create("/api/products/", {"code": p["code"], "name": p["name"]})
+                self.stats["created"] += 1
+                self.log(f"  + {label}")
+                existing.append(found)
+            else:
+                found = await self._patch_diff(f"/api/products/{found['id']}", found, {"name": p["name"]}, label)
+            ids[p["code"]] = found["id"]
+        return ids
+
+    async def _ensure_machine_products(self, machine_id: str, items: list[dict], product_ids: dict[str, str],
+                                       machine_name: str) -> None:
+        if not product_ids:
+            return
+        path = f"/api/machines/{machine_id}/products"
+        existing = await self._optional_list(path, None, f"produtos da máquina {machine_name}")
+        if existing is None:
+            return
+
+        def pid_of(x: dict) -> Optional[str]:
+            return x.get("product_id") or (x.get("product") or {}).get("id")
+
+        # padrão primeiro: um servidor que mantém um único padrão por máquina não o desfaz depois
+        for it in sorted(items, key=lambda i: not i.get("is_default")):
+            pid = product_ids.get(it["product"])
+            if pid is None:
+                raise ProvisionError(f"máquina {machine_name}: produto {it['product']} não está no catálogo")
+            body = {"product_id": pid, "ideal_cycle_time_s": it["ideal_cycle_time_s"],
+                    "parts_per_cycle": it.get("parts_per_cycle", 1), "is_default": bool(it.get("is_default"))}
+            label = f"produto {it['product']} na máquina {machine_name}"
+            found = next((x for x in existing if pid_of(x) == pid), None)
+            if found is None:
+                status, data = await self.api.request("POST", path, json_body=body)
+                if status not in (200, 201):
+                    raise ProvisionError(f"POST {path} → {status}: {str(data)[:300]}")
+                self.stats["created"] += 1
+                self.log(f"  + {label}")
+                existing.append(data if isinstance(data, dict) else body)
+            else:
+                await self._patch_diff(f"{path}/{found.get('id') or pid}", found,
+                                       {k: body[k] for k in ("ideal_cycle_time_s", "parts_per_cycle", "is_default")},
+                                       label)
 
     async def _ensure_component(self, position: dict, comp: dict, label: str, ids: dict) -> None:
         serial = comp["serial_number"]

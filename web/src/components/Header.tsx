@@ -3,7 +3,12 @@ import ConnectionBadge from "./ConnectionBadge";
 import ThemeToggle from "./ThemeToggle";
 
 const TITLES: Record<string, string> = {
-  "/dashboard": "Dashboard",
+  "/dashboard": "Raio-X",
+  "/oee": "Análise de OEE",
+  "/timeline": "Linha do tempo",
+  "/stops": "Paradas",
+  "/reports": "Relatórios",
+  "/settings": "Configurações",
   "/factory": "Fábrica",
   "/lines": "Linhas de Produção",
   "/machines": "Máquinas",

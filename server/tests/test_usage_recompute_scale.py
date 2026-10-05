@@ -41,21 +41,33 @@ async def test_recompute_streams_small_windows_equal_to_incremental(client, db, 
     for tag, sec, v in seq:
         await publish(t.id, tag["id"], v, T + timedelta(seconds=sec))
 
-    queries = []
-    orig = rc.tag_readings
+    queries, chunks = [], []
+    orig = rc.iter_tag_rows
 
     async def counting(*a, **kw):
-        rows = await orig(*a, **kw)
-        queries.append(len(rows))
-        return rows
+        n = 0
+        async for rows in orig(*a, **kw):
+            n += len(rows)
+            chunks.append(len(rows))
+            yield rows
+        queries.append(n)
 
-    monkeypatch.setattr(rc, "tag_readings", counting)
+    monkeypatch.setattr(rc, "iter_tag_rows", counting)
+    monkeypatch.setattr(rc, "CHUNK_ROWS", 2)
     monkeypatch.setattr(settings, "usage_recompute_window_h", 10 / 60)
+    orig_windows = rc.iter_tag_windows
+
+    def small_chunks(*a, **kw):
+        kw["chunk_rows"] = 2                     # stream in chunks of at most 2 readings
+        return orig_windows(*a, **kw)
+
+    monkeypatch.setattr(rc, "iter_tag_windows", small_chunks)
     async with AsyncSessionLocal() as s:
         report = await rc.recompute_usage(s, t.id)
     assert report.readings == len(seq)
     assert report.differences == []
     assert len(queries) >= 12 and max(queries) <= 6       # many small windows, never the whole history
+    assert chunks and max(chunks) <= 2                    # never more than one chunk in memory
     assert report.totals[("position", pos["id"], "cycles")] == 7 * 24
 
 

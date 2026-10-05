@@ -3,6 +3,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import get_current_user, require_roles
@@ -35,12 +36,25 @@ async def get_position_or_404(position_id: str, tenant_id: str, db: AsyncSession
     return pos
 
 
-async def _check_counter_tag(db: AsyncSession, tag_id: str, tenant_id: str, machine_id: str) -> str:
+async def _check_counter_tag(db: AsyncSession, tag_id: str, tenant_id: str, machine_id: str,
+                             position_id: Optional[str] = None) -> str:
+    """The counter tag must be of the tenant, of this machine, and not already the counter of (or
+    linked to) another position — one tag counted for two positions would double count (C13)."""
     tag_id = await ensure_owned(db, Tag, tag_id, tenant_id, "counter_tag_id")
-    tag_machine = (await db.execute(select(Tag.machine_id).where(Tag.id == tag_id))).scalar_one()
+    tag_machine, tag_position = (await db.execute(
+        select(Tag.machine_id, Tag.position_id).where(Tag.id == tag_id))).one()
     if tag_machine is not None and tag_machine != machine_id:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail="counter_tag_id: a tag pertence a outra máquina.")
+    if tag_position is not None and tag_position != position_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="counter_tag_id: a tag está ligada a outra posição.")
+    other = (await db.execute(select(Position.id).where(
+        Position.tenant_id == tenant_id, Position.counter_tag_id == tag_id,
+        *( [Position.id != position_id] if position_id else [] )).limit(1))).scalar_one_or_none()
+    if other is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="counter_tag_id: a tag já é o contador de outra posição.")
     return tag_id
 
 
@@ -77,7 +91,12 @@ async def create_position(body: PositionCreate, user: CurrentUser, db: DB):
         body.counter_tag_id = await _check_counter_tag(db, body.counter_tag_id, user.tenant_id, body.machine_id)
     pos = Position(tenant_id=user.tenant_id, **body.model_dump())
     db.add(pos)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:          # concurrent link of the same tag (uq_positions_counter_tag_id)
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="counter_tag_id: a tag já é o contador de outra posição.")
     await db.refresh(pos)
     return (await _out(db, [pos], user.tenant_id))[0]
 
@@ -106,9 +125,15 @@ async def get_position(position_id: str, user: CurrentUser, db: DB):
 async def update_position(position_id: str, body: PositionUpdate, user: CurrentUser, db: DB):
     pos = await get_position_or_404(position_id, user.tenant_id, db)
     if body.counter_tag_id is not None:
-        body.counter_tag_id = await _check_counter_tag(db, body.counter_tag_id, user.tenant_id, pos.machine_id)
+        body.counter_tag_id = await _check_counter_tag(db, body.counter_tag_id, user.tenant_id, pos.machine_id,
+                                                       position_id=pos.id)
     apply_patch(pos, body, nullable=frozenset({"counter_tag_id"}))
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:          # concurrent link of the same tag (uq_positions_counter_tag_id)
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="counter_tag_id: a tag já é o contador de outra posição.")
     await db.refresh(pos)
     return (await _out(db, [pos], user.tenant_id))[0]
 

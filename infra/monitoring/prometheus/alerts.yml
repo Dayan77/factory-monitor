@@ -1,0 +1,54 @@
+# Regras de alerta básicas do FactoryConnect. Aparecem em Prometheus → Alerts e no painel do Grafana.
+# (Sem Alertmanager por enquanto: para notificar, configure um contact point no Grafana — docs/operations.md.)
+# Métricas fm_* exportadas pelo backend: ver docs/operations.md §Observabilidade.
+groups:
+  - name: factoryconnect
+    rules:
+      - alert: FmServerDown
+        expr: max(up{job="fm-server"}) < 1 or absent(up{job="fm-server"})
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Backend (fm_server) não responde ao Prometheus há 2 min"
+
+      - alert: FmHttp5xxRate
+        expr: |
+          sum(rate(http_requests_total{job="fm-server",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="fm-server"}[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Mais de 5% das requisições HTTP com erro 5xx"
+
+      - alert: FmHttpLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job="fm-server"}[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Latência HTTP p95 acima de 1 s"
+
+      - alert: FmMqttBacklog
+        expr: max(fm_mqtt_inflight_messages{job="fm-server"}) > 1000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Backlog MQTT > 1000 leituras — o servidor não acompanha os gateways"
+
+      - alert: FmMqttProcessingLagHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(fm_mqtt_processing_lag_seconds_bucket{job="fm-server"}[5m]))) > 30
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Atraso p95 entre a leitura no CLP e o processamento > 30 s"
+
+      - alert: FmMqttNoMessages
+        # absent(): with the server up but the series missing, "no data" must not look like "all good"
+        expr: |
+          (sum(rate(fm_mqtt_messages_total{job="fm-server"}[15m])) == 0)
+            or (absent(fm_mqtt_messages_total{job="fm-server"}) and on() (count(up{job="fm-server"} == 1) > 0))
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Nenhuma mensagem MQTT processada em 15 min (broker, gateways ou credenciais?)"

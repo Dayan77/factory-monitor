@@ -160,7 +160,9 @@ async def test_mqtt_message_updates_status_and_broadcasts(client, tenants, db, w
     ws_a = await ws_for(tenants.a.id)
     ws_b = await ws_for(tenants.b.id)
     topic = f"factory/{tenants.a.id}/sensors/{assets.tag['id']}"
-    payload = json.dumps({"value": 42.5, "unit": "°C", "ts": "2026-10-05T10:00:00Z"}).encode()
+    # a live reading (a fixed date became a "replay" > 2 min old once the calendar passed it)
+    live_ts = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    payload = json.dumps({"value": 42.5, "unit": "°C", "ts": live_ts}).encode()
 
     await mqtt_subscriber._handle_message(topic, payload)
 

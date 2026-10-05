@@ -48,7 +48,7 @@ ufw default allow outgoing
 ufw allow ssh
 ufw allow 80/tcp
 ufw allow 443/tcp
-ufw allow 1883/tcp   # MQTT (remova se não precisar de acesso externo ao broker)
+ufw allow 8883/tcp   # MQTT com TLS + senha por gateway (1883 fica só na rede docker interna)
 ufw --force enable
 
 echo "==> Configurando fail2ban..."
@@ -71,3 +71,6 @@ echo "  1. Clone o repositório em $APP_DIR"
 echo "  2. Copie e preencha o .env: cp .env.example .env && nano .env"
 echo "  3. Execute: cd $APP_DIR/infra && docker compose -f docker-compose.prod.yml up -d"
 echo "  4. Rode o seed: docker exec fm_server python ../scripts/seed_dev.py"
+echo "  5. MQTT: certificado em $APP_DIR/mqtt/certs e gateways com make mqtt-gateway-add (docs/operations.md)"
+echo "  6. Backups: crontab do usuário $APP_USER com scripts/backup.sh (docs/operations.md §Backup)"
+install -d -m 700 -o "$APP_USER" -g "$APP_USER" /var/backups/factory-monitor "$APP_DIR/mqtt" "$APP_DIR/mqtt/certs"

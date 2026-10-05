@@ -79,3 +79,7 @@ coverage/
 .tmp/
 tmp/
 .venv-*/
+
+# Operação (fora do git): credenciais MQTT dos gateways/certificados e backups locais
+/mqtt/
+/backups/

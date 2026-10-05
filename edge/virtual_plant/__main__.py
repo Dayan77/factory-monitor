@@ -5,12 +5,20 @@ Planta virtual "Planta Manaus" — CLI.
     python -m edge.virtual_plant
     # determinístico e acelerado: 1 h simulada por minuto
     python -m edge.virtual_plant --seed 42 --speed 60
-    # com turnos (fora do turno tudo para); relógio simulado começa às 06:00
+    # calendário padrão (3 turnos com refeição + 2 cafés, setup SET-01 1×/turno); 24 h sem calendário:
+    python -m edge.virtual_plant --calendar none
+    # turnos simples sem pausas (legado); relógio simulado começa às 06:00
     python -m edge.virtual_plant --shifts 06:00-14:00,14:00-22:00 --start-time 06:00
+    # perda de velocidade de 8 % e 6 micro-paradas por hora em operação em todas as máquinas
+    python -m edge.virtual_plant --speed-loss-pct 8 --micro-stops-per-h 6
+    # playback fiel de um cenário de ouro (8 h em 8 min), relógio do cenário deslocado N dias para o passado
+    python -m edge.virtual_plant --scenario docs/scenarios/scenario_c_oee_shift.json --speed 60
     # sem servidores: roda N segundos simulados e imprime o snapshot (números conhecidos para o QA)
     python -m edge.virtual_plant --seed 42 --simulate 3600
     # (re)gera o mapa do gateway a partir do layout
     python -m edge.virtual_plant --write-map edge/config/plant.json
+    # mapa com o calendário de um cenário (para provisionar um tenant de QA com as pausas do cenário)
+    python -m edge.virtual_plant --write-map /tmp/plant.scenario_c.json --scenario docs/scenarios/scenario_c_oee_shift.json
 
 No container do edge o pacote é `virtual_plant` (python -m virtual_plant ...).
 Escuta em 127.0.0.1 por padrão; use --host 0.0.0.0 só em rede de testes (sem segurança OPC UA/Modbus).
@@ -27,7 +35,7 @@ import signal
 import sys
 
 from .layout import build_plant_map
-from .model import PlantModel, _hhmm
+from .model import PlantConfig, PlantModel, _hhmm
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,7 +49,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--modbus-port", type=int, default=int(env("VP_MODBUS_PORT", "5020")))
     p.add_argument("--status-port", type=int, default=int(env("VP_STATUS_PORT", "8091")),
                    help="HTTP GET /state e /health (0 desliga)")
-    p.add_argument("--shifts", default=env("VP_SHIFTS", ""), help="ex. 06:00-14:00,14:00-22:00 (vazio = 24 h)")
+    p.add_argument("--calendar", choices=("standard", "none"), default=env("VP_CALENDAR", "standard"),
+                   help="standard = 3 turnos com pausas e setup por turno (padrão); none = 24 h")
+    p.add_argument("--shifts", default=env("VP_SHIFTS", ""),
+                   help="turnos simples sem pausas, ex. 06:00-14:00,14:00-22:00 (substitui --calendar)")
+    p.add_argument("--speed-loss-pct", type=float, default=float(env("VP_SPEED_LOSS_PCT", "5")),
+                   help="ciclo real = ideal × (1 + x%% + U(0, 2%%)) (padrão 5)")
+    p.add_argument("--micro-stops-per-h", type=float, default=None,
+                   help="micro-paradas por hora em operação, todas as máquinas (padrão por máquina: 3/2/4)")
+    p.add_argument("--no-setups", action="store_true", help="sem troca de produto (SET-01) por turno")
+    p.add_argument("--scenario", default=env("VP_SCENARIO", ""), metavar="JSON",
+                   help="playback de cenário (ex. docs/scenarios/scenario_c_oee_shift.json)")
+    p.add_argument("--scenario-clock", choices=("shifted", "wall"), default=env("VP_SCENARIO_CLOCK", "shifted"),
+                   help="timestamps do playback: horário do cenário deslocado N dias (padrão) ou relógio real")
+    p.add_argument("--scenario-start", choices=("subscribe", "now"), default=env("VP_SCENARIO_START", "subscribe"),
+                   help="subscribe = só começa quando um cliente OPC UA (gateway) assinar (padrão); now = já")
+    p.add_argument("--scenario-heartbeat-s", type=float, default=float(env("VP_SCENARIO_HEARTBEAT_S", "10")),
+                   help="re-escrita periódica (relógio do cenário) das tags da máquina; 0 desliga (padrão 10)")
+    p.add_argument("--scenario-shift-days", type=int, default=None,
+                   help="dias a subtrair do horário do cenário (padrão: o menor que deixa o fim ≤ agora)")
     p.add_argument("--start-time", default=env("VP_START_TIME", "06:00"), help="hora do dia no tempo simulado 0")
     p.add_argument("--no-faults", action="store_true", help="desliga falhas aleatórias")
     p.add_argument("--pulse-ms", type=int, default=int(env("VP_PULSE_MS", "50")),
@@ -53,9 +79,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def make_model(args: argparse.Namespace) -> PlantModel:
-    return PlantModel(seed=args.seed, faults=not args.no_faults, shifts=args.shifts or None,
-                      start_second_of_day=_hhmm(args.start_time))
+def make_model(args: argparse.Namespace):
+    if args.scenario:
+        from .scenario import Scenario, ScenarioClock, ScenarioModel
+        sc = Scenario.load(args.scenario)
+        clock = ScenarioClock(sc, args.scenario_clock, args.scenario_shift_days, speed=args.speed)
+        return ScenarioModel(sc, clock, seed=args.seed, heartbeat_s=args.scenario_heartbeat_s)
+    cfg = PlantConfig(speed_loss_pct=args.speed_loss_pct, setups=not args.no_setups)
+    cfg.with_micro_rate(args.micro_stops_per_h)
+    shifts = args.shifts or ("standard" if args.calendar == "standard" else None)
+    return PlantModel(seed=args.seed, faults=not args.no_faults, shifts=shifts,
+                      start_second_of_day=_hhmm(args.start_time), config=cfg)
 
 
 async def _serve(args: argparse.Namespace) -> None:
@@ -70,10 +104,24 @@ async def _serve(args: argparse.Namespace) -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    await rt.start()
+    paused = bool(args.scenario) and args.scenario_start == "subscribe"
+    await rt.start(paused=paused)
     print(f"Planta virtual no ar — OPC UA {rt.opcua_endpoint} | Modbus {args.host}:{args.modbus_port} | "
           f"estado http://{args.host}:{args.status_port}/state | seed={args.seed} speed={args.speed}x",
           flush=True)
+    if args.scenario:
+        info = rt.model.snapshot()["scenario"]
+        print(f"Cenário {info['id']} na máquina {info['machine']}: {info['duration_s'] / 3600:.2f} h, relógio "
+              f"{info['clock']} {info['device_start']} → {info['device_end']} "
+              f"(gateway: VIRTUAL_PLANT_MAX_CLOCK_SKEW_S=off)", flush=True)
+    if paused:
+        print("Aguardando o gateway assinar as tags OPC UA para iniciar o playback ...", flush=True)
+        waiter = asyncio.create_task(rt.wait_for_subscribers())
+        done, _ = await asyncio.wait({waiter, asyncio.create_task(stop.wait())},
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if waiter in done:
+            rt.resume()
+            print(f"Playback iniciado ({rt.monitored_items()} itens assinados).", flush=True)
     await stop.wait()
     await rt.stop()
 
@@ -85,8 +133,12 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     if args.write_map:
+        shifts = None
+        if args.scenario:      # calendário do servidor = turno do cenário (mesmas pausas planejadas)
+            from .scenario import Scenario
+            shifts = Scenario.load(args.scenario).shift_defs()
         with open(args.write_map, "w", encoding="utf-8") as f:
-            json.dump(build_plant_map(), f, ensure_ascii=False, indent=2)
+            json.dump(build_plant_map(shifts=shifts), f, ensure_ascii=False, indent=2)
             f.write("\n")
         print(f"mapa gravado em {args.write_map}")
         return 0

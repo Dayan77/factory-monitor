@@ -152,7 +152,7 @@ export interface UsageMessage {
   timestamp?: string;
 }
 
-export type RealtimeMessage = SensorReadingMessage | MachineStatusMessage | UsageMessage;
+export type RealtimeMessage = SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage;
 
 // ── Assets & usage (Fase 1 — mirror server/src/api/schemas_assets.py) ──
 // Conventions: life_consumed_pct is a FRACTION (0..1, may exceed 1, never truncated);
@@ -372,4 +372,389 @@ export interface Camera {
   is_active:   boolean;
   created_at:  string;
   updated_at:  string;
+}
+
+// ── Eficiência produtiva (Fase 2 — mirror server/src/api/schemas_production.py) ──
+// Conventions: every ratio (availability, performance, quality, oee, teep, pct, data_coverage) is a
+// FRACTION 0..1 (performance may exceed 1, never truncated) or null when undefined (e.g. PBT = 0);
+// durations in seconds (*_s) or hours (*_h); timestamps ISO-8601 UTC; productive_day is YYYY-MM-DD.
+
+export type OeeScope = "machine" | "line" | "plant";
+export type OeeGroupBy = "none" | "hour" | "shift" | "day";
+
+/** Reason-code categories seeded by the server (tenants may add their own). */
+export type ReasonCategory = "PLN" | "EQP" | "SET" | "MAT" | "OPR" | "QLT" | "UTL" | "MNT" | "UNK" | string;
+export type OeeLossKind = "none" | "availability" | "performance" | "quality";
+
+export interface ReasonCode {
+  id: string;
+  tenant_id: string | null;
+  code: string;
+  category: ReasonCategory;
+  label: string;
+  planned: boolean;
+  oee_loss: OeeLossKind | string;
+  is_active: boolean;
+  /** Seeded default (tenant_id null) — read-only for tenants. */
+  is_default: boolean;
+}
+
+export interface ReasonCodeCreateBody {
+  code: string;
+  category: string;
+  label: string;
+  planned?: boolean;
+  oee_loss?: OeeLossKind;
+}
+
+export type ReasonCodeUpdateBody = Partial<Omit<ReasonCodeCreateBody, "code"> & { is_active: boolean }>;
+
+export interface ShiftBreak {
+  start_local: string; // "HH:MM"
+  end_local: string;
+  reason_code?: string;
+}
+
+/** 0 = segunda … 6 = domingo (productive day of the shift start). */
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface Shift {
+  id: string;
+  tenant_id: string;
+  plant_id: string;
+  name: string;
+  start_local: string;
+  end_local: string;
+  weekdays: number[];
+  breaks: ShiftBreak[];
+  is_active: boolean;
+  /** Version in effect for productive days [valid_from, valid_to] (null = open) — kpis.md D11. */
+  valid_from?: string | null;
+  valid_to?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShiftBody {
+  plant_id?: string;
+  name: string;
+  start_local: string;
+  end_local: string;
+  weekdays: number[];
+  breaks: ShiftBreak[];
+  is_active?: boolean;
+  /** Edit: the new hours/days/breaks apply from this productive day (YYYY-MM-DD); before it, the old ones. */
+  effective_from?: string;
+}
+
+export type CalendarExceptionKind = "holiday" | "extra_shift" | "planned_stop";
+
+export interface CalendarException {
+  id: string;
+  tenant_id: string;
+  plant_id: string;
+  date: string;
+  kind: CalendarExceptionKind;
+  shift_id: string | null;
+  start_local: string | null;
+  end_local: string | null;
+  reason_code: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface CalendarExceptionBody {
+  plant_id?: string;
+  date: string;
+  kind: CalendarExceptionKind;
+  shift_id?: string | null;
+  start_local?: string | null;
+  end_local?: string | null;
+  reason_code?: string | null;
+  note?: string | null;
+}
+
+export interface Product {
+  id: string;
+  tenant_id: string;
+  code: string;
+  name: string;
+  created_at: string;
+}
+
+export interface MachineProduct {
+  id: string;
+  machine_id: string;
+  product_id: string;
+  product_code: string | null;
+  product_name: string | null;
+  /** PRI — ideal cycle time of one machine cycle (s). */
+  ideal_cycle_time_s: number;
+  parts_per_cycle: number;
+  is_default: boolean;
+  ideal_time_per_part_s: number;
+}
+
+export interface MachineProductBody {
+  product_id: string;
+  ideal_cycle_time_s: number;
+  parts_per_cycle?: number;
+  is_default?: boolean;
+}
+
+export interface ProductionRun {
+  id: string;
+  machine_id: string;
+  product_id: string;
+  product_code: string | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export type DowntimeSource = "auto_fault" | "auto_run_state" | "auto_cycle_gap" | "manual";
+
+export interface DowntimeEvent {
+  id: string;
+  machine_id: string;
+  machine_name?: string | null;
+  line_id?: string | null;
+  start: string;
+  /** null while the stop is still open. */
+  end: string | null;
+  duration_s: number | null;
+  stop_start?: string | null;
+  source: DowntimeSource | string;
+  /** null or "UNK-01" = not justified yet. */
+  reason_code: string | null;
+  suggested_reason_code: string | null;
+  effective_reason_code?: string;
+  planned: boolean;
+  fault_code: number | null;
+  fault_since?: string | null;
+  failure_id?: string | null;
+  comment: string | null;
+  shift_id?: string | null;
+  productive_day?: string | null;
+  justified_by?: string | null;
+  justified_at?: string | null;
+  unjustified?: boolean;
+}
+
+export interface DowntimeQuery {
+  machine_id?: string;
+  line_id?: string;
+  start?: string;
+  stop?: string;
+  open?: boolean;
+  unjustified?: boolean;
+  limit?: number;
+}
+
+export interface DowntimePatchBody {
+  reason_code?: string | null;
+  comment?: string | null;
+}
+
+export interface DowntimeCreateBody {
+  machine_id: string;
+  start: string;
+  end?: string | null;
+  reason_code: string;
+  comment?: string | null;
+}
+
+/** Subset of DowntimeEvent carried by the socket (absent keys = unchanged). */
+export type DowntimeEventPatch = Partial<DowntimeEvent> & Pick<DowntimeEvent, "id" | "machine_id" | "start">;
+
+/** WebSocket {type: "downtime", action, event} — a stop opened, changed, closed or was justified. */
+export interface DowntimeMessage {
+  type: "downtime";
+  action?: string;
+  event: DowntimeEventPatch;
+}
+
+export interface OeePoint {
+  t: string;
+  end?: string;
+  label: string;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  oee: number | null;
+  teep?: number | null;
+  pbt_s?: number;
+  good?: number;
+  scrap?: number;
+}
+
+export interface OeeResult {
+  scope?: OeeScope;
+  id?: string;
+  period_start?: string;
+  period_end?: string;
+  granularity?: string;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  oee: number | null;
+  teep: number | null;
+  loading?: number | null;
+  /** e.g. "no_planned_time" when PBT = 0. */
+  reason?: string | null;
+  ideal_cycle_time_suspect?: boolean;
+  pot_s: number;
+  pdot_s: number;
+  pbt_s: number;
+  adot_s: number;
+  apt_s: number;
+  nodata_s?: number;
+  micro_stop_count: number;
+  micro_stop_loss_s: number;
+  micro_stops_per_apt_hour?: number | null;
+  speed_loss_s: number;
+  quality_loss_s?: number;
+  ideal_produced_s?: number;
+  net_productive_s?: number;
+  produced?: number;
+  good: number;
+  scrap: number;
+  cadence_planned_per_hour?: number | null;
+  cadence_running_per_hour?: number | null;
+  availability_operational?: number | null;
+  data_coverage: number | null;
+  product_unknown: boolean;
+  /** S3-7: parts counted outside every shift instance (not in P/Q/OEE/TEEP). */
+  produced_outside_schedule?: { total: number; good: number; scrap: number };
+  /** D7: an hourly count bucket was only partly inside the window/schedule (counted pro rata). */
+  counts_prorated?: boolean;
+  calendar_default?: boolean;
+  points: OeePoint[];
+}
+
+export interface OeeQuery {
+  scope: OeeScope;
+  id: string;
+  start?: string;
+  stop?: string;
+  group_by?: OeeGroupBy;
+}
+
+/** Pseudo reason codes in the Pareto (performance/quality losses). */
+export const PSEUDO_LOSS_CODES = ["micro_stops", "speed_loss", "quality_loss"] as const;
+
+export interface ParetoRow {
+  /** Reason code, or a pseudo code (micro_stops / speed_loss / quality_loss); null when grouped by category. */
+  reason_code: string | null;
+  category: string;
+  label: string;
+  planned: boolean;
+  duration_s: number;
+  events: number;
+  pct: number | null;
+  cumulative_pct: number | null;
+}
+
+export interface Reliability {
+  scope?: string;
+  id?: string;
+  period_start?: string;
+  period_end?: string;
+  failures: number;
+  incipient?: number;
+  short_faults: number;
+  operating_h: number;
+  mtbf_h: number | null;
+  mttr_h: number | null;
+  mttr_s?: number | null;
+  availability_inherent: number | null;
+  failure_rate_per_h?: number | null;
+  /** e.g. "no_failures". */
+  reason?: string | null;
+}
+
+export interface MachineProductionRow {
+  machine_id: string;
+  machine_name: string;
+  good: number;
+  scrap: number;
+  total: number;
+  availability?: number | null;
+  performance?: number | null;
+  quality?: number | null;
+  oee?: number | null;
+}
+
+export interface ShiftReport {
+  line_id: string;
+  productive_day: string;
+  shift_id: string | null;
+  shift_name: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  oee: OeeResult | null;
+  pareto: ParetoRow[];
+  downtime: DowntimeEvent[];
+  production: MachineProductionRow[];
+  /** e.g. "no_shift" when no shift instance exists that day. */
+  reason?: string | null;
+}
+
+// Overview ("raio-x"). The server payload is normalized by services/efficiency.ts → normalizeOverview,
+// so these are the shapes the UI consumes.
+
+export interface OverviewWorstMachine {
+  id: string;
+  name: string;
+  oee: number | null;
+}
+
+export interface OverviewLine {
+  line_id: string;
+  name: string;
+  output_machine_id?: string | null;
+  /** OEE of the productive day so far. */
+  oee: number | null;
+  oee_current_shift?: number | null;
+  current_shift_name?: string | null;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  good: number;
+  scrap: number;
+  /** Realized cadence (parts/h). */
+  cadence: number | null;
+  data_coverage?: number | null;
+  open_downtime_count: number;
+  unjustified_count: number;
+  worst_machine: OverviewWorstMachine | null;
+}
+
+export interface OverviewMachineInError {
+  id: string;
+  name: string;
+  line_id?: string | null;
+  since: string | null;
+  fault_code: number | null;
+}
+
+export interface OverviewComponentNearEol {
+  component_id?: string | null;
+  position_id: string;
+  position_name: string;
+  machine_id?: string | null;
+  machine_name: string | null;
+  life_consumed_pct: number;
+  life_measure?: LifeMeasure | null;
+  projected_end_date: string | null;
+}
+
+export interface Overview {
+  plant_id?: string;
+  plant_name?: string;
+  productive_day?: string;
+  generated_at?: string;
+  lines: OverviewLine[];
+  top_losses: ParetoRow[];
+  machines_in_error: OverviewMachineInError[];
+  components_near_eol: OverviewComponentNearEol[];
 }

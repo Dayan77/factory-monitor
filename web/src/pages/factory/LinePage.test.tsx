@@ -28,7 +28,7 @@ describe("LinePage", () => {
     expect(await screen.findByText("Cadência média")).toBeInTheDocument();
     expect(screen.getByText("290")).toBeInTheDocument(); // good
     expect(screen.getByText("100,0")).toBeInTheDocument(); // parts/h
-    expect(screen.getByText("3% do total")).toBeInTheDocument();
+    expect(screen.getByText("3,3 % do total")).toBeInTheDocument();
     const tiles = screen.getAllByTestId("machine-tile");
     expect(tiles).toHaveLength(2);
     expect(tiles[0]).toHaveAttribute("href", "/factory/machines/m-1");

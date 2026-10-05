@@ -36,11 +36,15 @@ class DeadbandFilter:
         self._last: dict[str, float] = {}
         self._last_ts: dict[str, float] = {}
 
-    def should_publish(self, tag_id: str, value: float, bypass: bool = False) -> bool:
+    def should_publish(self, tag_id: str, value: float, bypass: bool = False,
+                       now: Optional[float] = None) -> bool:
+        """`now` (segundos): relógio da leitura para medir o silêncio (o gateway passa o timestamp da
+        leitura, assim um dispositivo com relógio próprio — ex. playback acelerado — tem heartbeat no seu
+        tempo); padrão = relógio do filtro."""
         if isinstance(value, float) and math.isnan(value):
             return False  # never publish NaN (server rejects / corrupts aggregates)
 
-        now = self._clock()
+        now = self._clock() if now is None else now
         last = self._last.get(tag_id)
         if last is None:
             changed = True

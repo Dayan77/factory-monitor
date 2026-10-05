@@ -11,10 +11,12 @@ PY          ?= python3
 
 .DEFAULT_GOAL := help
 .PHONY: help env dev up infra down stop ps logs config migrate seed \
-        venv test test-server test-edge test-scripts test-web web-check
+        venv test test-server test-edge test-scripts test-golden test-web web-check \
+        monitoring test-infra lint-infra backup restore backup-restore-test backup-restore-test-dev \
+        mqtt-gateway-add mqtt-gateway-remove mqtt-gateway-list mqtt-reload
 
 help: ## Lista os alvos
-	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
 env: ## Cria .env a partir de .env.example (se ainda não existir)
 	@test -f $(ENV_FILE) || { cp .env.example $(ENV_FILE) && echo "✓ $(ENV_FILE) criado — revise as senhas"; }
@@ -51,9 +53,9 @@ seed: ## Popula o banco de dev (usuários admin/superadmin)
 
 venv: ## Cria .venv (server) e .venv-edge (edge) com as dependências fixadas
 	$(PY) -m venv $(VENV) && $(VENV)/bin/pip install -q -r server/requirements-dev.txt -r scripts/requirements.txt
-	$(PY) -m venv $(VENV_EDGE) && $(VENV_EDGE)/bin/pip install -q -r edge/requirements.txt pytest==8.2.0 pytest-asyncio==0.23.7
+	$(PY) -m venv $(VENV_EDGE) && $(VENV_EDGE)/bin/pip install -q -r edge/requirements-dev.txt
 
-test: test-scripts test-server test-edge test-web ## Roda todos os testes
+test: test-scripts test-server test-golden test-edge test-web ## Roda todos os testes (infra/docker: make test-infra)
 
 test-server: ## pytest do server (cria/derruba o banco fm_test_server no postgres local)
 	cd server && ../$(VENV)/bin/python -m pytest -q
@@ -64,8 +66,55 @@ test-edge: ## pytest do edge
 test-scripts: ## pytest dos scripts de operação
 	$(VENV)/bin/python -m pytest -q scripts/tests
 
+test-golden: ## Cenários de ouro (docs/scenarios) + casos da especificação de KPIs
+	$(VENV)/bin/python -m pytest -q docs/scenarios
+	cd server && FM_TEST_DB=$${FM_TEST_DB:-fm_test_golden} ../$(VENV)/bin/python -m pytest -q tests/test_kpi_spec_cases.py
+
 test-web: ## vitest
 	cd web && npx vitest run
 
 web-check: ## typecheck + build do frontend
 	cd web && npx tsc --noEmit && npx vite build
+
+# ── Operação: observabilidade, backup, MQTT (docs/operations.md) ─────────────
+monitoring: env ## Sobe Prometheus (:9090) + Grafana (:3000, painel FactoryConnect — Operação)
+	$(COMPOSE) --profile monitoring up -d prometheus grafana
+	@echo "✓ Grafana http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD, padrão admin) · Prometheus http://localhost:9090"
+
+test-infra: ## Testes de infra com docker: mosquitto prod (auth/ACL/TLS), Traefik/XFF, monitoring
+	$(VENV)/bin/python -m pytest -q infra/tests
+
+lint-infra: ## shellcheck + actionlint (via docker, versões fixas)
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 -S warning scripts/*.sh infra/mosquitto/prod/*.sh
+	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo rhysd/actionlint:1.7.7 -color
+
+BACKUP_DIR ?= ./backups
+backup: ## Backup do Postgres + Influx em $(BACKUP_DIR) (scripts/backup.sh; VPS: cron, ver docs/operations.md)
+	BACKUP_DIR="$(BACKUP_DIR)" scripts/backup.sh
+
+restore: ## Restaura um backup: make restore FILE=backups/fm-backup-....tar (DESTRUTIVO, pede confirmação)
+	@test -n "$(FILE)" || { echo "uso: make restore FILE=<arquivo>"; exit 2; }
+	@read -r -p "Substituir Postgres e Influx por $(FILE)? digite 'restaurar': " a && [ "$$a" = restaurar ]
+	RESTORE_CONFIRM=yes INFLUX_TOKEN="$${INFLUX_TOKEN:-$$(sed -n 's/^INFLUX_TOKEN=\([^[:space:]#]*\).*/\1/p' $(ENV_FILE))}" \
+	  scripts/restore.sh "$(FILE)"
+
+backup-restore-test: ## Backup → restore em containers NOVOS, conferindo linhas/pontos (origem sintética)
+	scripts/backup_restore_test.sh
+
+backup-restore-test-dev: ## Igual, mas fazendo backup da stack de dev rodando (só leitura nela)
+	BRT_SOURCE=dev scripts/backup_restore_test.sh
+
+MQTT_GATEWAYS_FILE ?= mqtt/gateways.conf
+mqtt-gateway-add: ## Cria credencial MQTT de gateway: make mqtt-gateway-add GATEWAY=gw-x TENANT=<uuid>
+	@test -n "$(GATEWAY)" -a -n "$(TENANT)" || { echo "uso: make mqtt-gateway-add GATEWAY=<nome> TENANT=<uuid>"; exit 2; }
+	MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh add "$(GATEWAY)" "$(TENANT)"
+
+mqtt-gateway-remove: ## Revoga credencial MQTT: make mqtt-gateway-remove GATEWAY=gw-x
+	@test -n "$(GATEWAY)" || { echo "uso: make mqtt-gateway-remove GATEWAY=<nome>"; exit 2; }
+	MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh remove "$(GATEWAY)"
+
+mqtt-gateway-list: ## Lista gateways com credencial MQTT
+	@MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh list
+
+mqtt-reload: ## Re-renderiza passwd/acl no fm_mosquitto de produção e recarrega (SIGHUP)
+	MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh reload

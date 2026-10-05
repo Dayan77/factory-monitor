@@ -174,10 +174,28 @@ class MachineOut(BaseModel):
     status: MachineStatus
     last_seen_at: Optional[datetime] = None
     ideal_cycle_time_s: Optional[float] = None
+    micro_stop_threshold_s: int = 120
+    fault_code_map: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+def _fault_map(v: Optional[dict]) -> Optional[dict]:
+    """{"101": "EQP-01"}: fault_state code (integer) → reason code suggested for that fault."""
+    if v is None:
+        return v
+    import re
+    out = {}
+    for k, code in v.items():
+        ks = str(k).strip()
+        if not re.fullmatch(r"-?\d{1,9}", ks):
+            raise ValueError(f"fault_code_map: chave {k!r} não é um código inteiro")
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z]{3}-\d{2}(-[A-Z0-9]{1,6})?", code):
+            raise ValueError(f"fault_code_map: motivo inválido {code!r}")
+        out[ks] = code
+    return out
 
 
 class MachineCreate(BaseModel):
@@ -186,6 +204,14 @@ class MachineCreate(BaseModel):
     model: Optional[str] = None
     serial_number: Optional[str] = None
     ideal_cycle_time_s: Optional[float] = Field(default=None, gt=0)
+    # domain.md §4.3 / kpis.md §1.8: configurable per machine, 30–300 s
+    micro_stop_threshold_s: int = Field(default=120, ge=30, le=300)
+    fault_code_map: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("fault_code_map")
+    @classmethod
+    def _fm(cls, v):
+        return _fault_map(v)
 
 
 class MachineUpdate(BaseModel):
@@ -195,6 +221,13 @@ class MachineUpdate(BaseModel):
     status: Optional[MachineStatus] = None
     line_id: Optional[str] = None
     ideal_cycle_time_s: Optional[float] = Field(default=None, gt=0)
+    micro_stop_threshold_s: Optional[int] = Field(default=None, ge=30, le=300)
+    fault_code_map: Optional[dict[str, str]] = None
+
+    @field_validator("fault_code_map")
+    @classmethod
+    def _fm(cls, v):
+        return _fault_map(v)
 
 
 # ── Tag ───────────────────────────────────────────────────────────

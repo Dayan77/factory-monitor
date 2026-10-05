@@ -2,14 +2,18 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { authApi } from "@/services/api";
 import {
-  applyMachineStatus, applyMachineStatusToTree, applyUsageToMachineUsage, applyUsageToPosition,
+  applyDowntimeToList, applyMachineStatus, applyMachineStatusToTree, applyUsageToMachineUsage, applyUsageToPosition,
   parseRealtimeMessage, realtimeSocketParams, reconnectActionFor,
 } from "@/services/realtime";
-import type { Machine, MachineUsage, PositionDetail, TreePlant, UsageMessage } from "@/services/types";
+import type {
+  DowntimeEvent, DowntimeMessage, DowntimeQuery, Machine, MachineUsage, PositionDetail, TreePlant, UsageMessage,
+} from "@/services/types";
 import { queryKeys } from "@/hooks/useAssets";
 import { useRealtimeStore } from "@/store/realtime";
 
 const RETRY_MS = 3000;
+/** KPI queries (overview, OEE, Pareto) are recomputed server-side; refetch at most this often on stop events. */
+const KPI_REFRESH_MS = 5000;
 
 /**
  * Opens the tenant's realtime WebSocket once (mounted in Layout).
@@ -17,6 +21,8 @@ const RETRY_MS = 3000;
  * - sensor readings go to the realtime store (dashboard / sensors page)
  * - machine_status updates patch every cached ["machines", ...] query and the plants tree in place
  * - usage deltas patch the cached machine usage / position detail (live counters)
+ * - downtime events patch cached ["downtime", query] lists in place (or refetch them when the
+ *   event is new) and schedule a throttled refresh of the KPI views (overview / OEE / Pareto)
  * - close 4401 (token expired/invalid): refresh the token through the API
  *   client (its 401 interceptor rotates it, or logs out) and reconnect
  * - close 4403 (token of another tenant): stop, never retry
@@ -31,6 +37,25 @@ export function useRealtimeConnection(tenantId: string | undefined) {
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let wasConnected = false;
+    let kpiTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function refreshKpisSoon() {
+      if (kpiTimer) return;
+      kpiTimer = setTimeout(() => {
+        kpiTimer = undefined;
+        void qc.invalidateQueries({ queryKey: ["efficiency"] });
+      }, KPI_REFRESH_MS);
+    }
+
+    function applyDowntime(msg: DowntimeMessage) {
+      for (const [key, data] of qc.getQueriesData<DowntimeEvent[]>({ queryKey: ["downtime"] })) {
+        const q = (key[1] ?? {}) as DowntimeQuery;
+        const next = applyDowntimeToList(data, q, msg);
+        if (next === "refetch") void qc.invalidateQueries({ queryKey: key, exact: true });
+        else if (next !== data) qc.setQueryData(key, next);
+      }
+      refreshKpisSoon();
+    }
 
     function scheduleRetry() {
       if (destroyed) return;
@@ -72,6 +97,8 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           void qc.invalidateQueries({ queryKey: queryKeys.tree });
           void qc.invalidateQueries({ queryKey: ["usage"] });
           void qc.invalidateQueries({ queryKey: ["positions"] });
+          void qc.invalidateQueries({ queryKey: ["downtime"] });
+          void qc.invalidateQueries({ queryKey: ["efficiency"] });
         }
         wasConnected = true;
       };
@@ -84,6 +111,8 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           pushReading({ tag_id: msg.tag_id, value: msg.value, unit: msg.unit, timestamp: msg.timestamp });
         } else if (msg.type === "usage") {
           applyUsage(msg);
+        } else if (msg.type === "downtime") {
+          applyDowntime(msg);
         } else {
           qc.setQueriesData<Machine[]>({ queryKey: ["machines"] }, (old) => applyMachineStatus(old, msg));
           qc.setQueryData<TreePlant[]>(queryKeys.tree, (old) => applyMachineStatusToTree(old, msg));
@@ -111,6 +140,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
     return () => {
       destroyed = true;
       clearTimeout(retry);
+      clearTimeout(kpiTimer);
       if (ws) {
         const sock = ws;
         sock.onclose = null;

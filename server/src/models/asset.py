@@ -34,6 +34,11 @@ class RemovalReason(str, enum.Enum):
 class Position(Base, TimestampMixin):
     """Localização funcional permanente na máquina (ISO 14224 maintainable item location)."""
     __tablename__ = "positions"
+    __table_args__ = (
+        # one tag is the counter of at most one position (C13: no double counting)
+        Index("uq_positions_counter_tag_id", "counter_tag_id", unique=True,
+              postgresql_where=text("counter_tag_id IS NOT NULL")),
+    )
 
     id:              Mapped[str]           = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     tenant_id:       Mapped[str]           = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)

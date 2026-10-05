@@ -328,6 +328,14 @@ class LeadCreate(BaseModel):
     website: Optional[str] = Field(default="", max_length=500)   # honeypot: must stay empty
     source: Optional[str] = Field(default=None, max_length=255)   # page/campaign
 
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Informe o nome.")
+        return v
+
     @field_validator("consent")
     @classmethod
     def _consent(cls, v: bool) -> bool:

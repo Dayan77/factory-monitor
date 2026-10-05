@@ -132,3 +132,34 @@ async def test_driver_retries_until_server_is_up(port, run_driver):
     await obj.add_variable(ua.NodeId(5001, idx), "T", 7.5)
     async with server:
         await col.wait_for(lambda items: ("t", 7.5) in items, timeout=15)
+
+
+async def test_source_timestamps_flag_the_initial_notification_of_each_item(opc_server):
+    """The first notification after subscribing carries the value's LAST CHANGE time (possibly hours old):
+    it is flagged `initial` so the gateway clock does not take it for clock skew (Sprint 3 QA)."""
+    idx = opc_server["idx"]
+    got: list[tuple[str, float, object, bool]] = []
+    ev = asyncio.Event()
+
+    async def on_reading(tag_id, value, ts, initial=False):
+        got.append((tag_id, value, ts, initial))
+        ev.set()
+
+    d = OpcUaDriver(opc_server["endpoint"], [OpcTagConfig("running", f"ns={idx};s=Running")], on_reading,
+                    publishing_interval_ms=50, reconnect_delay_s=0.2, source_timestamps=True)
+    task = asyncio.create_task(d.run())
+    try:
+        await asyncio.wait_for(ev.wait(), 10)
+        await opc_server["running"].write_value(True)
+        for _ in range(100):
+            if len(got) >= 2:
+                break
+            await asyncio.sleep(0.05)
+        assert [(t, v, i) for t, v, _ts, i in got[:2]] == [("running", 0.0, True), ("running", 1.0, False)]
+        assert got[1][2] is not None and got[1][2].tzinfo is not None
+    finally:
+        await d.stop()
+        try:
+            await asyncio.wait_for(task, 5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            task.cancel()

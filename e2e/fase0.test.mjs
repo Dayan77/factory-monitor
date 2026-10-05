@@ -68,44 +68,43 @@ test("login with the dev admin lands on the dashboard", async () => {
   await shot("01-dashboard-initial");
 });
 
-test("dashboard is not blank and live readings show sensor names, not UUIDs", async () => {
-  await page.getByRole("heading", { name: "Status das máquinas" }).waitFor({ timeout: 10_000 });
-  await page.getByText("OEE disponível na Fase 2").waitFor();
-
-  // Live readings arrive over the WebSocket; the simulator publishes every ~2 s.
-  const live = page.locator('section[aria-labelledby="dash-live"]');
-  await live.waitFor({ timeout: 20_000 });
-  await live.locator("li").first().waitFor({ timeout: 20_000 });
-  // give the tags query a moment to resolve names
-  await page.waitForFunction(
-    () => !document.querySelector('section[aria-labelledby="dash-live"]')?.textContent?.includes("Carregando"),
-    null, { timeout: 10_000 },
-  );
-  const items = await live.locator("li").allInnerTexts();
-  assert.ok(items.length > 0, "expected at least one live reading");
-  for (const t of items) {
-    assert.doesNotMatch(t, UUID_RE, `live reading shows a UUID: ${t}`);
-    assert.doesNotMatch(t, /Sensor não cadastrado/, `live reading for an unknown tag: ${t}`);
-  }
-
+// Sprint 3: /dashboard is the Raio-X (the old dashboard and its "Leituras ao Vivo" box were removed);
+// live readings are shown on /sensors ("Sensores ao Vivo"), labelled by tag name.
+test("Raio-X home is not blank, and /sensors shows live readings by name, not UUIDs", async () => {
+  await page.getByTestId("line-card").first().waitFor({ timeout: 20_000 });
   const body = await page.locator("main").innerText();
-  assert.ok(body.trim().length > 50, "dashboard main area looks blank");
-  assert.doesNotMatch(body, UUID_RE, "dashboard shows a raw UUID");
-  assert.doesNotMatch(body, /Não foi possível carregar/, "dashboard shows an error state");
-  await shot("02-dashboard-live");
+  assert.ok(body.trim().length > 50, "Raio-X main area looks blank");
+  assert.doesNotMatch(body, UUID_RE, "Raio-X shows a raw UUID");
+  assert.doesNotMatch(body, /Não foi possível carregar/, "Raio-X shows an error state");
+  await shot("02-raiox");
+
+  await page.goto(`${BASE}/sensors`);
+  await page.getByRole("heading", { name: "Sensores ao Vivo" }).waitFor({ timeout: 10_000 });
+  // the simulator publishes every ~2 s over MQTT → WebSocket
+  await page.locator("main p.font-mono").first().waitFor({ timeout: 20_000 });
+  // sensor NAMES (not the "PROTOCOL · address" line, whose MQTT address legitimately embeds an id)
+  const names = await page.locator("main p.text-sm.truncate").allInnerTexts();
+  assert.ok(names.length > 0, "no sensor names listed");
+  for (const n of names) assert.doesNotMatch(n, UUID_RE, `sensor/machine name is a raw UUID: ${n}`);
+  await shot("02-sensors-live");
 });
 
 test("machines page shows status 'Operando' while the simulator runs", async () => {
   await page.goto(`${BASE}/machines`);
-  const cards = page.getByTestId("machine-card");
-  await cards.first().waitFor({ timeout: 10_000 });
+  // only the machines the simulator feeds (its own line); the seeded virtual-plant machines are fed by the
+  // virtual plant, which may not be running. E2E_SIM_LINE="*" checks every card.
+  const simLine = process.env.E2E_SIM_LINE ?? "Linha Demo (Simulador)";
+  const all = page.getByTestId("machine-card");
+  await all.first().waitFor({ timeout: 10_000 });
+  const cards = simLine === "*" ? all : all.filter({ hasText: simLine });
   const n = await cards.count();
   assert.ok(n > 0, "no machine cards");
   // every machine fed by the simulator should be running within a few seconds
   await page.waitForFunction(
-    () => [...document.querySelectorAll('[data-testid="machine-card"]')]
+    (line) => [...document.querySelectorAll('[data-testid="machine-card"]')]
+      .filter((c) => line === "*" || c.textContent.includes(line))
       .every((c) => c.textContent.includes("Operando")),
-    null, { timeout: 20_000 },
+    simLine, { timeout: 20_000 },
   ).catch(() => {});
   const texts = await cards.allInnerTexts();
   const running = texts.filter((t) => t.includes("Operando"));

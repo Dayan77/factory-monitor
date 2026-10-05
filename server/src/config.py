@@ -75,6 +75,27 @@ class ServerSettings(BaseSettings):
     # WebSocket {type:'usage'} messages are coalesced and flushed at most once per interval.
     usage_ws_interval_s: float = 1.0
 
+    # Downtime detection / OEE (domain.md §4.3, kpis.md C22–C24)
+    # Stops separated by less than this much running are merged (C24a).
+    downtime_merge_gap_s: float = 10.0
+    # Extra wait after the merge gap before a stop is final (late readings of another tag).
+    downtime_finalize_delay_s: float = 5.0
+    # Detector pass interval and per-machine timeout; history read on a machine's first pass.
+    downtime_tick_s: float = 10.0
+    downtime_machine_timeout_s: float = 30.0
+    downtime_initial_lookback_h: float = 24.0
+    # Readings may reach InfluxDB out of order (the MQTT handler processes messages concurrently):
+    # the checkpoint only passes readings that were already visible this long ago. A reading that
+    # arrives later than this behind its own timestamp (gateway buffer flush, replay) is "late" and
+    # makes the detector rewind to an older snapshot and re-detect (idempotent).
+    downtime_settle_s: float = 30.0
+    # Detector snapshots (rewind points): at most one per interval, kept for the horizon. Late data
+    # older than the horizon is stored but not re-detected (logged).
+    downtime_snapshot_interval_s: float = 900.0
+    downtime_rewind_horizon_h: float = 168.0
+    # Lifespan shutdown waits at most this long for background / in-flight MQTT tasks.
+    shutdown_timeout_s: float = 5.0
+
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = ""
 

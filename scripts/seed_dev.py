@@ -151,7 +151,10 @@ async def seed_demo_plant(db, tenant_id: str, doc: dict) -> dict:
         line = await get_or_create(Line, {"tenant_id": tenant_id, "plant_id": plant.id, "name": ln["name"]}, {})
         for m in ln["machines"]:
             machine = await get_or_create(Machine, {"tenant_id": tenant_id, "line_id": line.id, "name": m["name"]},
-                                          {"model": m.get("model"), "serial_number": m.get("serial_number")})
+                                          {"model": m.get("model"), "serial_number": m.get("serial_number"),
+                                           "ideal_cycle_time_s": m.get("ideal_cycle_time_s")})
+            if machine.ideal_cycle_time_s is None and m.get("ideal_cycle_time_s"):
+                machine.ideal_cycle_time_s = m["ideal_cycle_time_s"]
             machines[(ln["name"], m["name"])] = machine
             for pos in m.get("positions", []):
                 ctype = ComponentType(COMPONENT_TYPE_ALIASES.get(pos["component_type"], pos["component_type"]))
@@ -195,6 +198,149 @@ async def seed_demo_plant(db, tenant_id: str, doc: dict) -> dict:
     await db.commit()
     stats["plant_id"] = plant.id
     stats["tags"] = len(key_to_tag)
+    return stats
+
+
+# ── Demo production calendar, products and fault → reason map (Fase 2) ───────
+# Source of truth: the virtual plant map (assets.plant.shifts, assets.products, machine.products,
+# machine.fault_code_map — written by `python -m edge.virtual_plant --write-map`). The constants below
+# are the fallback for a map without them.
+
+# 3 shifts Mon–Sat (0 = segunda … 5 = sábado), each with a 1 h meal and two 10 min coffee breaks.
+DEMO_SHIFTS = [
+    {"name": "Turno A", "start_local": "06:00", "end_local": "14:00", "weekdays": [0, 1, 2, 3, 4, 5],
+     "breaks": [{"start_local": "08:30", "end_local": "08:40"}, {"start_local": "10:30", "end_local": "11:30"},
+                {"start_local": "12:30", "end_local": "12:40"}]},
+    {"name": "Turno B", "start_local": "14:00", "end_local": "22:00", "weekdays": [0, 1, 2, 3, 4, 5],
+     "breaks": [{"start_local": "16:30", "end_local": "16:40"}, {"start_local": "18:00", "end_local": "19:00"},
+                {"start_local": "20:30", "end_local": "20:40"}]},
+    {"name": "Turno C", "start_local": "22:00", "end_local": "06:00", "weekdays": [0, 1, 2, 3, 4, 5],
+     "breaks": [{"start_local": "00:30", "end_local": "00:40"}, {"start_local": "02:00", "end_local": "03:00"},
+                {"start_local": "04:30", "end_local": "04:40"}]},
+]
+# fallback product per line (PRI = the machine's ideal_cycle_time_s)
+DEMO_LINE_PRODUCTS = {
+    "Linha de Usinagem": ("EIXO-20", "Eixo Ø20 mm"),
+    "Linha de Montagem": ("SUP-100", "Suporte soldado 100"),
+}
+# fault code hundreds → reason (domain.md §4.4), same bands as the map's fault_categories
+FAULT_BANDS = {1: "EQP-01", 2: "EQP-02", 3: "EQP-04", 4: "EQP-03", 5: "EQP-05"}
+
+
+def _fault_maps(doc: dict) -> dict:
+    """(line, machine) → {code: reason}: machine.fault_code_map, else the map's fault_codes (keyed by the
+    fault_state tag-key prefix) with their reason_code, else the code band."""
+    out = {}
+    for ln in doc["assets"]["lines"]:
+        for m in ln["machines"]:
+            if m.get("fault_code_map"):
+                out[(ln["name"], m["name"])] = {str(k): v for k, v in m["fault_code_map"].items()}
+    prefix_machine = {}
+    for t in doc.get("tags", []):
+        if t.get("semantic_role") == "fault_state" and t.get("key"):
+            prefix_machine[t["key"].rsplit(".", 1)[0]] = (t["line"], t["machine"])
+    for prefix, codes in (doc.get("fault_codes") or {}).items():
+        lm = prefix_machine.get(prefix)
+        if lm and lm not in out:
+            out[lm] = {str(c): (v.get("reason_code") if isinstance(v, dict) and v.get("reason_code")
+                                else FAULT_BANDS.get(int(c) // 100, "EQP-01")) for c, v in codes.items()}
+    return out
+
+
+def _machine_products(ln: dict, m: dict) -> list[dict]:
+    if m.get("products"):
+        return [{"product": p["product"], "ideal_cycle_time_s": p["ideal_cycle_time_s"],
+                 "parts_per_cycle": p.get("parts_per_cycle") or 1, "is_default": bool(p.get("is_default"))}
+                for p in m["products"]]
+    if ln["name"] in DEMO_LINE_PRODUCTS and m.get("ideal_cycle_time_s"):
+        return [{"product": DEMO_LINE_PRODUCTS[ln["name"]][0], "ideal_cycle_time_s": m["ideal_cycle_time_s"],
+                 "parts_per_cycle": 1, "is_default": True}]
+    return []
+
+
+async def seed_demo_production(db, tenant_id: str, doc: dict) -> dict:
+    """Shifts of the demo plant, products, PRI per (machine, product), the line bottleneck (slowest PRI of
+    the default product), fault → reason maps and an open production run (default product) per machine
+    that makes a single product. A machine whose PLC changes product (several products, `product_code` tag,
+    SET-01 setups in the virtual plant) gets NO seeded run: an open run of the default product would value
+    every hour after a product change with the wrong ideal cycle time and hide the "produto não informado"
+    warning (Sprint 3 review). Until product_code opens runs automatically (S3-3, Sprint 4), the operator
+    uses "Trocar produto" and the UI says when it is missing. Idempotent (matched by name / code). Commits."""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from src.models import Line, Machine, MachineProduct, Plant, Product, ProductionRun, Shift
+
+    stats = {"shifts": 0, "products": 0, "machine_products": 0, "runs": 0}
+    pdoc = doc["assets"]["plant"]
+    plant = (await db.execute(select(Plant).where(Plant.tenant_id == tenant_id,
+                                                  Plant.name == pdoc["name"]))).scalar_one()
+    for sd in pdoc.get("shifts") or DEMO_SHIFTS:
+        exists = (await db.execute(select(Shift.id).where(Shift.tenant_id == tenant_id, Shift.plant_id == plant.id,
+                                                          Shift.name == sd["name"]))).scalar_one_or_none()
+        if exists is None:
+            db.add(Shift(tenant_id=tenant_id, plant_id=plant.id, name=sd["name"], start_local=sd["start_local"],
+                         end_local=sd["end_local"], weekdays=list(sd.get("weekdays") or [0, 1, 2, 3, 4, 5]),
+                         is_active=True,
+                         breaks=[{"start_local": b["start_local"], "end_local": b["end_local"],
+                                  "reason_code": b.get("reason_code") or "PLN-01"} for b in sd.get("breaks", [])]))
+            stats["shifts"] += 1
+
+    names = {p["code"]: p["name"] for p in doc["assets"].get("products") or []}
+    names.update({c: n for c, n in DEMO_LINE_PRODUCTS.values() if c not in names})
+    products: dict = {}
+
+    async def product(code: str):
+        if code not in products:
+            row = (await db.execute(select(Product).where(Product.tenant_id == tenant_id,
+                                                          Product.code == code))).scalar_one_or_none()
+            if row is None:
+                row = Product(tenant_id=tenant_id, code=code, name=names.get(code, code))
+                db.add(row)
+                await db.flush()
+                stats["products"] += 1
+            products[code] = row
+        return products[code]
+
+    fault_maps = _fault_maps(doc)
+    now = datetime.now(timezone.utc)
+    for ln in doc["assets"]["lines"]:
+        line = (await db.execute(select(Line).where(Line.tenant_id == tenant_id, Line.plant_id == plant.id,
+                                                    Line.name == ln["name"]))).scalar_one()
+        slowest = None
+        for m in ln["machines"]:
+            machine = (await db.execute(select(Machine).where(Machine.tenant_id == tenant_id, Machine.line_id == line.id,
+                                                              Machine.name == m["name"]))).scalar_one()
+            if fault_maps.get((ln["name"], m["name"])) and not machine.fault_code_map:
+                machine.fault_code_map = fault_maps[(ln["name"], m["name"])]
+            default_pid = None
+            mp_docs = _machine_products(ln, m)
+            for mp_doc in mp_docs:
+                prod = await product(mp_doc["product"])
+                mp = (await db.execute(select(MachineProduct).where(
+                    MachineProduct.machine_id == machine.id, MachineProduct.product_id == prod.id))).scalar_one_or_none()
+                if mp is None:
+                    has_default = (await db.execute(select(MachineProduct.id).where(
+                        MachineProduct.machine_id == machine.id, MachineProduct.is_default.is_(True)))).scalar_one_or_none()
+                    mp = MachineProduct(tenant_id=tenant_id, machine_id=machine.id, product_id=prod.id,
+                                        ideal_cycle_time_s=float(mp_doc["ideal_cycle_time_s"]),
+                                        parts_per_cycle=int(mp_doc["parts_per_cycle"]),
+                                        is_default=mp_doc["is_default"] and has_default is None)
+                    db.add(mp)
+                    await db.flush()
+                    stats["machine_products"] += 1
+                if mp.is_default:
+                    default_pid = prod.id
+                    per_part = mp.ideal_cycle_time_s / max(1, mp.parts_per_cycle)
+                    if slowest is None or per_part > slowest[0]:
+                        slowest = (per_part, machine.id)
+            open_run = (await db.execute(select(ProductionRun.id).where(
+                ProductionRun.machine_id == machine.id, ProductionRun.ended_at.is_(None)))).scalar_one_or_none()
+            if open_run is None and default_pid is not None and len(mp_docs) == 1:
+                db.add(ProductionRun(tenant_id=tenant_id, machine_id=machine.id, product_id=default_pid, started_at=now))
+                stats["runs"] += 1
+        if slowest and line.bottleneck_machine_id is None:
+            line.bottleneck_machine_id = slowest[1]
+    await db.commit()
     return stats
 
 
@@ -259,6 +405,9 @@ async def seed() -> None:
             stats = await seed_demo_plant(db, demo.id, doc)
             print(f"✓  Planta demo '{doc['assets']['plant']['name']}': {stats['created']} criados, "
                   f"{stats['existing']} já existiam, {stats['tags']} tags.")
+            prod = await seed_demo_production(db, demo.id, doc)
+            print(f"✓  Produção: {prod['shifts']} turnos, {prod['products']} produtos, "
+                  f"{prod['machine_products']} tempos de ciclo, {prod['runs']} ordens abertas.")
             print("   Ids das tags no gateway: python -m edge.src.provision (grava edge/config/plant.local.json)")
 
     print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {_shown(SUPERADMIN_PASS)}")

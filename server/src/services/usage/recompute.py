@@ -8,8 +8,9 @@ incremental pipeline, using the *current* asset configuration (tag → position 
 install windows). Result: usage_totals + usage_buckets (+ the final tag_states).
 
 Bounded memory: history is streamed from Influx one tag × one window (USAGE_RECOMPUTE_WINDOW_H,
-default 24 h) at a time and folded into the accumulators immediately; only the totals and the
-hourly buckets are kept (they grow with hours × series, not with the number of readings).
+default 24 h) at a time, in chunks of at most CHUNK_ROWS readings, and each chunk is folded into the
+accumulators immediately; only the totals and the hourly buckets are kept (they grow with
+hours × series, not with the number of readings).
 
 `recompute_usage(..., apply=False)` only reports the differences (live processing keeps running;
 a reading processed during the dry run can show up as a transient difference). `apply=True`
@@ -173,36 +174,58 @@ async def first_timestamps(tenant_id: str, tag_ids: list[str], stop: datetime) -
     return out
 
 
-async def tag_readings(tenant_id: str, tag_id: str, start: datetime, stop: datetime
-                       ) -> list[tuple[datetime, float]]:
-    """Readings of one tag in [start, stop), sorted (a tag may span several Influx series)."""
+CHUNK_ROWS = 5000
+
+
+async def iter_tag_rows(tenant_id: str, tag_id: str, start: datetime, stop: datetime,
+                        chunk_rows: int = CHUNK_ROWS) -> AsyncIterator[list[tuple[datetime, float]]]:
+    """Readings of one tag in [start, stop), streamed from Influx in time order and yielded in chunks
+    of at most `chunk_rows`: memory is bounded by the chunk, whatever the tag's sampling rate.
+    (A tag may span several Influx series — unit/machine_id tags changed — so they are merged into
+    one table and sorted by Influx, not in Python.)"""
     tenant_id = ensure_uuid(tenant_id, "tenant_id")
     tag_id = ensure_uuid(tag_id, "tag_id")
     flux = _base(tenant_id, start, stop) + f"""
       |> filter(fn: (r) => r["tag_id"] == "{tag_id}")
       |> filter(fn: (r) => r["_field"] == "value")
+      |> group(columns: ["tag_id"])
+      |> sort(columns: ["_time"])
       |> keep(columns: ["_time", "_value"])
     """
-    rows = []
+    chunk: list[tuple[datetime, float]] = []
     async for rec in await influx._client.query_api().query_stream(flux, org=settings.influx_org):
-        rows.append((rec.get_time(), float(rec.get_value())))
-    rows.sort(key=lambda r: r[0])
-    return rows
+        chunk.append((rec.get_time(), float(rec.get_value())))
+        if len(chunk) >= chunk_rows:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+async def tag_readings(tenant_id: str, tag_id: str, start: datetime, stop: datetime
+                       ) -> list[tuple[datetime, float]]:
+    """All readings of one tag in [start, stop) as a list — small ranges only (tests, tools)."""
+    out: list[tuple[datetime, float]] = []
+    async for rows in iter_tag_rows(tenant_id, tag_id, start, stop):
+        out += rows
+    return out
 
 
 async def iter_tag_windows(tenant_id: str, tag_id: str, start: datetime, stop: datetime,
                            window: Optional[timedelta] = None,
-                           after: Optional[datetime] = None) -> AsyncIterator[list[tuple[datetime, float]]]:
-    """Yields the tag's readings window by window (each sorted). `after`: only ts > after."""
+                           after: Optional[datetime] = None,
+                           chunk_rows: int = CHUNK_ROWS) -> AsyncIterator[list[tuple[datetime, float]]]:
+    """Yields the tag's readings in time order, one Influx query per time window
+    (USAGE_RECOMPUTE_WINDOW_H) and at most `chunk_rows` readings per chunk. `after`: only ts > after."""
     window = window or timedelta(hours=settings.usage_recompute_window_h)
     cur = start
     while cur < stop:
         end = min(cur + window, stop)
-        rows = await tag_readings(tenant_id, tag_id, cur, end)
-        if after is not None:
-            rows = [r for r in rows if r[0] > after]
-        if rows:
-            yield rows
+        async for rows in iter_tag_rows(tenant_id, tag_id, cur, end, chunk_rows):
+            if after is not None:
+                rows = [r for r in rows if r[0] > after]
+            if rows:
+                yield rows
         cur = end
 
 

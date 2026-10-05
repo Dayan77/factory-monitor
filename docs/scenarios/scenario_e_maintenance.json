@@ -1,0 +1,1820 @@
+{
+ "id": "scenario_e_maintenance",
+ "title": "Cenário E (Sprint 4) — planos por ciclos/horas/partidas/calendário, ciclo de vida das OS, troca de componente, falhas por posição; % do intervalo, próxima data/uso, PMP, cumprimento, backlog, MTBF/MCBF/MTTR por posição/tipo/fabricante, MTTF por fabricante/modelo",
+ "spec_refs": [
+  "domain.md §1, §3.5, §5.1–5.5",
+  "domain.md 'Esclarecimentos de manutenção (Sprint 4)' S4-1..S4-12",
+  "kpis.md §2.1–2.5, §3.1–3.3, §4.1–4.2",
+  "kpis.md C16–C18"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus",
+  "utc_offset_h": -4
+ },
+ "evaluate_at": "2026-12-01T12:00:00Z",
+ "today_plant": "2026-12-01",
+ "config": {
+  "due_soon_at": 0.8,
+  "overdue_tolerance": 0.1,
+  "schedule_tolerance_days": 0,
+  "schedule_freeze": "segunda-feira 00:00 (local) da semana de scheduled_for"
+ },
+ "report_period": {
+  "month": "2026-11",
+  "start_utc": "2026-11-01T04:00:00Z",
+  "stop_utc": "2026-12-01T04:00:00Z"
+ },
+ "reliability_window": {
+  "start_utc": "2025-12-01T04:00:00Z",
+  "stop_utc": "2026-12-01T04:00:00Z"
+ },
+ "maintenance_capacity": {
+  "technicians": 1,
+  "hours_per_week_each": 44,
+  "planned_absence_hours": 4,
+  "weekly_capacity_hours": 40
+ },
+ "positions": [
+  {
+   "id": "POS-A1",
+   "name": "Cilindro A1",
+   "machine": "Estação de Fixação",
+   "component_type": "pneumatic_cylinder",
+   "usage_total_now": {
+    "cycles": 7540000
+   },
+   "usage_last_14_days": {
+    "cycles": 252000
+   },
+   "window_12m": {
+    "hours": 5200,
+    "cycles": 6000000
+   },
+   "hours_source": "run_state da máquina (C13)"
+  },
+  {
+   "id": "POS-A2",
+   "name": "Cilindro A2",
+   "machine": "Estação de Fixação",
+   "component_type": "pneumatic_cylinder",
+   "usage_total_now": {
+    "cycles": 9100000
+   },
+   "usage_last_14_days": {
+    "cycles": 252000
+   },
+   "window_12m": {
+    "hours": 5200,
+    "cycles": 6000000
+   },
+   "hours_source": "run_state da máquina (C13)"
+  },
+  {
+   "id": "POS-MOT",
+   "name": "Motor do transportador",
+   "machine": "Transportador de Saída",
+   "component_type": "electric_motor",
+   "usage_total_now": {
+    "hours": 45000,
+    "starts": 314600
+   },
+   "usage_last_14_days": {
+    "hours": 280,
+    "starts": 1680
+   },
+   "window_12m": {
+    "hours": 6800,
+    "cycles": null
+   },
+   "hours_source": "run_state da posição"
+  },
+  {
+   "id": "POS-AX1",
+   "name": "Eixo 1",
+   "machine": "Robô de Solda",
+   "component_type": "robot_axis",
+   "usage_total_now": {
+    "hours": 38150,
+    "cycles": 61000000
+   },
+   "usage_last_14_days": {
+    "hours": 224,
+    "cycles": 350000
+   },
+   "window_12m": {
+    "hours": 5600,
+    "cycles": 9000000
+   },
+   "hours_source": "run_state da máquina (C13)"
+  }
+ ],
+ "components": [
+  {
+   "id": "C-A3-0",
+   "position_id": "POS-A3",
+   "manufacturer": "Festo",
+   "model": "DSBC-50-100-PPVA-N3",
+   "serial_number": "VP-FIX-A3-0000",
+   "installed_at": "2023-09-01T12:00:00Z",
+   "removed_at": "2025-04-08T14:00:00Z",
+   "removal_reason": "failure",
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 8000000
+   },
+   "usage_since_install": {
+    "cycles": 3140000
+   },
+   "usage_in_window_12m": null
+  },
+  {
+   "id": "C-A4-0",
+   "position_id": "POS-A4",
+   "manufacturer": "Festo",
+   "model": "DSBC-50-100-PPVA-N3",
+   "serial_number": "VP-FIX-A4-0000",
+   "installed_at": "2023-09-01T12:00:00Z",
+   "removed_at": "2025-05-02T14:00:00Z",
+   "removal_reason": "preventive_replacement",
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 8000000
+   },
+   "usage_since_install": {
+    "cycles": 4000000
+   },
+   "usage_in_window_12m": null
+  },
+  {
+   "id": "C-A1-1",
+   "position_id": "POS-A1",
+   "manufacturer": "Festo",
+   "model": "DSBC-50-100-PPVA-N3",
+   "serial_number": "VP-FIX-A1-0001",
+   "installed_at": "2025-06-01T12:00:00Z",
+   "removed_at": "2026-03-10T15:30:00Z",
+   "removal_reason": "failure",
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 8000000
+   },
+   "usage_since_install": {
+    "cycles": 2600000,
+    "hours": 2250
+   },
+   "usage_in_window_12m": {
+    "cycles": 1600000,
+    "hours": 1400
+   }
+  },
+  {
+   "id": "C-A1-2",
+   "position_id": "POS-A1",
+   "manufacturer": "Festo",
+   "model": "DSBC-50-100-PPVA-N3",
+   "serial_number": "VP-FIX-A1-0002",
+   "installed_at": "2026-03-10T15:30:00Z",
+   "removed_at": "2026-11-12T19:00:00Z",
+   "removal_reason": "failure",
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 8000000
+   },
+   "usage_since_install": {
+    "cycles": 4060000,
+    "hours": 3500
+   },
+   "usage_in_window_12m": {
+    "cycles": 4060000,
+    "hours": 3500
+   }
+  },
+  {
+   "id": "C-A1-3",
+   "position_id": "POS-A1",
+   "manufacturer": "SMC",
+   "model": "CP96SDB50-100",
+   "serial_number": "SMC-A1-0001",
+   "installed_at": "2026-11-12T19:00:00Z",
+   "removed_at": null,
+   "removal_reason": null,
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 6000000
+   },
+   "usage_since_install": {
+    "cycles": 340000,
+    "hours": 300
+   },
+   "usage_in_window_12m": {
+    "cycles": 340000,
+    "hours": 300
+   }
+  },
+  {
+   "id": "C-A2-1",
+   "position_id": "POS-A2",
+   "manufacturer": "Festo",
+   "model": "DSBC-50-100-PPVA-N3",
+   "serial_number": "VP-FIX-A2-0001",
+   "installed_at": "2025-06-01T12:00:00Z",
+   "removed_at": "2026-05-20T19:00:00Z",
+   "removal_reason": "preventive_replacement",
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 8000000
+   },
+   "usage_since_install": {
+    "cycles": 5900000,
+    "hours": 5100
+   },
+   "usage_in_window_12m": {
+    "cycles": 2800000,
+    "hours": 2400
+   }
+  },
+  {
+   "id": "C-A2-2",
+   "position_id": "POS-A2",
+   "manufacturer": "SMC",
+   "model": "CP96SDB50-100",
+   "serial_number": "SMC-A2-0001",
+   "installed_at": "2026-05-20T19:00:00Z",
+   "removed_at": null,
+   "removal_reason": null,
+   "component_type": "pneumatic_cylinder",
+   "nominal_life": {
+    "cycles": 6000000
+   },
+   "usage_since_install": {
+    "cycles": 3200000,
+    "hours": 2800
+   },
+   "usage_in_window_12m": {
+    "cycles": 3200000,
+    "hours": 2800
+   }
+  },
+  {
+   "id": "M-0",
+   "position_id": "POS-MOT",
+   "manufacturer": "WEG",
+   "model": "W22 2 cv + redutor",
+   "serial_number": "WEG-0000",
+   "installed_at": "2020-03-01T12:00:00Z",
+   "removed_at": "2024-02-10T13:00:00Z",
+   "removal_reason": "failure",
+   "component_type": "electric_motor",
+   "nominal_life": {
+    "hours": 30000,
+    "starts": 200000
+   },
+   "usage_since_install": {
+    "hours": 23800,
+    "starts": 151000
+   },
+   "usage_in_window_12m": null
+  },
+  {
+   "id": "M-1",
+   "position_id": "POS-MOT",
+   "manufacturer": "WEG",
+   "model": "W22 2 cv + redutor",
+   "serial_number": "VP-TRP-MOT-0001",
+   "installed_at": "2024-02-10T13:00:00Z",
+   "removed_at": null,
+   "removal_reason": null,
+   "component_type": "electric_motor",
+   "nominal_life": {
+    "hours": 30000,
+    "starts": 200000
+   },
+   "usage_since_install": {
+    "hours": 21000,
+    "starts": 150000
+   },
+   "usage_in_window_12m": {
+    "hours": 6800
+   }
+  },
+  {
+   "id": "R-1",
+   "position_id": "POS-AX1",
+   "manufacturer": "ABB",
+   "model": "IRB 2600 — redutor eixo 1",
+   "serial_number": "VP-ROB-AX1-0001",
+   "installed_at": "2023-01-15T12:00:00Z",
+   "removed_at": null,
+   "removal_reason": null,
+   "component_type": "robot_axis",
+   "nominal_life": {
+    "hours": 20000
+   },
+   "usage_since_install": {
+    "hours": 17200
+   },
+   "usage_in_window_12m": {
+    "hours": 5600,
+    "cycles": 9000000
+   }
+  }
+ ],
+ "failures": [
+  {
+   "id": "F0",
+   "position_id": "POS-A1",
+   "component_id": "C-A1-1",
+   "failed_at": "2025-11-15T14:00:00Z",
+   "restored_at": "2025-11-15T15:00:00Z",
+   "severity": "critical",
+   "failure_mode": "ELP",
+   "detection_method": "production_interference",
+   "note": "antes da janela de 12 meses: não conta"
+  },
+  {
+   "id": "F1",
+   "position_id": "POS-A1",
+   "component_id": "C-A1-1",
+   "failed_at": "2026-03-10T14:00:00Z",
+   "restored_at": "2026-03-10T15:30:00Z",
+   "severity": "critical",
+   "failure_mode": "ELP",
+   "detection_method": "production_interference",
+   "note": "vazamento externo; cilindro trocado (C-A1-1 → C-A1-2)"
+  },
+  {
+   "id": "F2",
+   "position_id": "POS-A1",
+   "component_id": "C-A1-2",
+   "failed_at": "2026-07-22T16:00:00Z",
+   "restored_at": "2026-07-22T16:40:00Z",
+   "severity": "degraded",
+   "failure_mode": "PDE",
+   "detection_method": "continuous_condition_monitoring",
+   "note": "curso lento; amortecimento regulado, sem troca"
+  },
+  {
+   "id": "F3",
+   "position_id": "POS-A1",
+   "component_id": "C-A1-2",
+   "failed_at": "2026-09-10T13:00:00Z",
+   "restored_at": null,
+   "severity": "incipient",
+   "failure_mode": "PDE",
+   "detection_method": "continuous_condition_monitoring",
+   "note": "tempo de curso subindo; não conta em n"
+  },
+  {
+   "id": "F4",
+   "position_id": "POS-A1",
+   "component_id": "C-A1-2",
+   "failed_at": "2026-11-12T17:00:00Z",
+   "restored_at": "2026-11-12T19:00:00Z",
+   "severity": "critical",
+   "failure_mode": "ELP",
+   "detection_method": "production_interference",
+   "note": "vazamento externo; troca para SMC (OS-103)"
+  },
+  {
+   "id": "F5",
+   "position_id": "POS-A2",
+   "component_id": "C-A2-2",
+   "failed_at": "2026-08-05T13:00:00Z",
+   "restored_at": "2026-08-05T13:30:00Z",
+   "severity": "degraded",
+   "failure_mode": "INL",
+   "detection_method": "production_interference",
+   "note": "vazamento interno"
+  },
+  {
+   "id": "F6",
+   "position_id": "POS-MOT",
+   "component_id": "M-1",
+   "failed_at": "2026-02-14T18:00:00Z",
+   "restored_at": "2026-02-14T20:30:00Z",
+   "severity": "critical",
+   "failure_mode": "OHE",
+   "detection_method": "production_interference",
+   "note": "superaquecimento"
+  },
+  {
+   "id": "F7",
+   "position_id": "POS-MOT",
+   "component_id": "M-1",
+   "failed_at": "2026-11-20T15:00:00Z",
+   "restored_at": "2026-11-20T15:45:00Z",
+   "severity": "degraded",
+   "failure_mode": "UST",
+   "detection_method": "production_interference",
+   "note": "desarme por sobrecarga (OS-108)"
+  },
+  {
+   "id": "F8",
+   "position_id": "POS-AX1",
+   "component_id": "R-1",
+   "failed_at": "2026-06-03T14:00:00Z",
+   "restored_at": null,
+   "severity": "degraded",
+   "failure_mode": "PDE",
+   "detection_method": "periodic_maintenance",
+   "note": "folga no redutor encontrada em inspeção, sem parada: conta no MTBF, não no MTTR"
+  },
+  {
+   "id": "F9",
+   "position_id": "POS-AX1",
+   "component_id": "R-1",
+   "failed_at": "2026-11-26T13:00:00Z",
+   "restored_at": "2026-11-26T14:15:00Z",
+   "severity": "critical",
+   "failure_mode": "BRD",
+   "detection_method": "production_interference",
+   "note": "quebra do redutor (OS-109)"
+  }
+ ],
+ "plans": [
+  {
+   "id": "PL1",
+   "name": "Troca de vedações — Cilindro A1",
+   "anchor": "POS-A1",
+   "wo_type": "preventive",
+   "interval": {
+    "cycles": 2000000,
+    "days": 180
+   },
+   "reset_on_replacement": true,
+   "estimated_hours": 1.5,
+   "last_reset": {
+    "at": "2026-11-12T19:00:00Z",
+    "by": "OS-103 (troca de componente, S4-2)",
+    "position_usage": {
+     "cycles": 7200000
+    }
+   }
+  },
+  {
+   "id": "PL2",
+   "name": "Troca de vedações — Cilindro A2",
+   "anchor": "POS-A2",
+   "wo_type": "preventive",
+   "interval": {
+    "cycles": 2000000,
+    "days": 180
+   },
+   "reset_on_replacement": true,
+   "estimated_hours": 1.5,
+   "last_reset": {
+    "at": "2026-06-15T19:00:00Z",
+    "by": "OS-050 concluída",
+    "position_usage": {
+     "cycles": 7320000
+    }
+   }
+  },
+  {
+   "id": "PL3",
+   "name": "Lubrificação dos rolamentos — Motor do transportador",
+   "anchor": "POS-MOT",
+   "wo_type": "preventive",
+   "interval": {
+    "hours": 4000,
+    "starts": 30000,
+    "days": 365
+   },
+   "reset_on_replacement": true,
+   "estimated_hours": 1.0,
+   "last_reset": {
+    "at": "2026-04-20T18:00:00Z",
+    "by": "OS-061 concluída",
+    "position_usage": {
+     "hours": 41800,
+     "starts": 290000
+    }
+   }
+  },
+  {
+   "id": "PL4",
+   "name": "Troca de óleo do redutor — Eixo 1",
+   "anchor": "POS-AX1",
+   "wo_type": "preventive",
+   "interval": {
+    "hours": 5000,
+    "days": 365
+   },
+   "reset_on_replacement": true,
+   "estimated_hours": 6.0,
+   "last_reset": {
+    "at": "2025-12-20T14:00:00Z",
+    "by": "OS-020 concluída",
+    "position_usage": {
+     "hours": 33000
+    }
+   }
+  },
+  {
+   "id": "PL5",
+   "name": "Inspeção NR-12 da célula",
+   "anchor": "machine:Estação de Fixação",
+   "wo_type": "preventive",
+   "interval": {
+    "days": 30
+   },
+   "reset_on_replacement": false,
+   "estimated_hours": 2.0,
+   "last_reset": {
+    "at": "2026-11-03T14:00:00Z",
+    "by": "OS-101 concluída",
+    "position_usage": {}
+   }
+  },
+  {
+   "id": "PL6",
+   "name": "Limpeza do filtro regulador de ar — Estação",
+   "anchor": "machine:Estação de Fixação",
+   "wo_type": "preventive",
+   "interval": {
+    "days": 7
+   },
+   "reset_on_replacement": false,
+   "estimated_hours": 0.5,
+   "last_reset": {
+    "at": "2026-11-05T13:00:00Z",
+    "by": "OS-090 concluída",
+    "position_usage": {}
+   }
+  }
+ ],
+ "work_orders": [
+  {
+   "id": "OS-099",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL5",
+   "title": "Inspeção NR-12 da célula (outubro)",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 2.0,
+   "labor_hours": 2.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-10-30",
+   "scheduled_at": "2026-10-26T12:10:00Z",
+   "history": [
+    [
+     "draft",
+     "2026-10-24T12:00:00Z"
+    ],
+    [
+     "open",
+     "2026-10-26T12:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-10-26T12:05:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-10-26T12:10:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-10-30T12:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-10-30T14:00:00Z"
+    ],
+    [
+     "closed",
+     "2026-10-31T13:00:00Z"
+    ]
+   ],
+   "state": "closed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-101",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL5",
+   "title": "Inspeção NR-12 da célula",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 2.0,
+   "labor_hours": 2.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-03",
+   "scheduled_at": "2026-10-29T15:00:00Z",
+   "history": [
+    [
+     "draft",
+     "2026-10-28T12:00:00Z"
+    ],
+    [
+     "open",
+     "2026-10-29T14:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-10-29T14:05:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-10-29T15:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-03T12:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-03T14:00:00Z"
+    ],
+    [
+     "closed",
+     "2026-11-04T12:00:00Z"
+    ]
+   ],
+   "state": "closed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-103",
+   "type": "corrective",
+   "urgency": "emergency",
+   "plan_id": null,
+   "title": "Vazamento no Cilindro A1 — troca do cilindro",
+   "anchor": "POS-A1",
+   "estimated_hours": 2.0,
+   "labor_hours": 3.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "open",
+     "2026-11-12T17:05:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-12T17:20:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-12T19:00:00Z"
+    ],
+    [
+     "closed",
+     "2026-11-13T12:00:00Z"
+    ]
+   ],
+   "state": "closed",
+   "cancel_reason": null,
+   "failure_id": "F4",
+   "component_replacement": {
+    "removed": "C-A1-2",
+    "removal_reason": "failure",
+    "installed": "C-A1-3",
+    "at": "2026-11-12T19:00:00Z"
+   }
+  },
+  {
+   "id": "OS-104",
+   "type": "predictive",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Análise de vibração — motor do transportador",
+   "anchor": "POS-MOT",
+   "estimated_hours": 1.5,
+   "labor_hours": 1.5,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-10",
+   "scheduled_at": "2026-11-06T13:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-05T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-05T13:30:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-06T13:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-10T13:30:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-10T15:00:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-106",
+   "type": "corrective",
+   "urgency": "deferred",
+   "plan_id": null,
+   "title": "Trocar sensor de presença de peça",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 2.5,
+   "labor_hours": 2.5,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-18",
+   "scheduled_at": "2026-11-13T15:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-12T14:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-13T14:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-13T15:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-19T11:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-19T13:00:00Z"
+    ],
+    [
+     "closed",
+     "2026-11-19T20:00:00Z"
+    ]
+   ],
+   "state": "closed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-107",
+   "type": "improvement",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Proteção do cabo do eixo 1",
+   "anchor": "POS-AX1",
+   "estimated_hours": 4.0,
+   "labor_hours": 4.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-24",
+   "scheduled_at": "2026-11-20T12:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-18T14:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-19T14:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-20T12:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-24T17:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-24T21:00:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-108",
+   "type": "corrective",
+   "urgency": "emergency",
+   "plan_id": null,
+   "title": "Desarme por sobrecarga — motor do transportador",
+   "anchor": "POS-MOT",
+   "estimated_hours": 1.0,
+   "labor_hours": 1.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "open",
+     "2026-11-20T15:02:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-20T15:05:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-20T15:45:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": "F7",
+   "component_replacement": null
+  },
+  {
+   "id": "OS-109",
+   "type": "corrective",
+   "urgency": "emergency",
+   "plan_id": null,
+   "title": "Quebra do redutor — eixo 1",
+   "anchor": "POS-AX1",
+   "estimated_hours": 2.0,
+   "labor_hours": 2.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "open",
+     "2026-11-26T13:02:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-26T13:10:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-26T14:15:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": "F9",
+   "component_replacement": null
+  },
+  {
+   "id": "OS-110",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL4",
+   "title": "Troca de óleo do redutor — Eixo 1",
+   "anchor": "POS-AX1",
+   "estimated_hours": 6.0,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-28",
+   "scheduled_at": "2026-11-20T12:00:00Z",
+   "history": [
+    [
+     "draft",
+     "2026-10-20T10:00:00Z"
+    ],
+    [
+     "open",
+     "2026-11-16T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-16T13:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-20T12:00:00Z"
+    ]
+   ],
+   "state": "scheduled",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-111",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL3",
+   "title": "Lubrificação dos rolamentos — Motor do transportador",
+   "anchor": "POS-MOT",
+   "estimated_hours": 1.0,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "draft",
+     "2026-11-25T10:00:00Z"
+    ]
+   ],
+   "state": "draft",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-112",
+   "type": "corrective",
+   "urgency": "deferred",
+   "plan_id": null,
+   "title": "Vazamento de ar na linha principal",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 3.0,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "open",
+     "2026-11-26T18:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-27T13:00:00Z"
+    ]
+   ],
+   "state": "approved",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-113",
+   "type": "improvement",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Regulador de pressão dedicado na Estação",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 8.0,
+   "labor_hours": 2.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-16",
+   "scheduled_at": "2026-11-10T13:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-09T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-09T14:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-10T13:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-16T11:00:00Z"
+    ],
+    [
+     "on_hold",
+     "2026-11-16T13:00:00Z"
+    ]
+   ],
+   "state": "on_hold",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null,
+   "hold_reason": "aguardando peça (regulador) do fornecedor"
+  },
+  {
+   "id": "OS-114",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL2",
+   "title": "Troca de vedações — Cilindro A2",
+   "anchor": "POS-A2",
+   "estimated_hours": 1.5,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-12-03",
+   "scheduled_at": "2026-11-30T12:00:00Z",
+   "history": [
+    [
+     "draft",
+     "2026-11-14T10:00:00Z"
+    ],
+    [
+     "open",
+     "2026-11-30T12:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-30T12:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-30T12:00:00Z"
+    ]
+   ],
+   "state": "scheduled",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-115",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Inspeção semanal de vazamentos",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 1.0,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-05",
+   "scheduled_at": "2026-10-30T13:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-10-29T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-10-29T13:10:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-10-30T13:00:00Z"
+    ],
+    [
+     "cancelled",
+     "2026-11-04T12:00:00Z"
+    ]
+   ],
+   "state": "cancelled",
+   "cancel_reason": "superseded",
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-116",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL6",
+   "title": "Limpeza do filtro regulador de ar",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 0.5,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-12",
+   "scheduled_at": "2026-11-06T13:05:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-06T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-06T13:00:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-06T13:05:00Z"
+    ],
+    [
+     "cancelled",
+     "2026-11-12T14:00:00Z"
+    ]
+   ],
+   "state": "cancelled",
+   "cancel_reason": "production_conflict",
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-117",
+   "type": "predictive",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Termografia do painel elétrico da célula",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 2.0,
+   "labor_hours": 0.5,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-30",
+   "scheduled_at": "2026-11-26T12:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-25T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-25T13:30:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-26T12:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-30T19:00:00Z"
+    ]
+   ],
+   "state": "in_progress",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-118",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Lubrificação geral da célula",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 1.0,
+   "labor_hours": 1.0,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-17",
+   "scheduled_at": "2026-11-12T12:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-11T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-11T13:30:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-12T12:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-17T12:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-17T13:00:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-120",
+   "type": "predictive",
+   "urgency": null,
+   "plan_id": null,
+   "title": "Análise de óleo do redutor — eixo 1",
+   "anchor": "POS-AX1",
+   "estimated_hours": 0.5,
+   "labor_hours": 0.5,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-20",
+   "scheduled_at": "2026-11-13T12:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-12T13:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-12T13:30:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-13T12:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-20T12:30:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-20T13:00:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-121",
+   "type": "corrective",
+   "urgency": "deferred",
+   "plan_id": null,
+   "title": "Ajustar sensor de fim de curso do Cilindro A3",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 1.5,
+   "labor_hours": 1.5,
+   "remaining_hours": null,
+   "scheduled_for": "2026-11-26",
+   "scheduled_at": "2026-11-25T12:00:00Z",
+   "history": [
+    [
+     "open",
+     "2026-11-25T11:00:00Z"
+    ],
+    [
+     "approved",
+     "2026-11-25T11:30:00Z"
+    ],
+    [
+     "scheduled",
+     "2026-11-25T12:00:00Z"
+    ],
+    [
+     "in_progress",
+     "2026-11-26T17:00:00Z"
+    ],
+    [
+     "completed",
+     "2026-11-26T18:30:00Z"
+    ]
+   ],
+   "state": "completed",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-122",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL6",
+   "title": "Limpeza do filtro regulador de ar (nova OS do plano)",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 0.5,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "draft",
+     "2026-11-12T14:00:00Z"
+    ]
+   ],
+   "state": "draft",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  },
+  {
+   "id": "OS-123",
+   "type": "preventive",
+   "urgency": null,
+   "plan_id": "PL5",
+   "title": "Inspeção NR-12 da célula (dezembro)",
+   "anchor": "machine:Estação de Fixação",
+   "estimated_hours": 2.0,
+   "labor_hours": 0.0,
+   "remaining_hours": null,
+   "scheduled_for": null,
+   "scheduled_at": null,
+   "history": [
+    [
+     "draft",
+     "2026-11-27T10:00:00Z"
+    ]
+   ],
+   "state": "draft",
+   "cancel_reason": null,
+   "failure_id": null,
+   "component_replacement": null
+  }
+ ],
+ "rejected_transitions": [
+  {
+   "wo": "OS-111",
+   "from": "draft",
+   "to": "completed",
+   "http": 422,
+   "why": "pular aprovação/execução"
+  },
+  {
+   "wo": "OS-104",
+   "from": "completed",
+   "to": "in_progress",
+   "http": 422,
+   "why": "OS concluída não reabre (abrir nova OS)"
+  },
+  {
+   "wo": "OS-101",
+   "from": "closed",
+   "to": "cancelled",
+   "http": 422,
+   "why": "só antes de completed"
+  },
+  {
+   "wo": "OS-114",
+   "from": "open",
+   "to": "in_progress",
+   "http": 422,
+   "why": "atalho open → in_progress só para corretiva emergencial"
+  },
+  {
+   "wo": "OS-112",
+   "from": "approved",
+   "to": "cancelled",
+   "http": 422,
+   "why": "cancelar exige motivo",
+   "body": {
+    "cancel_reason": null
+   }
+  }
+ ],
+ "expected": {
+  "plans": {
+   "PL1": {
+    "since_maintenance": {
+     "cycles": 340000,
+     "days": 19
+    },
+    "consumed_by_trigger": {
+     "cycles": 0.17,
+     "days": 0.10555555555555556
+    },
+    "consumed": 0.17,
+    "consumed_trigger": "cycles",
+    "state": "ok",
+    "days_by_trigger": {
+     "cycles": 93,
+     "days": 161
+    },
+    "days_to_due": 93,
+    "due_trigger": "cycles",
+    "next_due_date": "2027-03-04",
+    "calendar_due_date": "2027-05-11",
+    "next_due_usage": {
+     "cycles": 9200000
+    },
+    "past_due": false
+   },
+   "PL2": {
+    "since_maintenance": {
+     "cycles": 1780000,
+     "days": 169
+    },
+    "consumed_by_trigger": {
+     "cycles": 0.89,
+     "days": 0.9388888888888889
+    },
+    "consumed": 0.9388888888888889,
+    "consumed_trigger": "days",
+    "state": "due_soon",
+    "days_by_trigger": {
+     "cycles": 13,
+     "days": 11
+    },
+    "days_to_due": 11,
+    "due_trigger": "days",
+    "next_due_date": "2026-12-12",
+    "calendar_due_date": "2026-12-12",
+    "next_due_usage": {
+     "cycles": 9320000
+    },
+    "past_due": false
+   },
+   "PL3": {
+    "since_maintenance": {
+     "hours": 3200,
+     "starts": 24600,
+     "days": 225
+    },
+    "consumed_by_trigger": {
+     "hours": 0.8,
+     "starts": 0.82,
+     "days": 0.6164383561643836
+    },
+    "consumed": 0.82,
+    "consumed_trigger": "starts",
+    "state": "due_soon",
+    "days_by_trigger": {
+     "hours": 40,
+     "starts": 45,
+     "days": 140
+    },
+    "days_to_due": 40,
+    "due_trigger": "hours",
+    "next_due_date": "2027-01-10",
+    "calendar_due_date": "2027-04-20",
+    "next_due_usage": {
+     "hours": 45800,
+     "starts": 320000
+    },
+    "past_due": false
+   },
+   "PL4": {
+    "since_maintenance": {
+     "hours": 5150,
+     "days": 346
+    },
+    "consumed_by_trigger": {
+     "hours": 1.03,
+     "days": 0.947945205479452
+    },
+    "consumed": 1.03,
+    "consumed_trigger": "hours",
+    "state": "due",
+    "days_by_trigger": {
+     "hours": 0,
+     "days": 19
+    },
+    "days_to_due": 0,
+    "due_trigger": "hours",
+    "next_due_date": "2026-12-01",
+    "calendar_due_date": "2026-12-20",
+    "next_due_usage": {
+     "hours": 38000
+    },
+    "past_due": true
+   },
+   "PL5": {
+    "since_maintenance": {
+     "days": 28
+    },
+    "consumed_by_trigger": {
+     "days": 0.9333333333333333
+    },
+    "consumed": 0.9333333333333333,
+    "consumed_trigger": "days",
+    "state": "due_soon",
+    "days_by_trigger": {
+     "days": 2
+    },
+    "days_to_due": 2,
+    "due_trigger": "days",
+    "next_due_date": "2026-12-03",
+    "calendar_due_date": "2026-12-03",
+    "next_due_usage": {},
+    "past_due": false
+   },
+   "PL6": {
+    "since_maintenance": {
+     "days": 26
+    },
+    "consumed_by_trigger": {
+     "days": 3.7142857142857144
+    },
+    "consumed": 3.7142857142857144,
+    "consumed_trigger": "days",
+    "state": "overdue",
+    "days_by_trigger": {
+     "days": 0
+    },
+    "days_to_due": 0,
+    "due_trigger": "days",
+    "next_due_date": "2026-12-01",
+    "calendar_due_date": "2026-11-12",
+    "next_due_usage": {},
+    "past_due": true
+   }
+  },
+  "components": {
+   "C-A1-3": {
+    "life_consumed_pct": 0.056666666666666664,
+    "life_measure": "cycles",
+    "life_by_measure": {
+     "cycles": 0.056666666666666664
+    },
+    "rul_days": 315,
+    "rul_measure": "cycles",
+    "projected_end_date": "2027-10-12",
+    "alert": null
+   },
+   "C-A2-2": {
+    "life_consumed_pct": 0.5333333333333333,
+    "life_measure": "cycles",
+    "life_by_measure": {
+     "cycles": 0.5333333333333333
+    },
+    "rul_days": 156,
+    "rul_measure": "cycles",
+    "projected_end_date": "2027-05-06",
+    "alert": null
+   },
+   "M-1": {
+    "life_consumed_pct": 0.75,
+    "life_measure": "starts",
+    "life_by_measure": {
+     "hours": 0.7,
+     "starts": 0.75
+    },
+    "rul_days": 417,
+    "rul_measure": "starts",
+    "projected_end_date": "2028-01-22",
+    "alert": null
+   },
+   "R-1": {
+    "life_consumed_pct": 0.86,
+    "life_measure": "hours",
+    "life_by_measure": {
+     "hours": 0.86
+    },
+    "rul_days": 175,
+    "rul_measure": "hours",
+    "projected_end_date": "2027-05-25",
+    "alert": "attention"
+   }
+  },
+  "reliability_by_position": {
+   "POS-A1": {
+    "n": 3,
+    "operating_hours": 5200,
+    "cycles": 6000000,
+    "mtbf_h": 1733.3333333333333,
+    "mcbf_cycles": 2000000.0,
+    "mttr_min": 83.33333333333333,
+    "restored": 3,
+    "reason": null,
+    "incipient": 1
+   },
+   "POS-A2": {
+    "n": 1,
+    "operating_hours": 5200,
+    "cycles": 6000000,
+    "mtbf_h": 5200.0,
+    "mcbf_cycles": 6000000.0,
+    "mttr_min": 30.0,
+    "restored": 1,
+    "reason": null,
+    "incipient": 0
+   },
+   "POS-MOT": {
+    "n": 2,
+    "operating_hours": 6800,
+    "cycles": null,
+    "mtbf_h": 3400.0,
+    "mcbf_cycles": null,
+    "mttr_min": 97.5,
+    "restored": 2,
+    "reason": null,
+    "incipient": 0
+   },
+   "POS-AX1": {
+    "n": 2,
+    "operating_hours": 5600,
+    "cycles": 9000000,
+    "mtbf_h": 2800.0,
+    "mcbf_cycles": 4500000.0,
+    "mttr_min": 75.0,
+    "restored": 1,
+    "reason": null,
+    "incipient": 0
+   }
+  },
+  "reliability_by_component_type": {
+   "pneumatic_cylinder": {
+    "n": 4,
+    "operating_hours": 10400,
+    "cycles": 12000000,
+    "mtbf_h": 2600.0,
+    "mcbf_cycles": 3000000.0,
+    "mttr_min": 70.0,
+    "restored": 4,
+    "reason": null
+   },
+   "electric_motor": {
+    "n": 2,
+    "operating_hours": 6800,
+    "cycles": null,
+    "mtbf_h": 3400.0,
+    "mcbf_cycles": null,
+    "mttr_min": 97.5,
+    "restored": 2,
+    "reason": null
+   },
+   "robot_axis": {
+    "n": 2,
+    "operating_hours": 5600,
+    "cycles": 9000000,
+    "mtbf_h": 2800.0,
+    "mcbf_cycles": 4500000.0,
+    "mttr_min": 75.0,
+    "restored": 1,
+    "reason": null
+   }
+  },
+  "reliability_by_manufacturer": {
+   "pneumatic_cylinder|Festo": {
+    "n": 3,
+    "operating_hours": 7300,
+    "cycles": 8460000,
+    "mtbf_h": 2433.3333333333335,
+    "mcbf_cycles": 2820000.0,
+    "mttr_min": 83.33333333333333,
+    "restored": 3,
+    "reason": null
+   },
+   "pneumatic_cylinder|SMC": {
+    "n": 1,
+    "operating_hours": 3100,
+    "cycles": 3540000,
+    "mtbf_h": 3100.0,
+    "mcbf_cycles": 3540000.0,
+    "mttr_min": 30.0,
+    "restored": 1,
+    "reason": null
+   }
+  },
+  "mttf_by_manufacturer_model": {
+   "ABB|IRB 2600 — redutor eixo 1": {
+    "measure": "hours",
+    "failures": 0,
+    "suspensions": 0,
+    "in_service": 1,
+    "mttf": null,
+    "reason": "no_failures"
+   },
+   "Festo|DSBC-50-100-PPVA-N3": {
+    "measure": "cycles",
+    "failures": 3,
+    "suspensions": 2,
+    "in_service": 0,
+    "mttf": 3266666.6666666665,
+    "reason": null
+   },
+   "SMC|CP96SDB50-100": {
+    "measure": "cycles",
+    "failures": 0,
+    "suspensions": 0,
+    "in_service": 2,
+    "mttf": null,
+    "reason": "no_failures"
+   },
+   "WEG|W22 2 cv + redutor": {
+    "measure": "hours",
+    "failures": 1,
+    "suspensions": 0,
+    "in_service": 1,
+    "mttf": 23800.0,
+    "reason": null
+   }
+  },
+  "pmp": {
+   "planned_h": 13.0,
+   "total_h": 19.0,
+   "unplanned_h": 6.0,
+   "pmp": 0.6842105263157895,
+   "work_orders": [
+    "OS-101",
+    "OS-103",
+    "OS-104",
+    "OS-106",
+    "OS-107",
+    "OS-108",
+    "OS-109",
+    "OS-118",
+    "OS-120",
+    "OS-121"
+   ]
+  },
+  "schedule_compliance": {
+   "scheduled": 10,
+   "on_time": 5,
+   "late": 1,
+   "not_done": 4,
+   "compliance": 0.5,
+   "denominator": [
+    "OS-101",
+    "OS-104",
+    "OS-106",
+    "OS-107",
+    "OS-110",
+    "OS-113",
+    "OS-116",
+    "OS-117",
+    "OS-118",
+    "OS-120"
+   ],
+   "on_time_ids": [
+    "OS-101",
+    "OS-104",
+    "OS-107",
+    "OS-118",
+    "OS-120"
+   ],
+   "late_ids": [
+    "OS-106"
+   ],
+   "not_done_ids": [
+    "OS-110",
+    "OS-113",
+    "OS-116",
+    "OS-117"
+   ],
+   "excluded": [
+    [
+     "OS-115",
+     "cancelled_superseded"
+    ],
+    [
+     "OS-121",
+     "scheduled_after_freeze"
+    ]
+   ]
+  },
+  "backlog": {
+   "count": 5,
+   "hours": 18.0,
+   "remaining_by_wo": {
+    "OS-110": 6.0,
+    "OS-112": 3.0,
+    "OS-113": 6.0,
+    "OS-114": 1.5,
+    "OS-117": 1.5
+   },
+   "weekly_capacity_hours": 40,
+   "weeks": 0.45,
+   "overdue_count": 3,
+   "overdue_hours": 13.5,
+   "overdue_ids": [
+    "OS-110",
+    "OS-113",
+    "OS-117"
+   ],
+   "drafts_not_in_backlog": [
+    "OS-111",
+    "OS-122",
+    "OS-123"
+   ]
+  },
+  "late_work_orders": [
+   "OS-110",
+   "OS-113",
+   "OS-117"
+  ],
+  "after_replacement_os103": {
+   "removed": {
+    "id": "C-A1-2",
+    "removed_at": "2026-11-12T19:00:00Z",
+    "position_id": null,
+    "removal_reason": "failure",
+    "usage_since_install": {
+     "cycles": 4060000,
+     "hours": 3500
+    }
+   },
+   "installed": {
+    "id": "C-A1-3",
+    "installed_at": "2026-11-12T19:00:00Z",
+    "usage_since_install": {
+     "cycles": 0
+    }
+   },
+   "position_usage_total_cycles": 7200000,
+   "plans_reset": [
+    "PL1"
+   ],
+   "plans_not_reset": [
+    "PL5",
+    "PL6"
+   ]
+  },
+  "wrong_answers": {
+   "pmp_counting_open_wo_labor": {
+    "value": 0.7209302325581395,
+    "why": "somou horas de OS não concluídas (OS-113, OS-117)"
+   },
+   "compliance_counting_break_in": {
+    "value": 0.5454545454545454,
+    "why": "contou OS-121, programada depois do congelamento da semana (entrou no denominador e no prazo)"
+   },
+   "compliance_counting_superseded": {
+    "value": 0.45454545454545453,
+    "why": "contou OS-115, cancelada como 'superseded', como não cumprida"
+   },
+   "backlog_with_estimates_only": {
+    "hours": 20.5,
+    "why": "estimativa cheia em vez do restante (OS-113, OS-117)"
+   },
+   "backlog_with_drafts": {
+    "hours": 21.5,
+    "why": "rascunhos automáticos ainda não aprovados não são backlog"
+   },
+   "mtbf_a1_with_incipient": {
+    "value": 1300.0
+   },
+   "mttr_ax1_with_unrestored_as_zero": {
+    "value": 37.5,
+    "why": "falha achada em inspeção não tem tempo de restabelecimento"
+   },
+   "mttf_festo_counting_suspensions": {
+    "value": 3940000.0,
+    "why": "suspensões (trocas preventivas) não são falhas"
+   },
+   "pl3_trigger_by_max_consumed_date": {
+    "date": "2027-01-15",
+    "why": "a data é a mais cedo entre os gatilhos, não a do gatilho de maior %"
+   }
+  }
+ }
+}

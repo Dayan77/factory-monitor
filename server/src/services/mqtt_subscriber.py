@@ -16,6 +16,8 @@ from ..db import AsyncSessionLocal
 from ..services.influx import influx
 from ..services.payload_crypto import PayloadError, decode_payload, key_error
 from ..services.machine_status import broadcast_change, mark_seen
+from ..services.oee.detector import note_late
+from ..services.metrics import MQTT_LAG, MQTT_MESSAGES
 from ..services.validation import InvalidIdentifier, ensure_uuid
 from ..services.usage.broadcaster import usage_broadcaster
 from ..services.usage.processor import process_reading
@@ -43,6 +45,16 @@ INFLIGHT = Gauge("fm_mqtt_inflight_messages", "MQTT readings received and not ye
 BACKLOG_WARN = 1000
 _backlog = {"n": 0, "warned_at": 0.0}
 _slots: Optional[asyncio.Semaphore] = None
+# In-flight reading tasks (strong references: asyncio keeps only weak ones) — cancelled on shutdown.
+_inflight: set[asyncio.Task] = set()
+
+
+def cancel_inflight() -> list[asyncio.Task]:
+    """Cancels every reading still being processed; returns them so the caller can wait (bounded)."""
+    tasks = [t for t in _inflight if not t.done()]
+    for t in tasks:
+        t.cancel()
+    return tasks
 
 
 def _processing_slots() -> asyncio.Semaphore:
@@ -98,19 +110,41 @@ async def run_subscriber() -> None:
                 log.info("mqtt.connected", broker=settings.mqtt_broker_host)
                 await client.subscribe(TOPIC)
                 log.info("mqtt.subscribed", topic=TOPIC)
+                # a cancellation delivered while connecting can be swallowed by the client library:
+                # the task is still marked as cancelling, so stop instead of serving forever
+                if _cancelling():
+                    raise asyncio.CancelledError()
 
                 async for message in client.messages:
-                    # Fire-and-forget — never let a slow handler block message delivery
-                    asyncio.create_task(
-                        _tracked(_handle_message(str(message.topic), bytes(message.payload)))
+                    if _cancelling():
+                        raise asyncio.CancelledError()
+                    # Fire-and-forget — never let a slow handler block message delivery.
+                    # Kept in _inflight so shutdown can cancel them (cancel_inflight()).
+                    task = asyncio.create_task(
+                        _tracked(_handle_message(str(message.topic), bytes(message.payload))),
+                        name="mqtt_reading",
                     )
+                    _inflight.add(task)
+                    task.add_done_callback(_inflight.discard)
 
         except aiomqtt.MqttError as e:
+            # aiomqtt turns a cancellation during message iteration into MqttError("Disconnected
+            # during message iteration"): treating it as a disconnect made the task reconnect forever
+            # and uvicorn hang on shutdown (Sprint 2 review). A cancelled task stops here.
+            if _cancelling():
+                raise asyncio.CancelledError() from e
             log.warning("mqtt.disconnected", error=str(e))
             await asyncio.sleep(5)
         except Exception as e:
+            if _cancelling():
+                raise asyncio.CancelledError() from e
             log.error("mqtt.subscriber.error", error=str(e))
             await asyncio.sleep(5)
+
+
+def _cancelling() -> bool:
+    task = asyncio.current_task()
+    return bool(task is not None and task.cancelling())
 
 
 async def _tracked(coro) -> None:
@@ -144,12 +178,14 @@ async def _handle_message(topic: str, raw: bytes, received_at: Optional[datetime
     received_at = received_at or datetime.now(timezone.utc)
     parts = topic.split("/")
     if len(parts) < 4:
+        MQTT_MESSAGES.labels("invalid").inc()
         return
     try:
         tenant_id = ensure_uuid(parts[1], "tenant_id")
         tag_id    = ensure_uuid(parts[3], "tag_id")
     except InvalidIdentifier:
         log.warning("mqtt.invalid_topic", topic=topic[:200])
+        MQTT_MESSAGES.labels("invalid").inc()
         return
     entry = _tag_locks.get(tag_id)
     if entry is None:
@@ -173,8 +209,14 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
             data = decode_payload(topic, raw, settings.encryption_key, settings.mqtt_require_encryption)
         except PayloadError as e:
             log.warning("mqtt.payload_rejected", topic=topic[:200], reason=str(e))
+            MQTT_MESSAGES.labels("invalid").inc()
             return
-        value = float(data["value"])
+        try:
+            value = float(data["value"])
+        except (KeyError, TypeError, ValueError):
+            log.warning("mqtt.payload_rejected", topic=topic[:200], reason="value")
+            MQTT_MESSAGES.labels("invalid").inc()
+            return
         unit  = data.get("unit")
         ts    = parse_source_ts(data.get("ts"), received_at)
         replayed = received_at - ts > replay_threshold()
@@ -185,8 +227,10 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
                 tag = await asyncio.wait_for(topology_cache.tag_info(db, tenant_id, tag_id), timeout=5.0)
         except Exception as e:  # noqa: BLE001
             log.warning("mqtt.tag_lookup.error", topic=topic, error=str(e))
+            MQTT_MESSAGES.labels("error").inc()
             return
         if tag is None:
+            MQTT_MESSAGES.labels("rejected").inc()
             if tag_id not in _rejected_logged and len(_rejected_logged) < 10_000:
                 _rejected_logged.add(tag_id)
                 log.warning("mqtt.rejected_unknown_tag", tenant_id=tenant_id[:8], tag_id=tag_id[:8])
@@ -218,6 +262,12 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
             log.warning("mqtt.influx.timeout", topic=topic)
         except Exception as e:
             log.warning("mqtt.influx.error", topic=topic, error=str(e))
+        else:
+            # a detector signal written well after its own timestamp (gateway buffer flush, replay,
+            # backlog): the downtime detector may already have passed it → rewind (detector.py)
+            if (tag.machine_id and tag.role in USAGE_ROLES
+                    and (received_at - ts).total_seconds() > settings.downtime_settle_s):
+                note_late(tenant_id, tag.machine_id, ts)
 
         # 3. Machine status derived from data (last_seen_at + running)
         try:
@@ -255,6 +305,7 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
         # 5. Evaluate alert rules (with timeout) — live data only
         if replayed:
             log.debug("mqtt.alerts.skipped_replay", tag_id=tag_id[:8], ts=ts.isoformat())
+            MQTT_MESSAGES.labels("ok").inc()
             return
         try:
             async with AsyncSessionLocal() as db:
@@ -266,6 +317,9 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
             log.warning("mqtt.alerts.timeout", topic=topic)
         except Exception as e:
             log.warning("mqtt.alerts.error", topic=topic, error=str(e))
+        MQTT_MESSAGES.labels("ok").inc()
+        MQTT_LAG.observe(max((datetime.now(timezone.utc) - ts).total_seconds(), 0.0))
 
     except Exception as e:
+        MQTT_MESSAGES.labels("error").inc()
         log.exception("mqtt.message.error", topic=topic, error=str(e))

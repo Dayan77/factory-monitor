@@ -2,88 +2,112 @@ import { NavLink, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { useAuthStore } from "@/store/auth";
 
-const NAV = [
-  {
-    label: "Dashboard",
-    to: "/dashboard",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
-        <rect x="3" y="3" width="7" height="7" rx="1" />
-        <rect x="14" y="3" width="7" height="7" rx="1" />
-        <rect x="3" y="14" width="7" height="7" rx="1" />
-        <rect x="14" y="14" width="7" height="7" rx="1" />
+const ICON_RAIOX = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M12 12l4-4" /><path d="M12 3v2M21 12h-2M12 21v-2M3 12h2" />
       </svg>
-    ),
-  },
-  {
-    label: "Fábrica",
-    to: "/factory",
-    icon: (
+    );
+const ICON_OEE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M3 3v18h18" /><path d="m7 15 4-4 3 3 5-6" />
+      </svg>
+    );
+const ICON_TIMELINE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M3 6h7M13 6h8M3 12h4M10 12h11M3 18h10M16 18h5" />
+      </svg>
+    );
+const ICON_STOPS = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="4" y="4" width="16" height="16" rx="3" /><path d="M10 9v6M14 9v6" />
+      </svg>
+    );
+const ICON_REPORT = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M6 2h9l5 5v15H6z" /><path d="M14 2v6h6M9 13h8M9 17h5" />
+      </svg>
+    );
+const ICON_SETTINGS = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+      </svg>
+    );
+const ICON_FACTORY = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M2 20h20M4 20V9l5 3V9l5 3V5h4l1 15" />
         <path d="M8 16h1M12 16h1M16 16h1" />
       </svg>
-    ),
-  },
-  {
-    label: "Linhas",
-    to: "/lines",
-    icon: (
+    );
+const ICON_LINES = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M3 6h18M3 12h18M3 18h18" />
       </svg>
-    ),
-  },
-  {
-    label: "Máquinas",
-    to: "/machines",
-    icon: (
+    );
+const ICON_MACHINES = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <rect x="4" y="4" width="16" height="16" rx="2" />
         <path d="M9 9h6v6H9z" />
         <path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" />
       </svg>
-    ),
-  },
-  {
-    label: "Sensores",
-    to: "/sensors",
-    icon: (
+    );
+const ICON_SENSORS = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
       </svg>
-    ),
-  },
-  {
-    label: "Câmeras",
-    to: "/cameras",
-    icon: (
+    );
+const ICON_CAMERAS = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.87v6.26a1 1 0 0 1-1.447.899L15 14" />
         <rect x="2" y="6" width="13" height="12" rx="2" />
       </svg>
-    ),
-  },
-  {
-    label: "Alertas",
-    to: "/alerts",
-    icon: (
+    );
+const ICON_ALERTS = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
-    ),
-  },
-  {
-    label: "IA & Chat",
-    to: "/ai",
-    icon: (
+    );
+const ICON_AI = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         <path d="M8 10h8M8 14h5" />
       </svg>
-    ),
+    );
+
+interface NavItem { label: string; to: string; icon: JSX.Element }
+
+const NAV: { section: string; items: NavItem[] }[] = [
+  {
+    section: "Eficiência",
+    items: [
+      { label: "Raio-X", to: "/dashboard", icon: ICON_RAIOX },
+      { label: "OEE", to: "/oee", icon: ICON_OEE },
+      { label: "Linha do tempo", to: "/timeline", icon: ICON_TIMELINE },
+      { label: "Paradas", to: "/stops", icon: ICON_STOPS },
+      { label: "Relatório de turno", to: "/reports/shift", icon: ICON_REPORT },
+    ],
+  },
+  {
+    section: "Ativos",
+    items: [
+      { label: "Fábrica", to: "/factory", icon: ICON_FACTORY },
+      { label: "Linhas", to: "/lines", icon: ICON_LINES },
+      { label: "Máquinas", to: "/machines", icon: ICON_MACHINES },
+    ],
+  },
+  {
+    section: "Monitoramento",
+    items: [
+      { label: "Sensores", to: "/sensors", icon: ICON_SENSORS },
+      { label: "Câmeras", to: "/cameras", icon: ICON_CAMERAS },
+      { label: "Alertas", to: "/alerts", icon: ICON_ALERTS },
+      { label: "IA & Chat", to: "/ai", icon: ICON_AI },
+    ],
+  },
+  {
+    section: "Sistema",
+    items: [{ label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS }],
   },
 ];
 
@@ -160,14 +184,17 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav aria-label="Principal" className="flex-1 space-y-0.5 overflow-y-auto p-3">
-        {NAV.map((item) => (
+        {NAV.map((group) => (
+          <div key={group.section} className="pb-2">
+            <p className="px-3 pb-1 pt-2 text-overline uppercase text-fg-subtle">{group.section}</p>
+            {group.items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             onClick={onClose}
             className={({ isActive }) =>
               clsx(
-                "flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-150",
+                "flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-150",
                 isActive
                   ? "bg-accent/15 text-ok"
                   : "text-fg-muted hover:bg-surface-2 hover:text-fg"
@@ -177,6 +204,8 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
             {item.icon}
             {item.label}
           </NavLink>
+            ))}
+          </div>
         ))}
 
         {user?.role === "superadmin" && (

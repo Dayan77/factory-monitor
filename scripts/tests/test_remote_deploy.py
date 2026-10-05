@@ -15,6 +15,7 @@ SCRIPT = Path(__file__).resolve().parent.parent / "remote_deploy.sh"
 
 DOCKER_STUB = """#!/usr/bin/env bash
 echo "docker $*" >> "$CALLS"
+if [ "$1" = "inspect" ] && [ "${FAKE_PG_RUNNING:-0}" = 1 ]; then echo true; exit 0; fi
 if [ "$1" = "exec" ]; then
   # healthcheck: FAKE_HEALTH=ok | fail | rollback_ok (falha até o rollback)
   case "$FAKE_HEALTH" in
@@ -25,6 +26,10 @@ if [ "$1" = "exec" ]; then
 fi
 exit 0
 """
+
+
+GOOD_ENV = ("X=1\nMQTT_USERNAME=fm-backend   # backend\nMQTT_PASSWORD=0123456789abcdef0123\n"
+            "MQTT_TLS_ENABLED=false\n")
 
 
 def _git(cwd, *args):
@@ -50,7 +55,10 @@ def env(tmp_path):
     (work / "a.txt").write_text("v1")
     _git(work, "add", "."); _git(work, "commit", "-qm", "v1"); _git(work, "push", "-q", "origin", "HEAD:main")
     _git(tmp_path, "clone", "-q", "-b", "main", str(origin), str(app))
-    (app / ".env").write_text("X=1\n")
+    (app / ".env").write_text(GOOD_ENV)
+    (app / "mqtt").mkdir()
+    (app / "mqtt" / "gateways.conf").write_text(
+        "# gateways\ngw-a 11111111-1111-4111-8111-111111111111 $7$101$abc\n")
     v1 = _rev(app)
     (work / "a.txt").write_text("v2")
     _git(work, "commit", "-qam", "v2"); _git(work, "push", "-q", "origin", "HEAD:main")
@@ -108,6 +116,52 @@ def test_missing_env_file_aborts_before_touching_anything(env):
     assert _rev(env["app"]) == env["v1"]
 
 
+def _assert_aborted_before_build(env, proc, *msgs):
+    assert proc.returncode == 1
+    for m in msgs:
+        assert m in proc.stderr, proc.stderr
+    calls = env["calls"].read_text()
+    assert " build " not in calls and "alembic" not in calls and " up -d" not in calls
+    assert _rev(env["app"]) == env["v1"], "código deve voltar ao commit anterior"
+
+
+def test_missing_mqtt_credentials_abort_before_build(env):
+    (env["app"] / ".env").write_text("X=1\nMQTT_USERNAME=\nMQTT_PASSWORD=short\n")
+    proc = _run(env, "ok")
+    _assert_aborted_before_build(env, proc, "MQTT_USERNAME ausente", "MQTT_PASSWORD", "§6.4")
+
+
+def test_no_gateway_credentials_abort_unless_explicitly_allowed(env):
+    (env["app"] / "mqtt" / "gateways.conf").write_text("# vazio\n\n")
+    proc = _run(env, "ok")
+    _assert_aborted_before_build(env, proc, "nenhum gateway")
+    with (env["app"] / ".env").open("a") as f:
+        f.write("MQTT_ALLOW_NO_GATEWAYS=1\n")
+    env["calls"].write_text("")
+    proc = _run(env, "ok")
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_tls_enabled_without_certificate_aborts(env):
+    with (env["app"] / ".env").open("a") as f:
+        f.write('MQTT_TLS_ENABLED="true"\n')
+    proc = _run(env, "ok")
+    _assert_aborted_before_build(env, proc, "fullchain.pem", "privkey.pem")
+    certs = env["app"] / "mqtt" / "certs"
+    certs.mkdir()
+    (certs / "fullchain.pem").write_text("x")
+    (certs / "privkey.pem").write_text("x")
+    env["calls"].write_text("")
+    assert _run(env, "ok").returncode == 0
+
+
+def test_preflight_validates_the_compose_file(env):
+    proc = _run(env, "ok")
+    assert proc.returncode == 0, proc.stderr
+    joined = env["calls"].read_text()
+    assert joined.index("config -q") < joined.index(" build server web")
+
+
 def test_non_fast_forward_aborts(env):
     # alteração local commitada no VPS que diverge do origin → não deploya
     (env["app"] / "a.txt").write_text("local")
@@ -115,3 +169,49 @@ def test_non_fast_forward_aborts(env):
     proc = _run(env, "ok")
     assert proc.returncode != 0
     assert "build" not in env["calls"].read_text()
+
+
+def _add_backup_script(e, body):
+    """Commita um scripts/backup.sh falso na v2 (o deploy roda o da versão nova)."""
+    work = e["app"].parent / "work"
+    (work / "scripts").mkdir(exist_ok=True)
+    f = work / "scripts" / "backup.sh"
+    f.write_text(body)
+    f.chmod(0o755)
+    _git(work, "add", ".")
+    _git(work, "commit", "-qm", "backup")
+    _git(work, "push", "-q", "origin", "HEAD:main")
+    e["v2"] = _rev(work)
+
+
+def test_pre_deploy_backup_runs_before_migrations(env):
+    marker = env["app"].parent / "backup.called"
+    _add_backup_script(env, f'#!/bin/sh\necho "$BACKUP_DIR $BACKUP_SKIP_INFLUX" > {marker}\necho "docker BACKUP" >> "$CALLS"\n')
+    proc = subprocess.run(["bash", str(SCRIPT), env["v2"], str(env["app"])],
+                          env={**env["env"], "FAKE_HEALTH": "ok", "FAKE_PG_RUNNING": "1"},
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert marker.read_text().split() == [f"{env['app']}/backups/pre-deploy", "1"]
+    calls = env["calls"].read_text()
+    assert calls.index("docker BACKUP") < calls.index("alembic upgrade head")
+
+
+def test_failed_pre_deploy_backup_aborts_before_migrations(env):
+    _add_backup_script(env, "#!/bin/sh\nexit 1\n")
+    proc = subprocess.run(["bash", str(SCRIPT), env["v2"], str(env["app"])],
+                          env={**env["env"], "FAKE_HEALTH": "ok", "FAKE_PG_RUNNING": "1"},
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 1
+    assert "backup pré-deploy falhou" in proc.stderr
+    assert "alembic" not in env["calls"].read_text()
+    assert _rev(env["app"]) == env["v1"], "código deve voltar ao commit anterior"
+
+
+def test_pre_deploy_backup_can_be_skipped(env):
+    marker = env["app"].parent / "backup.called"
+    _add_backup_script(env, f"#!/bin/sh\ntouch {marker}\n")
+    proc = subprocess.run(["bash", str(SCRIPT), env["v2"], str(env["app"])],
+                          env={**env["env"], "FAKE_HEALTH": "ok", "FAKE_PG_RUNNING": "1", "PRE_DEPLOY_BACKUP": "0"},
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert not marker.exists()

@@ -11,6 +11,10 @@ describe("apiErrorMessage", () => {
   it("uses a string detail", () => {
     expect(apiErrorMessage(axiosErr({ detail: "Slug já existe" }), "x")).toBe("Slug já existe");
   });
+  it("uses the message of a structured detail (S3-4 PLN-03 → MNT-02)", () => {
+    expect(apiErrorMessage(axiosErr({ detail: { message: "Use MNT-02", suggested_reason_code: "MNT-02" } }), "x"))
+      .toBe("Use MNT-02");
+  });
   it("joins validation messages", () => {
     expect(apiErrorMessage(axiosErr({ detail: [{ msg: "a" }, { msg: "b" }] }), "x")).toBe("a, b");
   });

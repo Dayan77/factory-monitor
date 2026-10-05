@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from edge.virtual_plant.layout import PLANTA_MANAUS, addresses, build_plant_map
-from edge.virtual_plant.model import TICK_S, U16, PlantModel, in_shift, parse_shifts
+from edge.virtual_plant.model import TICK_S, U16, PlantConfig, PlantModel, in_shift, parse_shifts
 
 EDGE = Path(__file__).resolve().parents[1]
 
@@ -34,11 +34,11 @@ def test_known_numbers_seed_42_one_hour():
     m = PlantModel(seed=42)
     m.run_for(3600)
     v = m.snapshot()["values"]
-    assert v["usinagem.torno.parts_good"] == 72 and v["usinagem.torno.parts_scrap"] == 3
-    assert v["usinagem.centro.parts_good"] == 34 and v["usinagem.centro.parts_scrap"] == 2
-    assert v["montagem.transportador.parts_good"] == 85
-    assert v["montagem.fixacao.a1.cycles"] == 12_086
-    assert m.pulse_targets()["montagem.fixacao.a1.eos"] == 86
+    assert v["usinagem.torno.parts_good"] == 73 and v["usinagem.torno.parts_scrap"] == 0
+    assert v["usinagem.centro.parts_good"] == 33 and v["usinagem.centro.parts_scrap"] == 0
+    assert v["montagem.transportador.parts_good"] == 54
+    assert v["montagem.fixacao.a1.cycles"] == 12_058
+    assert m.pulse_targets()["montagem.fixacao.a1.eos"] == 58
 
 
 def test_cylinder_16bit_counter_rolls_over_at_65535():
@@ -63,7 +63,7 @@ def test_cylinder_16bit_counter_rolls_over_at_65535():
 
 
 def test_stroke_time_increases_with_wear():
-    m = PlantModel(seed=3, faults=False)
+    m = PlantModel(seed=3, faults=False, shifts=None)     # 24 h sem pausas: desgaste por golpe
     a2 = next(c for c in m.cell.cylinders if c.name == "A2")
     first = a2.nominal_stroke_ms()
     m.run_for(10 * 3600)
@@ -103,7 +103,8 @@ def test_shift_pattern_stops_production_outside_shift():
     assert in_shift(shifts, 6 * 3600) and not in_shift(shifts, 14 * 3600) and not in_shift(shifts, 3 * 3600)
     assert in_shift(parse_shifts("22:00-06:00"), 2 * 3600)
 
-    m = PlantModel(seed=5, faults=False, shifts="06:00-14:00", start_second_of_day=6 * 3600)
+    quiet = PlantConfig(setups=False).with_micro_rate(0)   # só o calendário para a máquina
+    m = PlantModel(seed=5, faults=False, shifts="06:00-14:00", start_second_of_day=6 * 3600, config=quiet)
     m.run_for(8 * 3600)
     good_at_end_of_shift = m.values()["usinagem.torno.parts_good"]
     m.run_for(10)
@@ -122,7 +123,9 @@ def test_truth_counts_operating_time_and_starts():
     # eixo-árvore liga uma vez por peça (fase de corte)
     v = m.values()
     parts = v["usinagem.torno.parts_good"] + v["usinagem.torno.parts_scrap"]
-    assert parts <= sp["starts"] <= parts + 2
+    # + 1 partida extra por micro-parada que interrompeu um corte (o ciclo retoma de onde parou)
+    micro = len(m.snapshot()["truth"]["events"]["usinagem.torno"]["micro_stops"])
+    assert parts <= sp["starts"] <= parts + micro + 2
     assert 0 < sp["on_s"] < 3600
 
 

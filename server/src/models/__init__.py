@@ -10,6 +10,9 @@ from .usage import TagState, UsageTotal, UsageBucket, UsageEvent
 from .lead import Lead
 from .alert import AlertRule, AlertEvent, AlertCondition, AlertSeverity
 from .camera import Camera
+from .production import (Shift, CalendarException, Product, MachineProduct, ProductionRun, ReasonCode,
+                         DowntimeEvent, FailureRecord, MicroStopBucket, MachineDataSpan, DowntimeDetectorState,
+                         DowntimeDetectorSnapshot)
 
 __all__ = [
     "Base", "TimestampMixin",
@@ -22,4 +25,6 @@ __all__ = [
     "TagState", "UsageTotal", "UsageBucket", "UsageEvent", "Lead",
     "AlertRule", "AlertEvent", "AlertCondition", "AlertSeverity",
     "Camera",
+    "Shift", "CalendarException", "Product", "MachineProduct", "ProductionRun", "ReasonCode",
+    "DowntimeEvent", "FailureRecord", "MicroStopBucket", "MachineDataSpan", "DowntimeDetectorState", "DowntimeDetectorSnapshot",
 ]

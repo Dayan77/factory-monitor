@@ -19,10 +19,13 @@ export function formatCompact(n: number | null | undefined): string {
   return n == null || Number.isNaN(n) ? "—" : compact.format(n);
 }
 
-/** Fraction → percent: 0.724 → "72%", 1.05 → "105%" (never truncated at 100). */
+/**
+ * Fraction → percent with 1 decimal, pt-BR (kpis.md S3-5): 0.769186 → "76,9 %", 1.053 → "105,3 %"
+ * (never truncated at 100). Rounded half-up from the raw value; non-breaking space before "%".
+ */
 export function formatPct(fraction: number | null | undefined): string {
-  if (fraction == null || Number.isNaN(fraction)) return "—";
-  return `${int.format(Math.round(fraction * 100))}%`;
+  if (fraction == null || !Number.isFinite(fraction)) return "—";
+  return `${dec1.format(fraction * 100)}\u00a0%`;
 }
 
 /** Usage measure value with its unit. */

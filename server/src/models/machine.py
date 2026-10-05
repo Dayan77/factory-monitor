@@ -3,8 +3,8 @@ from datetime import datetime
 from typing import Optional
 import enum
 
-from sqlalchemy import String, Boolean, DateTime, Float, ForeignKey, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import String, Boolean, DateTime, Float, Integer, ForeignKey, Enum as SAEnum, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
 
@@ -32,6 +32,10 @@ class Machine(Base, TimestampMixin):
     # Tempo de ciclo ideal padrão da máquina (s). Fase 2 define por (máquina, produto); aqui é
     # usado como max_rate padrão do filtro de plausibilidade de contadores (domain.md §3.3 regra 4).
     ideal_cycle_time_s: Mapped[Optional[float]]  = mapped_column(Float, nullable=True)
+    # Parada mais curta que isto é micro-parada (domain.md §4.3 regra 3, kpis.md §1.8; 30–300 s).
+    micro_stop_threshold_s: Mapped[int]          = mapped_column(Integer, nullable=False, default=120, server_default=text("120"))
+    # Código do fault_state → motivo sugerido (regra 6), ex. {"101": "EQP-01"}. Sem mapa → EQP-01.
+    fault_code_map: Mapped[dict]                 = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
 
     tenant  = relationship("Tenant",  back_populates="machines")
     line    = relationship("Line",    back_populates="machines", foreign_keys=[line_id])

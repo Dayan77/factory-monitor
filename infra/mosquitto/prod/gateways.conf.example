@@ -1,0 +1,8 @@
+# Credenciais MQTT dos gateways de campo — produção: $MQTT_GATEWAYS_DIR/gateways.conf (padrão /opt/factory-monitor/mqtt).
+# NÃO versionar o arquivo real. Gerencie com:
+#   make mqtt-gateway-add GATEWAY=gw-manaus-01 TENANT=<uuid do tenant>   (gera senha, imprime uma única vez)
+#   make mqtt-gateway-remove GATEWAY=gw-manaus-01
+#   make mqtt-gateway-list
+# Formato: <usuário> <tenant_uuid> <hash PBKDF2 do mosquitto_passwd>
+# O ACL gerado permite a cada gateway apenas factory/<tenant_uuid>/# (o backend lê factory/#).
+gw-exemplo-01 00000000-0000-4000-8000-000000000000 $7$101$c2FsdHNhbHRzYWx0c2FsdA==$ZXhlbXBsby1uYW8tZS11bWEtc2VuaGEtcmVhbA==

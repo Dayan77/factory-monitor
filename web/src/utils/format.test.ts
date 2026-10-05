@@ -6,8 +6,12 @@ describe("format", () => {
   it("formats pt-BR numbers and fractions as percent (no truncation)", () => {
     expect(formatInt(3600000)).toBe("3.600.000");
     expect(formatDec1(12.345)).toBe("12,3");
-    expect(formatPct(0.724)).toBe("72%");
-    expect(formatPct(1.05)).toBe("105%");
+    // kpis.md S3-5: 1 decimal, pt-BR, half-up from the raw value
+    expect(formatPct(0.724)).toBe("72,4\u00a0%");
+    expect(formatPct(1.05)).toBe("105,0\u00a0%");
+    expect(formatPct(0.769186)).toBe("76,9\u00a0%");
+    expect(formatPct(0.74449)).toBe("74,4\u00a0%");
+    expect(formatPct(0.7365)).toBe("73,7\u00a0%");
     expect(formatPct(null)).toBe("—");
     expect(formatMeasure("hours", 2.5)).toBe("2,5 h");
   });

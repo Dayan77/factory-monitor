@@ -17,7 +17,12 @@ Configuration:
 Heartbeat (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
   payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46,
-           "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true}}
+           "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true},
+           "clocks": {"opcua-plc": {"policy": "source", "configured": "source", "max_skew_s": 2.0,
+                                    "skew_s": -0.12}}}
+
+Timestamps: one clock per device (plant map `sources[].timestamps`, default `gateway`); see
+edge/src/clock.py for the policy table, skew detection (> max_clock_skew_s, default 2 s) and demotion.
 """
 
 import asyncio
@@ -29,6 +34,7 @@ from typing import Optional
 import structlog
 
 from .buffer.local_buffer import LocalBuffer
+from .clock import DeviceClock
 from .config import settings
 from .counting import EdgeCounterStore, PulsePoller
 from .filters.deadband import DeadbandFilter
@@ -53,6 +59,8 @@ class EdgeGateway:
             username=settings.mqtt_username,
             password=settings.mqtt_password,
             encryption_key=settings.encryption_key,
+            tls=settings.mqtt_tls,
+            ca_cert=settings.mqtt_ca_cert,
         )
         self.filter = DeadbandFilter(
             deadband_pct=settings.deadband_pct,
@@ -69,7 +77,10 @@ class EdgeGateway:
         self._no_deadband: set[str] = set()
         self._last_values: dict[str, float] = {}
         self._last_ts: dict[str, datetime] = {}            # last stamped ts per tag (monotonic)
-        self._skew_warned: set[str] = set()
+        # One clock per device (edge/src/clock.py); tags outside the plant map use the default one.
+        self._default_clock = DeviceClock("default", settings.timestamp_policy, settings.max_clock_skew_s, log=log)
+        self._clocks: dict[str, DeviceClock] = {}          # source id → clock
+        self._tag_clock: dict[str, DeviceClock] = {}       # tag id → clock of its device
         self._refresh_tags: dict[str, OpcUaDriver] = {}   # OPC UA tags (report-by-exception) → driver
         self._sources: dict[str, object] = {}              # source id → driver (heartbeat status)
         self._started_at = time.monotonic()
@@ -102,12 +113,19 @@ class EdgeGateway:
 
         pulse_ms = settings.pulse_poll_ms or pm.pulse_poll_ms
         for src in pm.sources.values():
+            clock = DeviceClock(src.id, src.timestamps, src.max_clock_skew_s, log=log)
+            self._clocks[src.id] = clock
+            for t in pm.tags_for(src.id):
+                self._tag_clock[t.tag_id] = clock
+            log.info("edge_gateway.clock_policy", source=src.id, policy=src.timestamps,
+                     max_skew_s=src.max_clock_skew_s)
             if src.protocol == "opcua":
                 tags = [OpcTagConfig(t.tag_id, str(t.address), t.scale, t.offset, t.unit) for t in pm.tags_for(src.id)]
                 if not tags:
                     continue
                 drv = OpcUaDriver(src.endpoint, tags, on_reading=self._handle_reading,
-                                  publishing_interval_ms=src.publishing_interval_ms, source_timestamps=True)
+                                  publishing_interval_ms=src.publishing_interval_ms, source_timestamps=True,
+                                  notify_on_timestamp=src.device_heartbeat)
                 for t in tags:
                     self._refresh_tags[t.tag_id] = drv
             else:
@@ -167,33 +185,13 @@ class EdgeGateway:
             self._refresh_loop(),
         )
 
-    def _stamp(self, tag_id: str, ts: Optional[datetime]) -> datetime:
-        """Timestamp for a reading, strictly increasing per tag.
-
-        The server drops a reading older than the tag's last accepted ts (out_of_order), so one
-        tag must never mix clocks going backwards: device SourceTimestamps for changes and the
-        gateway clock for refreshes/Modbus. Rules:
-        * no device ts → gateway receive time;
-        * device ts more than ``max_clock_skew_s`` away from the gateway clock (PLC clock not
-          synchronised) → gateway receive time, with a one-time warning per tag;
-        * never earlier than (last ts of the tag + 1 ms): a change racing a refresh is published
-          right after it instead of being dropped by the server.
-        """
-        now = datetime.now(timezone.utc)
-        if ts is None:
-            ts = now
-        else:
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            skew = (ts - now).total_seconds()
-            if abs(skew) > settings.max_clock_skew_s:
-                if tag_id not in self._skew_warned:
-                    self._skew_warned.add(tag_id)
-                    log.warning("edge_gateway.clock_skew", tag_id=tag_id, skew_s=round(skew, 3),
-                                max_skew_s=settings.max_clock_skew_s,
-                                hint="relógio do CLP fora de sincronia; usando o horário do gateway")
-                ts = now
-        # Compare at the published (millisecond) resolution, so "later" survives formatting.
+    def _stamp(self, tag_id: str, ts: Optional[datetime], initial: bool = False) -> datetime:
+        """Timestamp for a reading: the device's clock policy (edge/src/clock.py), then strictly
+        increasing per tag at the published (millisecond) resolution — the server drops a reading
+        older than the tag's last accepted ts, so a change racing a refresh is published right
+        after it (+1 ms) instead of being dropped."""
+        clock = self._tag_clock.get(tag_id, self._default_clock)
+        ts = clock.stamp(ts, tag_id=tag_id, initial=initial)
         ts = ts.replace(microsecond=ts.microsecond - ts.microsecond % 1000)
         last = self._last_ts.get(tag_id)
         if last is not None and ts <= last:
@@ -201,11 +199,14 @@ class EdgeGateway:
         self._last_ts[tag_id] = ts
         return ts
 
-    async def _handle_reading(self, tag_id: str, value: float, ts: Optional[datetime] = None) -> None:
+    async def _handle_reading(self, tag_id: str, value: float, ts: Optional[datetime] = None,
+                              initial: bool = False) -> None:
         # Timestamp at the source (UTC) when trustworthy, else the gateway read time; monotonic per tag.
-        ts = self._stamp(tag_id, ts)
+        # `initial`: first OPC UA notification of the item (value's last change, not a skew sample).
+        ts = self._stamp(tag_id, ts, initial)
         self._last_values[tag_id] = value
-        if not self.filter.should_publish(tag_id, value, bypass=tag_id in self._no_deadband):
+        # Silence (heartbeat) measured on the reading's own clock: same clock as the published ts.
+        if not self.filter.should_publish(tag_id, value, bypass=tag_id in self._no_deadband, now=ts.timestamp()):
             return
 
         topic = self.publisher.build_topic(self.tenant_id, tag_id)
@@ -221,8 +222,10 @@ class EdgeGateway:
         from a source that is down. Returns how many values were re-offered."""
         n = 0
         for tag_id, drv in self._refresh_tags.items():
-            if drv.connected and tag_id in self._last_values:
-                # Gateway time, but never behind the tag's last source timestamp (see _stamp).
+            clock = self._tag_clock.get(tag_id, self._default_clock)
+            # A device clock the gateway cannot map (source policy, skew check off) gets no synthesized ts.
+            if drv.connected and tag_id in self._last_values and clock.can_synthesize:
+                # Stamped on the device's clock (see _stamp / clock.py), never behind the tag's last ts.
                 await self._handle_reading(tag_id, self._last_values[tag_id])
                 n += 1
         return n
@@ -252,6 +255,7 @@ class EdgeGateway:
             "uptime_s": round(time.monotonic() - self._started_at, 1),
             "tags": len(self._units),
             "sources": sources,
+            "clocks": {sid: c.status() for sid, c in self._clocks.items()},
         }
 
     def heartbeat_topic(self) -> str:

@@ -14,9 +14,10 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
 from .api.routes import (auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras,
-                         plants, positions, components, usage, public)
+                         plants, positions, components, usage, public, production, oee)
 from .websocket.manager import ws_router
-from .services.mqtt_subscriber import run_subscriber
+from .services.mqtt_subscriber import run_subscriber, cancel_inflight
+from .services.oee.detector import run_downtime_detector
 from .services.machine_status import run_offline_sweeper
 from .services.influx import influx
 from .services.usage.broadcaster import usage_broadcaster
@@ -29,6 +30,26 @@ structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(
 log = structlog.get_logger()
 
 
+async def shutdown_tasks(tasks: list[asyncio.Task], timeout_s: float) -> None:
+    """Clean shutdown that always finishes (Sprint 2 review: uvicorn hung on exit while MQTT reading
+    tasks were still pending). Background loops and in-flight MQTT readings are cancelled and waited
+    for at most `timeout_s`; whatever is still running after that is abandoned (a reading not
+    processed is re-counted by recompute / is a duplicate on re-delivery)."""
+    for task in tasks:
+        task.cancel()
+    inflight = cancel_inflight()
+    pending = [*tasks, *inflight]
+    if pending:
+        _, still = await asyncio.wait(pending, timeout=timeout_s)
+        if still:
+            log.warning("server.shutdown_abandoned_tasks", count=len(still),
+                        names=[t.get_name() for t in list(still)[:10]])
+    try:
+        await asyncio.wait_for(influx.close(), timeout=timeout_s)
+    except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
+        log.warning("server.influx_close_failed", error=str(e)[:200])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("server.starting", env=settings.app_env)
@@ -39,19 +60,12 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_subscriber(), name="mqtt_subscriber"),
         asyncio.create_task(run_offline_sweeper(), name="machine_offline_sweeper"),
         asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"),
+        asyncio.create_task(run_downtime_detector(), name="downtime_detector"),
     ]
 
     yield
 
-    for task in tasks:
-        task.cancel()
-    for task in tasks:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    await influx.close()
-
+    await shutdown_tasks(tasks, timeout_s=settings.shutdown_timeout_s)
     log.info("server.shutdown")
 
 
@@ -96,6 +110,14 @@ app.include_router(positions.router,  prefix="/api/positions",  tags=["positions
 app.include_router(components.router, prefix="/api/components", tags=["components"])
 app.include_router(usage.router,      prefix="/api/usage",      tags=["usage"])
 app.include_router(public.router,     prefix="/api/public",     tags=["public"])
+app.include_router(production.shifts_router,   prefix="/api/shifts",              tags=["production"])
+app.include_router(production.calendar_router, prefix="/api/calendar-exceptions", tags=["production"])
+app.include_router(production.products_router, prefix="/api/products",            tags=["production"])
+app.include_router(production.machine_products_router, prefix="/api/machines",    tags=["production"])
+app.include_router(production.runs_router,     prefix="/api/production-runs",     tags=["production"])
+app.include_router(production.reasons_router,  prefix="/api/reason-codes",        tags=["production"])
+app.include_router(oee.downtime_router,        prefix="/api/downtime",            tags=["oee"])
+app.include_router(oee.kpi_router,             prefix="/api",                     tags=["oee"])
 
 app.include_router(ws_router, prefix="/ws")
 

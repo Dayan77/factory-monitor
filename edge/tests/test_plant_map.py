@@ -72,9 +72,32 @@ def test_provisioned_map_roles_and_deadband():
     (lambda d: d.update(version=2), "versão"),
     (lambda d: next(t for t in d["tags"] if t["source"] == "modbus-plc").update(address="40001"), "Modbus"),
     (lambda d: d["tags"][0].update(counter_max=-1), "counter_max"),
+    (lambda d: d["sources"][0].update(timestamps="plc"), "timestamps"),
+    (lambda d: d["sources"][1].update(timestamps="source"), "Modbus não traz timestamp"),
+    (lambda d: d["sources"][0].update(max_clock_skew_s="-1"), "max_clock_skew_s"),
 ])
 def test_invalid_maps_rejected(mutate, msg):
     doc = copy.deepcopy(provisioned_doc())
     mutate(doc)
     with pytest.raises(PlantMapError, match=msg):
         parse_plant_map(doc, env={})
+
+
+def test_source_clock_policy_from_map_and_env():
+    pm = parse_plant_map(provisioned_doc(), env={})
+    opc, mb = pm.sources["opcua-plc"], pm.sources["modbus-plc"]
+    assert (opc.timestamps, opc.max_clock_skew_s) == ("source", 2.0)
+    assert (mb.timestamps, mb.max_clock_skew_s) == ("gateway", 2.0)
+    pm = parse_plant_map(provisioned_doc(), env={"VIRTUAL_PLANT_TIMESTAMPS": "gateway",
+                                                 "VIRTUAL_PLANT_MAX_CLOCK_SKEW_S": "5"})
+    assert (pm.sources["opcua-plc"].timestamps, pm.sources["opcua-plc"].max_clock_skew_s) == ("gateway", 5.0)
+    doc = provisioned_doc()
+    for src in doc["sources"]:
+        src.pop("timestamps", None)
+        src.pop("max_clock_skew_s", None)
+    pm = parse_plant_map(doc, env={})
+    assert pm.sources["opcua-plc"].timestamps == "gateway"        # sem declarar: relógio não confiável
+    # papéis do Sprint 3 aceitos e sem deadband
+    by_key = {t.key: t for t in parse_plant_map(provisioned_doc(), env={}).tags}
+    for k in ("usinagem.torno.product_code", "montagem.robo.starved", "montagem.fixacao.blocked"):
+        assert by_key[k].bypass_deadband, k

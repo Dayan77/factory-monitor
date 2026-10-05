@@ -19,6 +19,10 @@ class EdgeSettings(BaseSettings):
     mqtt_broker_port: int = 1883
     mqtt_username: str = ""
     mqtt_password: str = ""
+    # TLS to the broker (production: port 8883 — docs/operations.md §MQTT). MQTT_CA_CERT = path to a CA
+    # bundle (PEM); empty = the system CAs. The broker certificate and host name are always verified.
+    mqtt_tls: bool = False
+    mqtt_ca_cert: str = ""
 
     opcua_endpoint: str = "opc.tcp://localhost:4840"
 
@@ -33,10 +37,12 @@ class EdgeSettings(BaseSettings):
     # a healthy gateway reading stable values gets its machine marked offline.
     deadband_max_silence_s: float = 30.0
 
-    # A device timestamp (OPC UA SourceTimestamp) further than this from the gateway clock is
-    # not trusted: the gateway receive time is used instead (warned once per tag). Keeps live
-    # readings live on the server (it treats readings > 120 s old as replays).
-    max_clock_skew_s: float = 5.0
+    # Timestamp policy for tags outside a plant map (legacy MODBUS_TAGS path); plant-map sources
+    # carry their own `timestamps` / `max_clock_skew_s` (edge/src/clock.py). "gateway" | "source".
+    timestamp_policy: str = "gateway"
+    # Skew (device ts − gateway receive time) above which a device clock is not trusted:
+    # a "source" device is demoted to gateway time, a "gateway" device is only warned about.
+    max_clock_skew_s: float = 2.0
 
     encryption_key: str = ""    # 32-byte AES-256 key
 

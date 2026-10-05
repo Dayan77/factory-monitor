@@ -123,6 +123,11 @@
   --c-chart-2: var(--amber-500);
   --c-chart-3: var(--blue-500);
   --c-grid: var(--gray-800);
+  /* OEE series (A / P / Q / OEE) — validated with the dataviz CVD checker on the dark surface */
+  --c-kpi-a: 74 138 244;
+  --c-kpi-p: 124 58 237;
+  --c-kpi-q: 217 119 6;
+  --c-kpi-oee: 37 163 104;
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-pop: 0 12px 32px -8px rgb(0 0 0 / 0.6);
 }
@@ -243,6 +248,11 @@
   --c-chart-2: var(--amber-500);
   --c-chart-3: var(--blue-500);
   --c-grid: var(--gray-800);
+  /* OEE series — validated on the light surface */
+  --c-kpi-a: 59 130 246;
+  --c-kpi-p: 91 33 182;
+  --c-kpi-q: 180 83 9;
+  --c-kpi-oee: 25 133 84;
   --shadow-card: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
   --shadow-pop: 0 16px 40px -12px rgb(16 24 40 / 0.25);
 }

@@ -10,6 +10,9 @@
 # Planta virtual (profile "sim"): CLPs simulados + provisionamento + gateway edge real.
 #   docker compose --env-file .env -f infra/docker-compose.yml --profile sim up -d
 #   VP_SPEED=60 (1 h simulada/min), VP_SEED=42, VP_SHIFTS=06:00-14:00,14:00-22:00 ajustam a simulação.
+#   Playback de cenário de ouro (docs/scenarios montado em /scenarios), relógio do cenário deslocado:
+#     VP_SCENARIO=/scenarios/scenario_c_oee_shift.json VIRTUAL_PLANT_MAX_CLOCK_SKEW_S=off VP_SPEED=60 \
+#       docker compose --env-file .env -f infra/docker-compose.yml --profile sim up -d
 #   Estado/verdade de campo: curl http://localhost:8091/state
 #
 # Todas as imagens têm versão fixa. Atualize de propósito, nunca via :latest.
@@ -121,7 +124,8 @@ services:
     volumes:
       - ../server:/app
     # Migrations antes de subir a API (idempotente)
-    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    # --no-proxy-headers: X-Forwarded-For é tratado só no app (FORWARDED_ALLOW_IPS), como na imagem de produção
+    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload --no-proxy-headers"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
       interval: 10s
@@ -182,6 +186,13 @@ services:
       VP_SEED: ${VP_SEED:-42}
       VP_SPEED: ${VP_SPEED:-1}
       VP_SHIFTS: ${VP_SHIFTS:-}
+      # playback de cenário (vazio = planta normal); o gateway precisa de VIRTUAL_PLANT_MAX_CLOCK_SKEW_S=off
+      VP_SCENARIO: ${VP_SCENARIO:-}
+      VP_SCENARIO_CLOCK: ${VP_SCENARIO_CLOCK:-shifted}
+      VP_SCENARIO_START: ${VP_SCENARIO_START:-subscribe}
+      VP_SCENARIO_HEARTBEAT_S: ${VP_SCENARIO_HEARTBEAT_S:-10}
+    volumes:
+      - ../docs/scenarios:/scenarios:ro
     ports:
       - "127.0.0.1:4840:4840"
       - "127.0.0.1:5020:5020"
@@ -197,8 +208,16 @@ services:
     image: factory-monitor-edge:dev
     container_name: fm_provision_sim
     restart: "no"
-    command: ["python", "-m", "src.provision", "--server", "http://server:8000", "--out", "/data/plant.local.json"]
+    # com VP_SCENARIO, o mapa provisionado traz o calendário do cenário (turno + pausas) — mesmo layout da planta
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if [ -n "$$VP_SCENARIO" ]; then
+        python -m virtual_plant --write-map /data/plant.scenario.json --scenario "$$VP_SCENARIO" &&
+        exec python -m src.provision --server http://server:8000 --map /data/plant.scenario.json --out /data/plant.local.json;
+        else exec python -m src.provision --server http://server:8000 --out /data/plant.local.json; fi
     environment:
+      VP_SCENARIO: ${VP_SCENARIO:-}
       # usuário admin do seed de desenvolvimento (make seed); sobrescreva no .env se mudou
       PROVISION_EMAIL: ${SIM_EMAIL:-admin@factory-monitor.com}
       PROVISION_PASSWORD: ${SIM_PASSWORD:-Admin@1234}
@@ -209,6 +228,7 @@ services:
         condition: service_healthy
     volumes:
       - edge-sim-data:/data
+      - ../docs/scenarios:/scenarios:ro
 
   gateway-sim:
     profiles: ["sim"]
@@ -218,6 +238,8 @@ services:
     environment:
       PLANT_MAP_PATH: /data/plant.local.json
       VIRTUAL_PLANT_HOST: virtual-plant
+      # playback de cenário (relógio deslocado/acelerado): off — senão o relógio do CLP vira "não confiável"
+      VIRTUAL_PLANT_MAX_CLOCK_SKEW_S: ${VIRTUAL_PLANT_MAX_CLOCK_SKEW_S:-2}
       MQTT_BROKER_HOST: mosquitto
       MQTT_BROKER_PORT: "1883"
       BUFFER_DB_PATH: /data/edge_buffer.db
@@ -234,9 +256,53 @@ services:
     volumes:
       - edge-sim-data:/data
 
+  # ── Observabilidade (profile "monitoring") ────────────────────────
+  #   docker compose --env-file .env -f infra/docker-compose.yml --profile monitoring up -d   (ou: make monitoring)
+  #   Prometheus http://localhost:9090 · Grafana http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD, padrão admin)
+  # Coleta o backend do compose (server:8000) ou o local (host.docker.internal:8000).
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.5.0
+    container_name: fm_prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./monitoring/prometheus/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:12.1.1
+    container_name: fm_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   edge-sim-data:
   postgres-data:
   influxdb-data:
   mosquitto-data:
   mosquitto-log:
+  prometheus-data:
+  grafana-data:

@@ -5,11 +5,12 @@
  *   {type: "sensor_reading", tag_id, value, unit, timestamp}
  *   {type: "machine_status", machine_id, status, last_seen_at, ...}
  *   {type: "usage", position_id|null, machine_id|null, measure, delta, total, timestamp}
+ *   {type: "downtime", action, event: {id, machine_id, start, end, duration_s, reason_code, ...}}
  * Legacy sensor messages without `type` are accepted as readings.
  */
 
 import type {
-  Machine, MachineStatus, MachineUsage, PositionDetail, RealtimeMessage, StatusSummary, TreePlant,
+  DowntimeEvent, DowntimeEventPatch, DowntimeMessage, DowntimeQuery, Machine, MachineStatus, MachineUsage, PositionDetail, RealtimeMessage, StatusSummary, TreePlant,
   UsageMeasure, UsageMessage,
 } from "./types";
 
@@ -69,6 +70,12 @@ export function parseRealtimeMessage(raw: string): RealtimeMessage | null {
       total: data.total,
       timestamp: typeof data.timestamp === "string" ? data.timestamp : undefined,
     };
+  }
+
+  if (data.type === "downtime") {
+    const event = parseDowntimeEvent(data.event);
+    if (!event) return null;
+    return { type: "downtime", action: typeof data.action === "string" ? data.action : undefined, event };
   }
 
   if (data.type === undefined || data.type === "sensor_reading") {
@@ -240,4 +247,78 @@ export function reconnectActionFor(code: number): ReconnectAction {
   if (code === WS_CLOSE_UNAUTHORIZED) return "refresh-then-retry";
   if (code === WS_CLOSE_FORBIDDEN) return "stop";
   return "retry";
+}
+
+// ── Downtime (Fase 2) ─────────────────────────────────────────────
+
+function optNumber(v: unknown): number | null {
+  return isFiniteNumber(v) ? v : null;
+}
+
+/**
+ * Validates a downtime event from the socket. Keys that are absent stay absent (the message
+ * carries a subset of DowntimeOut) so merging never wipes known values like machine_name.
+ */
+export function parseDowntimeEvent(v: unknown): DowntimeEventPatch | null {
+  if (!isRecord(v)) return null;
+  if (typeof v.id !== "string" || typeof v.machine_id !== "string" || typeof v.start !== "string") return null;
+  const out: DowntimeEventPatch = {
+    id: v.id, machine_id: v.machine_id, start: v.start,
+  };
+  if ("end" in v) out.end = optString(v.end);
+  if ("duration_s" in v) out.duration_s = optNumber(v.duration_s);
+  if ("source" in v && typeof v.source === "string") out.source = v.source;
+  if ("reason_code" in v) out.reason_code = optString(v.reason_code);
+  if ("suggested_reason_code" in v) out.suggested_reason_code = optString(v.suggested_reason_code);
+  if ("planned" in v) out.planned = v.planned === true;
+  if ("fault_code" in v) out.fault_code = optNumber(v.fault_code);
+  if ("comment" in v) out.comment = optString(v.comment);
+  if ("shift_id" in v) out.shift_id = optString(v.shift_id);
+  if ("productive_day" in v) out.productive_day = optString(v.productive_day);
+  if ("machine_name" in v) out.machine_name = optString(v.machine_name);
+  if ("line_id" in v) out.line_id = optString(v.line_id);
+  return out;
+}
+
+export const UNJUSTIFIED_CODE = "UNK-01";
+
+export function isUnjustified(ev: Pick<DowntimeEvent, "reason_code">): boolean {
+  return ev.reason_code == null || ev.reason_code === UNJUSTIFIED_CODE;
+}
+
+/** Does `ev` (after merge) still satisfy the boolean filters of a cached downtime query? */
+function matchesFilters(ev: DowntimeEvent, q: DowntimeQuery): boolean {
+  if (q.unjustified === true && !isUnjustified(ev)) return false;
+  if (q.unjustified === false && isUnjustified(ev)) return false;
+  if (q.open === true && ev.end != null) return false;
+  if (q.open === false && ev.end == null) return false;
+  return true;
+}
+
+/**
+ * Applies a downtime message to one cached downtime list.
+ *  - known event → merged in place (or dropped when it no longer matches the query filters,
+ *    e.g. it was justified while the list shows only unjustified stops)
+ *  - unknown event → `"refetch"`: the socket message lacks line membership, so the caller
+ *    re-fetches the list instead of guessing where the event belongs
+ */
+export function applyDowntimeToList(
+  list: DowntimeEvent[] | undefined,
+  q: DowntimeQuery,
+  msg: Pick<DowntimeMessage, "event"> & { action?: string },
+): DowntimeEvent[] | undefined | "refetch" {
+  if (!list) return list;
+  const idx = list.findIndex((e) => e.id === msg.event.id);
+  // the detector removed an automatic stop that late/out-of-order readings proved wrong
+  if (msg.action === "delete") return idx < 0 ? list : list.filter((_, i) => i !== idx);
+  if (idx < 0) {
+    if (q.machine_id && q.machine_id !== msg.event.machine_id) return list;
+    return "refetch";
+  }
+  const merged = { ...list[idx], ...msg.event } as DowntimeEvent;
+  if (merged.reason_code !== undefined) merged.unjustified = isUnjustified(merged);
+  if (!matchesFilters(merged, q)) return list.filter((_, i) => i !== idx);
+  const next = list.slice();
+  next[idx] = merged;
+  return next;
 }

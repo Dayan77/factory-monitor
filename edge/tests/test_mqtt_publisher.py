@@ -132,3 +132,13 @@ async def test_end_to_end_with_real_broker(encrypted):
         assert data["alg"] == "AES-256-GCM"
         data = PayloadCipher.from_setting(key).decrypt_json(str(msg.topic), data)
     assert data["value"] == 42.5 and data["unit"] == "°C" and data["v"] == 1
+
+
+def test_tls_is_opt_in_and_a_bad_ca_fails_at_startup(tmp_path):
+    """MQTT_TLS / MQTT_CA_CERT (production broker on 8883): verified context, never a silent plaintext."""
+    import ssl
+    assert MqttPublisher("h")._tls_context is None
+    ctx = MqttPublisher("h", tls=True)._tls_context
+    assert ctx is not None and ctx.check_hostname and ctx.verify_mode == ssl.CERT_REQUIRED
+    with pytest.raises(FileNotFoundError):
+        MqttPublisher("h", tls=True, ca_cert=str(tmp_path / "missing.pem"))

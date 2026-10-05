@@ -33,6 +33,16 @@
   }
 }
 
+/* Print / "Salvar como PDF": the shift report switches to the light theme before printing
+   (see usePrintLightTheme); here we drop app chrome, shadows and animations. */
+@media print {
+  @page { size: A4; margin: 12mm; }
+  html, body { background: #fff !important; }
+  * { box-shadow: none !important; animation: none !important; transition: none !important; }
+  .print-avoid-break { break-inside: avoid; }
+  details > summary { display: none; }
+}
+
 @layer utilities {
   .text-value { @apply font-mono text-brand-400; }
   .tabular { font-variant-numeric: tabular-nums; }
