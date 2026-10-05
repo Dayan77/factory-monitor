@@ -96,7 +96,13 @@ const ROLE_LABELS: Record<string, string> = {
   superadmin: "Super Admin",
 };
 
-export default function Sidebar() {
+interface SidebarProps {
+  /** Mobile drawer state (ignored at md+ where the sidebar is always visible). */
+  open?: boolean;
+  onClose?: () => void;
+}
+
+export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
@@ -113,7 +119,22 @@ export default function Sidebar() {
     .toUpperCase() ?? "??";
 
   return (
-    <aside className="flex w-60 flex-col border-r border-gray-800 bg-gray-900">
+    <>
+    {open && (
+      <div
+        aria-hidden="true"
+        onClick={onClose}
+        className="fixed inset-0 z-30 bg-black/60 md:hidden"
+      />
+    )}
+    <aside
+      id="app-sidebar"
+      className={clsx(
+        "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-gray-800 bg-gray-900 transition-transform duration-200",
+        "md:static md:translate-x-0",
+        open ? "translate-x-0" : "-translate-x-full"
+      )}
+    >
       {/* Logo */}
       <div className="flex h-16 items-center gap-3 border-b border-gray-800 px-5">
         <span className="flex size-8 items-center justify-center rounded-lg bg-brand-500">
@@ -133,6 +154,7 @@ export default function Sidebar() {
           <NavLink
             key={item.to}
             to={item.to}
+            onClick={onClose}
             className={({ isActive }) =>
               clsx(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
@@ -152,6 +174,7 @@ export default function Sidebar() {
             <div className="my-2 border-t border-gray-800" />
             <NavLink
               to={ADMIN_NAV.to}
+              onClick={onClose}
               className={({ isActive }) =>
                 clsx(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
@@ -191,5 +214,6 @@ export default function Sidebar() {
         </button>
       </div>
     </aside>
+    </>
   );
 }

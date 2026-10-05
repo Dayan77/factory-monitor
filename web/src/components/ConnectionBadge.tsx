@@ -1,17 +1,19 @@
-import { useRealtimeSensors } from "@/hooks/useWebSocket";
 import clsx from "clsx";
+import { useRealtimeStore } from "@/store/realtime";
+
+const LABEL = {
+  connected: "Ao vivo",
+  connecting: "Conectando…",
+  disconnected: "Desconectado",
+} as const;
 
 export default function ConnectionBadge() {
-  const { status } = useRealtimeSensors("demo-tenant");
-
-  const label = {
-    connected: "Ao vivo",
-    connecting: "Conectando…",
-    disconnected: "Desconectado",
-  }[status];
+  const status = useRealtimeStore((s) => s.status);
 
   return (
     <span
+      role="status"
+      aria-label={`Tempo real: ${LABEL[status]}`}
       className={clsx(
         "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
         status === "connected"     && "bg-brand-500/15 text-brand-400",
@@ -27,7 +29,7 @@ export default function ConnectionBadge() {
           status === "disconnected" && "bg-red-400"
         )}
       />
-      {label}
+      {LABEL[status]}
     </span>
   );
 }

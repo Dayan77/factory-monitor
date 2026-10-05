@@ -28,9 +28,11 @@ log = structlog.get_logger()
 CONFIG_PATH = Path(__file__).parent / "config.json"
 STATIC_PATH = Path(__file__).parent / "static"
 
+# Never default to production: the config app/simulator targets the local dev stack
+# until the operator explicitly changes it in the UI.
 DEFAULT_CONFIG = {
-    "server_url": "https://factoryconnect.tech",
-    "mqtt_host": "factoryconnect.tech",
+    "server_url": "http://localhost:8000",
+    "mqtt_host": "localhost",
     "mqtt_port": 1883,
     "email": "admin@factory-monitor.com",
     "password": "Admin@1234",

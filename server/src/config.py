@@ -27,6 +27,13 @@ class ServerSettings(BaseSettings):
 
     openai_api_key: str = ""
 
+    # Machine status derived from data: a machine with no reading for longer than
+    # this is marked 'unknown' (offline). The sweeper runs every N seconds.
+    machine_offline_timeout_s: int = 60
+    machine_status_sweep_interval_s: int = 15
+    # Minimum interval between persisted last_seen_at updates (limits DB writes).
+    machine_last_seen_write_interval_s: int = 5
+
     sendgrid_api_key: str = ""
     sendgrid_from_email: str = ""
     telegram_bot_token: str = ""

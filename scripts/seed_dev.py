@@ -4,17 +4,19 @@ Seed script — creates a dev tenant + admin user for first-time setup.
 Usage:
     cd server
     python ../scripts/seed_dev.py
+
+Production / VPS (APP_ENV=production, or SEED_ENFORCE_PROD_CREDENTIALS=1 which
+scripts/seed_remote.py always sets): refuses to run unless SEED_ADMIN_PASSWORD
+and SEED_SUPERADMIN_PASS are set, are not the public dev defaults below and have
+at least MIN_PROD_PASSWORD_LEN characters. Passwords are never printed there.
 """
 
 import asyncio
 import sys
 import os
+from typing import Mapping
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)) + "/server")
-
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from src.models import Base, Tenant, User, UserRole
-from src.auth.security import hash_password
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/server")
 
 
 DATABASE_URL = (
@@ -35,8 +37,54 @@ SUPERADMIN_EMAIL = os.getenv("SEED_SUPERADMIN_EMAIL", "superadmin@factory-monito
 SUPERADMIN_PASS  = os.getenv("SEED_SUPERADMIN_PASS",  "Super@1234")
 SUPERADMIN_NAME  = os.getenv("SEED_SUPERADMIN_NAME",  "Super Admin")
 
+# Public dev defaults (README / .env.example / CLAUDE.md): never valid in production.
+DEV_DEFAULT_PASSWORDS = frozenset({"Admin@1234", "Super@1234"})
+MIN_PROD_PASSWORD_LEN = 12
+PASSWORD_VARS = ("SEED_ADMIN_PASSWORD", "SEED_SUPERADMIN_PASS")
+
+
+def production_mode(env: Mapping[str, str] = os.environ) -> bool:
+    return (
+        env.get("APP_ENV", "").strip().lower() in {"production", "prod"}
+        or env.get("SEED_ENFORCE_PROD_CREDENTIALS", "").strip() == "1"
+    )
+
+
+def production_credential_errors(env: Mapping[str, str] = os.environ) -> list[str]:
+    """Problems with the seed passwords for a production run (names only, never values)."""
+    errors = []
+    for var in PASSWORD_VARS:
+        value = env.get(var, "")
+        if not value.strip():
+            errors.append(f"{var} não definido no ambiente do container")
+        elif value in DEV_DEFAULT_PASSWORDS:
+            errors.append(f"{var} usa a senha padrão de desenvolvimento (pública)")
+        elif len(value) < MIN_PROD_PASSWORD_LEN:
+            errors.append(f"{var} precisa de pelo menos {MIN_PROD_PASSWORD_LEN} caracteres")
+    return errors
+
+
+def ensure_safe_credentials(env: Mapping[str, str] = os.environ) -> None:
+    """Raises SystemExit(3) in production mode when the seed passwords are unsafe."""
+    if not production_mode(env):
+        return
+    errors = production_credential_errors(env)
+    if errors:
+        msg = "\n".join(f"  - {e}" for e in errors)
+        raise SystemExit(f"✗ Seed recusado em produção:\n{msg}")
+
+
+def _shown(password: str) -> str:
+    return "********" if production_mode() else password
+
 
 async def seed() -> None:
+    ensure_safe_credentials()
+
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from src.models import Tenant, User, UserRole
+    from src.auth.security import hash_password
+
     engine = create_async_engine(DATABASE_URL, echo=False)
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -61,7 +109,7 @@ async def seed() -> None:
             )
             db.add(admin)
             print(f"✓  Tenant demo: {TENANT_NAME} (slug: {TENANT_SLUG})")
-            print(f"   Admin: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+            print(f"   Admin: {ADMIN_EMAIL} / {_shown(ADMIN_PASSWORD)}")
 
         # ── Tenant "platform" para o superadmin ───────────────────
         platform_existing = await db.execute(select(Tenant).where(Tenant.slug == "platform"))
@@ -81,7 +129,7 @@ async def seed() -> None:
 
         await db.commit()
 
-    print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {SUPERADMIN_PASS}")
+    print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {_shown(SUPERADMIN_PASS)}")
     print()
     print("Acesse /admin após login com o superadmin.")
     await engine.dispose()

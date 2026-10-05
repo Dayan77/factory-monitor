@@ -1,25 +1,28 @@
+# Versões fixas (builds reprodutíveis). Mantidas compatíveis com server/requirements.txt:
+# `pip install -r server/requirements.txt -r edge/requirements.txt` resolve sem conflito.
+
 # Protocols
-asyncua>=1.1.5          # OPC UA
-pymodbus>=3.6.9         # Modbus TCP
-aiomqtt>=2.0.1          # MQTT async client
+asyncua==2.0.1          # OPC UA
+pymodbus==3.15.0        # Modbus TCP
+aiomqtt==2.5.1          # MQTT async client
 
 # HTTP (simulator API calls)
-aiohttp>=3.10.0
+aiohttp==3.14.3
 
 # Local config app
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
 
 # Data / Config
-pydantic>=2.9.0
-pydantic-settings>=2.5.0
+pydantic==2.11.10
+pydantic-settings==2.10.1
 
 # Security
-cryptography>=42.0.8    # AES-256 encryption
+cryptography==45.0.7    # AES-256 encryption
 
 # Persistence / Buffer
-aiosqlite>=0.20.0       # Local SQLite buffer when offline
+aiosqlite==0.22.1       # Local SQLite buffer when offline
 
 # Observability
-structlog>=24.2.0
-prometheus-client>=0.20.0
+structlog==25.4.0
+prometheus-client==0.26.0

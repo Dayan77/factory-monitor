@@ -1,86 +1,54 @@
-import { useState, useEffect, useRef } from "react";
-import { useAuthStore } from "@/store/auth";
-import { useQueries } from "@tanstack/react-query";
-import { machinesApi, tagsApi } from "@/services/api";
-
-interface LiveReading {
-  tag_id: string;
-  value: number;
-  unit?: string;
-  timestamp: string;
-}
-
-interface SparkPoint { v: number }
-
-const MAX_SPARK = 30;
+import { useMemo } from "react";
+import MachineStatusBadge from "@/components/MachineStatusBadge";
+import EmptyState from "@/components/ui/EmptyState";
+import ErrorState from "@/components/ui/ErrorState";
+import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
+import { useMachines, useTags } from "@/hooks/useQueries";
+import { useRealtimeStore } from "@/store/realtime";
+import type { Tag } from "@/services/types";
 
 export default function SensorsPage() {
-  const { user } = useAuthStore();
-  const [readings, setReadings] = useState<Record<string, LiveReading>>({});
-  const [sparklines, setSparklines] = useState<Record<string, SparkPoint[]>>({});
-  const [wsStatus, setWsStatus] = useState<"connecting" | "live" | "disconnected">("connecting");
-  const wsRef = useRef<WebSocket | null>(null);
+  const readings   = useRealtimeStore((s) => s.readings);
+  const sparklines = useRealtimeStore((s) => s.history);
+  const wsStatus   = useRealtimeStore((s) => s.status);
 
-  // Load machines and their tags
-  const machinesQuery = useQueries({
-    queries: [],
-  });
+  const machinesQ = useMachines();
+  const tagsQ     = useTags();
 
-  const [machines, setMachines] = useState<any[]>([]);
-  const [tagsByMachine, setTagsByMachine] = useState<Record<string, any[]>>({});
-
-  useEffect(() => {
-    machinesApi.list().then(r => {
-      setMachines(r.data);
-      r.data.forEach((m: any) => {
-        tagsApi.list(m.id).then(tr => {
-          setTagsByMachine(prev => ({ ...prev, [m.id]: tr.data }));
-        }).catch(() => {});
-      });
-    }).catch(() => {});
-  }, []);
-
-  // WebSocket for live data
-  useEffect(() => {
-    if (!user?.tenant_id) return;
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${window.location.host}/ws/sensors/${user.tenant_id}`;
-
-    function connect() {
-      setWsStatus("connecting");
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.onopen = () => setWsStatus("live");
-
-      ws.onmessage = (e) => {
-        try {
-          const data: LiveReading = JSON.parse(e.data);
-          setReadings(prev => ({ ...prev, [data.tag_id]: data }));
-          setSparklines(prev => {
-            const cur = prev[data.tag_id] || [];
-            const next = [...cur, { v: data.value }].slice(-MAX_SPARK);
-            return { ...prev, [data.tag_id]: next };
-          });
-        } catch {}
-      };
-
-      ws.onclose = () => {
-        setWsStatus("disconnected");
-        setTimeout(connect, 3000);
-      };
+  const tagsByMachine = useMemo(() => {
+    const map: Record<string, Tag[]> = {};
+    for (const t of tagsQ.data ?? []) {
+      if (t.machine_id) (map[t.machine_id] ??= []).push(t);
     }
-
-    connect();
-    return () => wsRef.current?.close();
-  }, [user?.tenant_id]);
+    return map;
+  }, [tagsQ.data]);
 
   const statusColors = {
-    live: "bg-green-400",
+    connected: "bg-green-400",
     connecting: "bg-yellow-400 animate-pulse",
     disconnected: "bg-gray-600",
   };
-  const statusLabels = { live: "Ao vivo", connecting: "Conectando…", disconnected: "Desconectado" };
+  const statusLabels = { connected: "Ao vivo", connecting: "Conectando…", disconnected: "Desconectado" };
+
+  if (machinesQ.isPending || tagsQ.isPending) {
+    return (
+      <LoadingRegion label="Carregando sensores…">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+          {[0, 1].map((i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
+        </div>
+      </LoadingRegion>
+    );
+  }
+  if (machinesQ.isError || tagsQ.isError) {
+    return (
+      <ErrorState
+        title="Não foi possível carregar máquinas e sensores"
+        error={machinesQ.error ?? tagsQ.error}
+        onRetry={() => { void machinesQ.refetch(); void tagsQ.refetch(); }}
+      />
+    );
+  }
+  const machines = machinesQ.data;
 
   return (
     <div className="space-y-6">
@@ -98,9 +66,8 @@ export default function SensorsPage() {
 
       {/* Machines with sensors */}
       {machines.length === 0 ? (
-        <div className="text-center py-20 text-gray-600">
-          <p className="text-sm">Nenhuma máquina encontrada.</p>
-          <p className="text-xs mt-1">Use o App Edge para cadastrar máquinas e sensores.</p>
+        <div className="rounded-xl border border-gray-800 bg-gray-900">
+          <EmptyState title="Nenhuma máquina encontrada" description="Use o App Edge para cadastrar máquinas e sensores." />
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -120,14 +87,7 @@ export default function SensorsPage() {
                     <p className="text-sm font-semibold text-gray-100 truncate">{machine.name}</p>
                     <p className="text-xs text-gray-500">{machine.model || "—"}</p>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                    machine.status === "running" ? "border-green-700 text-green-400 bg-green-900/20" :
-                    machine.status === "maintenance" ? "border-yellow-700 text-yellow-400 bg-yellow-900/20" :
-                    machine.status === "error" ? "border-red-700 text-red-400 bg-red-900/20" :
-                    "border-gray-700 text-gray-500"
-                  }`}>
-                    {{running:"Operando",stopped:"Parado",maintenance:"Manutenção",error:"Falha",unknown:"—"}[machine.status as string] ?? machine.status}
-                  </span>
+                  <MachineStatusBadge status={machine.status} size="sm" />
                 </div>
 
                 {/* Tags */}
@@ -143,7 +103,7 @@ export default function SensorsPage() {
                       // Simple inline sparkline using SVG
                       const sparkSvg = () => {
                         if (spark.length < 2) return null;
-                        const vals = spark.map(p => p.v);
+                        const vals = spark;
                         const min = Math.min(...vals);
                         const max = Math.max(...vals);
                         const range = max - min || 1;
@@ -175,12 +135,12 @@ export default function SensorsPage() {
                                   {reading.value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
                                   <span className="text-xs text-gray-500 ml-1">{reading.unit || tag.unit}</span>
                                 </p>
-                                <p className="text-xs text-gray-700">
+                                <p className="text-xs text-gray-500">
                                   {new Date(reading.timestamp).toLocaleTimeString("pt-BR")}
                                 </p>
                               </>
                             ) : (
-                              <p className="text-xs text-gray-600">sem dados</p>
+                              <p className="text-xs text-gray-500">sem dados</p>
                             )}
                           </div>
                         </div>

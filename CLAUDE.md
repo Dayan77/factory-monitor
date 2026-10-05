@@ -12,17 +12,16 @@ Arquitetura: `docs/architecture.md`.
 
 ## Rodar localmente (verificado)
 ```bash
-cp .env.example .env            # POSTGRES_PASSWORD=fm_dev_password, INFLUX_TOKEN=dev-token-change-me, sem comentários inline
-cd infra && docker compose --env-file ../.env up -d postgres influxdb mosquitto
-python -m venv .venv && .venv/bin/pip install -r server/requirements.txt
-python -m venv .venv-edge && .venv-edge/bin/pip install -r edge/requirements.txt   # deps conflitam com o server
-cd server && set -a && . ../.env && set +a && ../.venv/bin/alembic upgrade head && ../.venv/bin/python ../scripts/seed_dev.py
-../.venv/bin/uvicorn src.main:app --port 8000                      # backend
-cd web && npm ci && npx vite --port 5173                            # frontend (proxy /api e /ws → :8000)
-.venv-edge/bin/python -m edge.src.simulator --server http://localhost:8000 --broker localhost
+make env && make venv          # .env a partir do exemplo; .venv (server) e .venv-edge (edge)
+make dev                       # stack completa via docker → http://localhost   (ou: make infra + backend/frontend locais)
+make migrate && make seed
+make test                      # server + edge + scripts + web; e2e: node e2e/fase0.test.mjs (stack rodando)
+.venv-edge/bin/python -m edge.src.simulator   # planta simulada (padrão: localhost)
 ```
+Backend local: `cd server && set -a && . ../.env && set +a && ../.venv/bin/uvicorn src.main:app --port 8000`;
+frontend local: `cd web && npx vite --port 5173` (proxy /api e /ws → :8000). `make help` lista todos os alvos.
 Login: `admin@factory-monitor.com` / `Admin@1234` (superadmin: `superadmin@factory-monitor.com` / `Super@1234`).
-**Nunca** rode o simulador sem `--server/--broker`: o padrão aponta para produção.
+WebSocket `/ws/sensors/{tenant_id}` exige token (subprotocolo `bearer, <jwt>` ou `?token=`).
 
 ## Regras do projeto
 - Todo dado é multi-tenant: toda query filtra por `tenant_id`. Nenhum endpoint sem teste de isolamento.

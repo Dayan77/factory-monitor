@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db import get_db
 from ...models import User, UserRole, Line
 from ...auth import get_current_user, require_roles
+from ...services.validation import is_uuid
 from ..schemas import LineOut, LineCreate, LineUpdate
 
 router = APIRouter()
@@ -15,6 +16,8 @@ DB          = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _get_line_or_404(line_id: str, tenant_id: str, db: AsyncSession) -> Line:
+    if not is_uuid(line_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linha não encontrada.")
     result = await db.execute(select(Line).where(Line.id == line_id, Line.tenant_id == tenant_id))
     line = result.scalar_one_or_none()
     if not line:

@@ -1,0 +1,2 @@
+# Dependências dos scripts de operação (deploy_remote.py / seed_remote.py)
+paramiko==3.5.1

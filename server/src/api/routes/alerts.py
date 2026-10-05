@@ -8,6 +8,8 @@ from ...db import get_db
 from ...models import User, UserRole, AlertRule, AlertEvent, Tag, Machine
 from ...auth import get_current_user, require_roles
 from ..schemas import AlertRuleOut, AlertRuleCreate, AlertEventOut
+from ..tenant_refs import ensure_owned
+from ...services.validation import is_uuid
 
 router = APIRouter()
 
@@ -28,6 +30,7 @@ async def list_rules(user: CurrentUser, db: DB):
 @router.post("/rules", response_model=AlertRuleOut, status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_roles(UserRole.manager))])
 async def create_rule(body: AlertRuleCreate, user: CurrentUser, db: DB):
+    body.tag_id = await ensure_owned(db, Tag, body.tag_id, user.tenant_id, "tag_id")
     rule = AlertRule(tenant_id=user.tenant_id, **body.model_dump())
     db.add(rule)
     await db.commit()
@@ -38,6 +41,8 @@ async def create_rule(body: AlertRuleCreate, user: CurrentUser, db: DB):
 @router.patch("/rules/{rule_id}/toggle",
               dependencies=[Depends(require_roles(UserRole.manager))])
 async def toggle_rule(rule_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(rule_id):
+        raise HTTPException(status_code=404, detail="Regra não encontrada.")
     result = await db.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant_id == user.tenant_id)
     )
@@ -52,6 +57,8 @@ async def toggle_rule(rule_id: str, user: CurrentUser, db: DB):
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT,
                dependencies=[Depends(require_roles(UserRole.admin))])
 async def delete_rule(rule_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(rule_id):
+        raise HTTPException(status_code=404, detail="Regra não encontrada.")
     result = await db.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant_id == user.tenant_id)
     )
@@ -105,6 +112,8 @@ def _event_out(event: AlertEvent, rule: AlertRule, tag: Tag, machine_name: str |
 @router.post("/events/{event_id}/resolve",
              dependencies=[Depends(require_roles(UserRole.operator))])
 async def resolve_event(event_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(event_id):
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
     result = await db.execute(
         select(AlertEvent).where(AlertEvent.id == event_id, AlertEvent.tenant_id == user.tenant_id)
     )

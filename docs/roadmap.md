@@ -21,6 +21,23 @@ Sem testes e sem deploy confiável, nada é "referência".
 - [ ] Status da máquina derivado dos dados; dashboard mostra nome do sensor (não UUID)
 - [ ] Imagens com versão fixa (`mediamtx`, etc.)
 
+## Site institucional — porta de entrada (paralelo às fases 1–5) ⬜
+Site público em `factoryconnect.tech` (app em `app.factoryconnect.tech`), separado do app React para
+SEO e desempenho (`site/`, gerador estático, ex. Astro). Hoje existe só a `LandingPage.tsx` dentro do app.
+
+- [ ] Remover da landing atual os cases fictícios ("Metalúrgica Fonseca", "Plásticos Norte", "Alimentos BomDia")
+      apresentados como "Resultados reais" — só cases reais com autorização do cliente
+- [ ] Formulário de contato que de fato entrega o lead (hoje descarta): API `/api/public/leads` grava no banco
+      e envia **por e-mail** (decisão do dono), com consentimento LGPD e proteção anti-spam
+- [ ] Decidido: site em `factoryconnect.tech`, app migra para `app.factoryconnect.tech` (DNS A → VPS; Traefik roteia os dois;
+      redirecionar rotas antigas do app, ex. `/login` e `/dashboard`, para o subdomínio)
+- [ ] Páginas: início, solução (coleta → eficiência → manutenção → preditiva), para manutenção, para produção,
+      como funciona (gateway + protocolos suportados), segurança, planos/preços, sobre, contato, política de privacidade
+- [ ] **Tour/demo interativa**: acesso a um tenant demo somente-leitura alimentado pela planta virtual
+- [ ] Cadastro self-service e login levando ao app; documentação pública da API e do gateway
+- [ ] SEO técnico (sitemap, meta/OG, dados estruturados), Lighthouse ≥ 95, analytics respeitando LGPD
+- [ ] Mesma identidade visual do design system do app; português primeiro, inglês depois
+
 ## Fase 1 — Modelo de ativos e coleta de uso ⬜
 - [ ] Hierarquia **Planta → Linha → Máquina → Componente** (cilindro, motor, robô/eixo, válvula, garra, rolamento…)
 - [ ] Componente com tipo, fabricante, modelo, série, data de instalação e **vida nominal** (ciclos / horas / partidas)

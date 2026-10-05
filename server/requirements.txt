@@ -1,39 +1,40 @@
+# Versões fixas (builds reprodutíveis). Compatíveis com edge/requirements.txt —
+# server e edge podem ser instalados no mesmo venv (verificado com `pip check`).
+
 # Web framework
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20
 
 # Database
-sqlalchemy[asyncio]==2.0.30
-asyncpg==0.29.0
-alembic==1.13.1
-influxdb-client[async]==1.44.0
+sqlalchemy[asyncio]==2.0.54
+asyncpg==0.30.0
+alembic==1.16.5
+influxdb-client[async]==1.49.0
 
 # Auth / Security
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
-cryptography==42.0.8
+bcrypt==4.0.1            # passlib 1.7.4 quebra com bcrypt>=4.1
+cryptography==45.0.7
 
 # MQTT
-aiomqtt==2.0.1
+aiomqtt==2.5.1
 
 # Config
-pydantic==2.7.1
-pydantic-settings==2.2.1
+pydantic[email]==2.11.10
+email-validator==2.2.0      # EmailStr (antes vinha implícito no fastapi 0.111)
+pydantic-settings==2.10.1
 
 # AI / LLM
-openai>=1.30.0
+openai==3.24.0
 
 # Notifications
-sendgrid==6.11.0
-httpx==0.27.0
+sendgrid==6.12.5
+httpx==0.28.1
 
 # Observability
-structlog==24.2.0
-prometheus-fastapi-instrumentator==7.0.0
+structlog==25.4.0
+prometheus-fastapi-instrumentator==7.1.0
 
-# Tests
-pytest==8.2.0
-pytest-asyncio==0.23.7
-httpx==0.27.0
+# Dependências de teste ficam em requirements-dev.txt (fora da imagem de produção)

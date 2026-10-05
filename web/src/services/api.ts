@@ -6,6 +6,7 @@
  */
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import type { AlertEvent, Camera, Line, Machine, SensorHistory, Tag } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -79,8 +80,8 @@ export const authApi = {
 };
 
 export const linesApi = {
-  list:   ()               => api.get("/api/lines/"),
-  get:    (id: string)     => api.get(`/api/lines/${id}`),
+  list:   ()               => api.get<Line[]>("/api/lines/"),
+  get:    (id: string)     => api.get<Line>(`/api/lines/${id}`),
   create: (body: unknown)  => api.post("/api/lines/", body),
   update: (id: string, body: unknown) => api.patch(`/api/lines/${id}`, body),
   remove: (id: string)     => api.delete(`/api/lines/${id}`),
@@ -88,8 +89,8 @@ export const linesApi = {
 
 export const machinesApi = {
   list:   (lineId?: string) =>
-    api.get("/api/machines/", { params: lineId ? { line_id: lineId } : undefined }),
-  get:    (id: string)      => api.get(`/api/machines/${id}`),
+    api.get<Machine[]>("/api/machines/", { params: lineId ? { line_id: lineId } : undefined }),
+  get:    (id: string)      => api.get<Machine>(`/api/machines/${id}`),
   create: (body: unknown)   => api.post("/api/machines/", body),
   update: (id: string, body: unknown) => api.patch(`/api/machines/${id}`, body),
   remove: (id: string)      => api.delete(`/api/machines/${id}`),
@@ -97,7 +98,7 @@ export const machinesApi = {
 
 export const tagsApi = {
   list:   (machineId?: string) =>
-    api.get("/api/tags/", { params: machineId ? { machine_id: machineId } : undefined }),
+    api.get<Tag[]>("/api/tags/", { params: machineId ? { machine_id: machineId } : undefined }),
   create: (body: unknown)      => api.post("/api/tags/", body),
   update: (id: string, body: unknown) => api.patch(`/api/tags/${id}`, body),
   remove: (id: string)         => api.delete(`/api/tags/${id}`),
@@ -109,15 +110,15 @@ export const alertsApi = {
   toggleRule:   (id: string)    => api.patch(`/api/alerts/rules/${id}/toggle`),
   deleteRule:   (id: string)    => api.delete(`/api/alerts/rules/${id}`),
   listEvents:   (activeOnly = false) =>
-    api.get("/api/alerts/events", { params: { active_only: activeOnly } }),
+    api.get<AlertEvent[]>("/api/alerts/events", { params: { active_only: activeOnly } }),
   resolveEvent: (id: string)    => api.post(`/api/alerts/events/${id}/resolve`),
 };
 
 export const sensorsApi = {
   history: (tagId: string, params?: { start?: string; stop?: string; window?: string }) =>
-    api.get("/api/sensors/history", { params: { tag_id: tagId, ...params } }),
+    api.get<SensorHistory>("/api/sensors/history", { params: { tag_id: tagId, ...params } }),
   latest:  (tagIds: string[]) =>
-    api.get("/api/sensors/latest", { params: { tag_ids: tagIds }, paramsSerializer: (p) =>
+    api.get<Record<string, number>>("/api/sensors/latest", { params: { tag_ids: tagIds }, paramsSerializer: (p) =>
       p.tag_ids.map((id: string) => `tag_ids=${id}`).join("&")
     }),
 };
@@ -128,8 +129,8 @@ export const aiApi = {
 
 export const camerasApi = {
   list:   (machineId?: string) =>
-    api.get("/api/cameras/", { params: machineId ? { machine_id: machineId } : undefined }),
-  get:    (id: string)         => api.get(`/api/cameras/${id}`),
+    api.get<Camera[]>("/api/cameras/", { params: machineId ? { machine_id: machineId } : undefined }),
+  get:    (id: string)         => api.get<Camera>(`/api/cameras/${id}`),
   create: (body: unknown)      => api.post("/api/cameras/", body),
   update: (id: string, body: unknown) => api.patch(`/api/cameras/${id}`, body),
   remove: (id: string)         => api.delete(`/api/cameras/${id}`),

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { authApi } from "@/services/api";
+import { apiErrorMessage } from "@/utils/errors";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -44,15 +45,8 @@ export default function RegisterPage() {
         admin_password: form.admin_password,
       });
       navigate("/login?registered=1", { replace: true });
-    } catch (err: any) {
-      const detail = err.response?.data?.detail;
-      setError(
-        typeof detail === "string"
-          ? detail
-          : Array.isArray(detail)
-          ? detail.map((d: any) => d.msg).join(", ")
-          : "Erro ao criar conta. Tente novamente."
-      );
+    } catch (err: unknown) {
+      setError(apiErrorMessage(err, "Erro ao criar conta. Tente novamente."));
     } finally {
       setLoading(false);
     }

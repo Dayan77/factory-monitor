@@ -32,64 +32,101 @@ export interface TenantUser {
   created_at:    string;
 }
 
-// ── Domain types ──────────────────────────────────────────────────
+// ── Domain types (mirror server/src/api/schemas.py) ───────────────
 
 export type MachineStatus = "running" | "stopped" | "maintenance" | "error" | "unknown";
 
 export interface Machine {
   id: string;
-  name: string;
-  model?: string;
-  serial_number?: string;
-  status: MachineStatus;
+  tenant_id: string;
   line_id: string;
-  line_name?: string;   // joined on backend or from mock
-  // OEE fields — computed by backend or mock
-  oee?: number;
-  availability?: number;
-  performance?: number;
-  quality?: number;
+  name: string;
+  model: string | null;
+  serial_number: string | null;
+  status: MachineStatus;
+  /** Server receive time of the last reading for any tag of this machine. */
+  last_seen_at?: string | null;
+  created_at: string;
   updated_at: string;
 }
 
 export interface Line {
   id: string;
+  tenant_id: string;
   name: string;
-  location?: string;
+  description: string | null;
+  location: string | null;
   is_active: boolean;
-  machine_count: number;
-  running_count: number;
-  oee: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProtocolType = "modbus_tcp" | "opc_ua" | "mqtt" | "http";
+export type DataType = "float" | "int" | "bool" | "string";
+
+export interface Tag {
+  id: string;
+  tenant_id: string;
+  machine_id: string | null;
+  name: string;
+  description: string | null;
+  protocol: ProtocolType;
+  address: string;
+  data_type: DataType;
+  unit: string | null;
+  scale_factor: number;
+  offset: number;
+  min_value: number | null;
+  max_value: number | null;
+  poll_interval_ms: number;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface SensorReading {
   tag_id: string;
-  tag_name?: string;
   value: number;
-  unit?: string;
+  unit?: string | null;
   timestamp: string;
 }
+
+export interface SensorHistory {
+  tag_id: string;
+  points: { timestamp: string; value: number }[];
+}
+
+export type Severity = "info" | "warning" | "critical";
 
 export interface AlertEvent {
   id: string;
   rule_id: string;
-  rule_name?: string;    // populated via join or mock
-  machine_name?: string; // populated via join or mock
-  severity: "info" | "warning" | "critical";
-  message?: string;
+  rule_name: string;
+  severity: Severity;
+  machine_name?: string | null;
+  message?: string | null;
   triggered_at: string;
-  resolved_at?: string;
-  value_at_trigger?: number;
+  resolved_at?: string | null;
+  value_at_trigger?: number | null;
   notified?: boolean;
 }
 
-export interface OeeSnapshot {
-  oee: number;
-  availability: number;
-  performance: number;
-  quality: number;
-  timestamp: string;
+// ── WebSocket messages (/ws/sensors/{tenant_id}) ─────────────────
+
+export interface SensorReadingMessage extends SensorReading {
+  type: "sensor_reading";
 }
+
+export interface MachineStatusMessage {
+  type: "machine_status";
+  machine_id: string;
+  machine_name?: string;
+  status: MachineStatus;
+  previous_status?: MachineStatus;
+  last_seen_at?: string | null;
+  timestamp?: string;
+}
+
+export type RealtimeMessage = SensorReadingMessage | MachineStatusMessage;
 
 // ── Camera ────────────────────────────────────────────────────────
 

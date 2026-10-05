@@ -164,6 +164,7 @@ class MachineOut(BaseModel):
     model: Optional[str]
     serial_number: Optional[str]
     status: MachineStatus
+    last_seen_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

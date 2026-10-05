@@ -14,6 +14,8 @@ from .config import settings
 from .api.routes import auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber
+from .services.machine_status import run_offline_sweeper
+from .services.influx import influx
 
 log = structlog.get_logger()
 
@@ -23,15 +25,22 @@ async def lifespan(app: FastAPI):
     log.info("server.starting", env=settings.app_env)
 
     # Start MQTT subscriber as background task
-    mqtt_task = asyncio.create_task(run_subscriber())
+    # Background tasks: MQTT ingestion + offline machine sweeper
+    tasks = [
+        asyncio.create_task(run_subscriber(), name="mqtt_subscriber"),
+        asyncio.create_task(run_offline_sweeper(), name="machine_offline_sweeper"),
+    ]
 
     yield
 
-    mqtt_task.cancel()
-    try:
-        await mqtt_task
-    except asyncio.CancelledError:
-        pass
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    await influx.close()
 
     log.info("server.shutdown")
 

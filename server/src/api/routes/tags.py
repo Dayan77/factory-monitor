@@ -4,9 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import get_db
-from ...models import User, UserRole, Tag
+from ...models import User, UserRole, Tag, Machine
 from ...auth import get_current_user, require_roles
 from ..schemas import TagOut, TagCreate, TagUpdate
+from ..tenant_refs import ensure_owned
+from ...services.validation import is_uuid
 
 router = APIRouter()
 
@@ -15,6 +17,8 @@ DB          = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _get_tag_or_404(tag_id: str, tenant_id: str, db: AsyncSession) -> Tag:
+    if not is_uuid(tag_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag não encontrada.")
     result = await db.execute(select(Tag).where(Tag.id == tag_id, Tag.tenant_id == tenant_id))
     tag = result.scalar_one_or_none()
     if not tag:
@@ -34,6 +38,8 @@ async def list_tags(user: CurrentUser, db: DB, machine_id: str | None = None):
 @router.post("/", response_model=TagOut, status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_roles(UserRole.admin))])
 async def create_tag(body: TagCreate, user: CurrentUser, db: DB):
+    if body.machine_id is not None:
+        body.machine_id = await ensure_owned(db, Machine, body.machine_id, user.tenant_id, "machine_id")
     tag = Tag(tenant_id=user.tenant_id, **body.model_dump())
     db.add(tag)
     await db.commit()

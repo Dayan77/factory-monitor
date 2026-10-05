@@ -4,9 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import get_db
-from ...models import User, UserRole, Machine
+from ...models import User, UserRole, Machine, Line
 from ...auth import get_current_user, require_roles
 from ..schemas import MachineOut, MachineCreate, MachineUpdate
+from ..tenant_refs import ensure_owned
+from ...services.validation import is_uuid
 
 router = APIRouter()
 
@@ -15,6 +17,8 @@ DB          = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _get_machine_or_404(machine_id: str, tenant_id: str, db: AsyncSession) -> Machine:
+    if not is_uuid(machine_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Máquina não encontrada.")
     result = await db.execute(
         select(Machine).where(Machine.id == machine_id, Machine.tenant_id == tenant_id)
     )
@@ -36,6 +40,7 @@ async def list_machines(user: CurrentUser, db: DB, line_id: str | None = None):
 @router.post("/", response_model=MachineOut, status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_roles(UserRole.admin))])
 async def create_machine(body: MachineCreate, user: CurrentUser, db: DB):
+    body.line_id = await ensure_owned(db, Line, body.line_id, user.tenant_id, "line_id")
     machine = Machine(tenant_id=user.tenant_id, **body.model_dump())
     db.add(machine)
     await db.commit()
@@ -52,6 +57,8 @@ async def get_machine(machine_id: str, user: CurrentUser, db: DB):
               dependencies=[Depends(require_roles(UserRole.manager))])
 async def update_machine(machine_id: str, body: MachineUpdate, user: CurrentUser, db: DB):
     machine = await _get_machine_or_404(machine_id, user.tenant_id, db)
+    if body.line_id is not None:
+        body.line_id = await ensure_owned(db, Line, body.line_id, user.tenant_id, "line_id")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(machine, field, value)
     await db.commit()

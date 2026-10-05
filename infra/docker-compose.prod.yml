@@ -1,15 +1,16 @@
-version: "3.9"
-
+# Produção (VPS). Rodar sempre com --env-file para a interpolação das variáveis:
+#   docker compose --env-file /opt/factory-monitor/.env -f infra/docker-compose.prod.yml up -d
+# Imagens com versão fixa — atualize de propósito, nunca via :latest.
 # Usa o Traefik já instalado pelo Easypanel para roteamento.
 # Os containers server e web são expostos via labels do Traefik na rede easypanel.
 
 services:
   # ── Databases ─────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     container_name: fm_postgres
     restart: always
-    env_file: /opt/factory-monitor/.env
+    env_file: ../.env   # = /opt/factory-monitor/.env no VPS
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -25,7 +26,7 @@ services:
     networks: [fm-net]
 
   influxdb:
-    image: influxdb:2.7-alpine
+    image: influxdb:2.7.12-alpine
     container_name: fm_influxdb
     restart: always
     environment:
@@ -45,7 +46,7 @@ services:
     networks: [fm-net]
 
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.0.22
     container_name: fm_mosquitto
     restart: always
     volumes:
@@ -65,11 +66,11 @@ services:
   # Accessed internally by fm_server only (no Traefik exposure needed).
   # HLS streams proxied to browser via GET /api/cameras/{id}/hls/...
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.21.1
     container_name: fm_mediamtx
     restart: always
     volumes:
-      - ./mediamtx/mediamtx.yml:/mediamtx.yml
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     networks: [fm-net]
 
   # ── Backend (FastAPI) ─────────────────────────────────────────────
@@ -80,7 +81,7 @@ services:
       dockerfile: Dockerfile
     container_name: fm_server
     restart: always
-    env_file: /opt/factory-monitor/.env
+    env_file: ../.env   # = /opt/factory-monitor/.env no VPS
     environment:
       POSTGRES_HOST: postgres
       INFLUX_URL: http://influxdb:8086

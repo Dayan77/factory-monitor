@@ -18,7 +18,8 @@ apiAddress: :9997
 ###############################################
 hls: yes
 hlsAddress: :8888
-hlsSegmentCount: 3
+hlsVariant: lowLatency
+hlsSegmentCount: 7          # mínimo exigido pelo MediaMTX >= 1.x com lowLatency
 hlsSegmentDuration: 2s
 hlsPartDuration: 200ms
 
@@ -33,13 +34,39 @@ rtspAddress: :8554
 ###############################################
 webrtc: no
 
+# Protocolos não usados — desligados para reduzir superfície de ataque
+rtmp: no
+srt: no
+moq: no
+
+###############################################
+# Autenticação (substitui readUser/readPass, removidos nas versões 1.x)
+# - leitura/publicação: qualquer cliente (a porta HLS/RTSP só é acessível
+#   pela rede interna do compose; o browser passa pelo proxy autenticado
+#   do fm_server em /api/cameras/{id}/hls/...)
+# - API/metrics: apenas redes privadas (fm_server na rede docker)
+###############################################
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    permissions:
+      - action: api
+      - action: metrics
+
 ###############################################
 # Default path settings
 # Cameras are registered dynamically via API — no static paths needed.
 ###############################################
 pathDefaults:
-  readUser: ""
-  readPass: ""
   sourceOnDemand: yes
   sourceOnDemandStartTimeout: 10s
   sourceOnDemandCloseAfter: 10s

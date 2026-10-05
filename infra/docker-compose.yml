@@ -1,42 +1,50 @@
-version: "3.9"
+# FactoryConnect — ambiente de DESENVOLVIMENTO.
+#
+# Use pelo Makefile na raiz (ele passa --env-file .env, de onde vêm as variáveis):
+#   make dev      # stack completa: http://localhost (nginx → web + /api)
+#   make infra    # só postgres + influxdb + mosquitto + mediamtx (backend/frontend rodando local)
+#
+# Equivalente manual: docker compose --env-file .env -f infra/docker-compose.yml up -d
+# (sem --env-file o compose procura infra/.env e as variáveis ficam vazias).
+#
+# Todas as imagens têm versão fixa. Atualize de propósito, nunca via :latest.
 
 services:
   # ── Databases ─────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     container_name: fm_postgres
     restart: unless-stopped
-    env_file: ../.env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-factory_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-fm_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env (rode via make / --env-file .env)}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   influxdb:
-    image: influxdb:2.7-alpine
+    image: influxdb:2.7.12-alpine
     container_name: fm_influxdb
     restart: unless-stopped
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: admin
-      DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD:-adminpassword}
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-factory-monitor}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-sensors}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-dev-token-change-me}
     volumes:
       - influxdb-data:/var/lib/influxdb2
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s
@@ -44,12 +52,14 @@ services:
       retries: 10
 
   # ── MQTT Broker ───────────────────────────────────────────────────
+  # Exposto em todas as interfaces para gateways edge na LAN de testes.
+  # Dev apenas: allow_anonymous (produção exige auth/TLS — roadmap Fase 6).
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.0.22
     container_name: fm_mosquitto
     restart: unless-stopped
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
     ports:
@@ -61,18 +71,37 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── MediaMTX (RTSP → HLS) ─────────────────────────────────────────
+  # O browser nunca fala direto com ele: o fm_server faz proxy em /api/cameras/{id}/hls/.
+  # Portas publicadas só em 127.0.0.1 para o backend rodando fora do Docker
+  # (MEDIAMTX_API_URL=http://localhost:9997, MEDIAMTX_HLS_URL=http://localhost:8888).
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.1
+    container_name: fm_mediamtx
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:8554:8554"
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:9997:9997"
+
   # ── Backend (FastAPI) ─────────────────────────────────────────────
   server:
     build:
       context: ../server
       dockerfile: Dockerfile
+    image: factory-monitor-server:dev
     container_name: fm_server
     restart: unless-stopped
     env_file: ../.env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
       INFLUX_URL: http://influxdb:8086
       MQTT_BROKER_HOST: mosquitto
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      MEDIAMTX_HLS_URL: http://mediamtx:8888
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,18 +109,28 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_healthy
+      mediamtx:
+        condition: service_started
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     volumes:
       - ../server:/app
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    # Migrations antes de subir a API (idempotente)
+    command: sh -c "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
-  # ── Frontend (React) ──────────────────────────────────────────────
+  # ── Frontend (React / Vite dev server) ────────────────────────────
   web:
     build:
       context: ../web
       dockerfile: Dockerfile
       target: dev
+    image: factory-monitor-web:dev
     container_name: fm_web
     restart: unless-stopped
     environment:
@@ -99,23 +138,25 @@ services:
     depends_on:
       - server
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ../web:/app
       - /app/node_modules
 
   # ── Reverse Proxy (Nginx) ─────────────────────────────────────────
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.5-alpine
     container_name: fm_nginx
     restart: unless-stopped
     depends_on:
-      - server
-      - web
+      server:
+        condition: service_healthy
+      web:
+        condition: service_started
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "80:80"
+      - "${NGINX_PORT:-80}:80"
 
 volumes:
   postgres-data:

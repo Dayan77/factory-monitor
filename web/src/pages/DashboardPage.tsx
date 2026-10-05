@@ -1,238 +1,248 @@
 import { useMemo } from "react";
-import {
-  AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend,
-} from "recharts";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import clsx from "clsx";
 
 import StatCard from "@/components/StatCard";
-import MachineStatusBadge from "@/components/MachineStatusBadge";
+import MachineStatusBadge, { STATUS_ORDER, statusLabel } from "@/components/MachineStatusBadge";
 import SeverityBadge from "@/components/SeverityBadge";
+import EmptyState from "@/components/ui/EmptyState";
+import ErrorState from "@/components/ui/ErrorState";
+import QueryView from "@/components/ui/QueryView";
+import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
+import LiveReadings from "@/components/LiveReadings";
 import { useLines, useMachines, useAlertEvents } from "@/hooks/useQueries";
-import { useRealtimeSensors } from "@/hooks/useWebSocket";
-import { useAuthStore } from "@/store/auth";
-import type { Machine, Line, AlertEvent } from "@/services/types";
+import { useNow } from "@/hooks/useNow";
+import { formatSeenAgo } from "@/utils/time";
+import type { Machine, MachineStatus } from "@/services/types";
 
-// ── Fallback mock data (used when backend is unreachable) ─────────
-import {
-  MOCK_MACHINES, MOCK_ALERTS, MOCK_LINES,
-  generateOeeTrend,
-} from "@/services/mock";
+const STATUS_BAR: Record<MachineStatus, string> = {
+  running: "bg-brand-500",
+  stopped: "bg-gray-400",
+  maintenance: "bg-yellow-500",
+  error: "bg-red-500",
+  unknown: "bg-gray-600",
+};
 
-const OEE_TREND = generateOeeTrend();
-
-function formatHour(iso: string) {
-  return format(new Date(iso), "HH:mm", { locale: ptBR });
-}
-
-const CHART_STYLE = { fontSize: 11, fill: "#6b7280" };
+const SEVERITY_RANK = { critical: 0, warning: 1, info: 2 } as const;
 
 export default function DashboardPage() {
-  const { user } = useAuthStore();
+  const linesQ    = useLines();
+  const machinesQ = useMachines();
+  const eventsQ   = useAlertEvents();
 
-  const { data: lines    = MOCK_LINES    as Line[] }       = useLines();
-  const { data: machines = MOCK_MACHINES as Machine[] }    = useMachines();
-  const { data: events   = MOCK_ALERTS   as AlertEvent[] } = useAlertEvents();
+  const machines = machinesQ.data;
+  const lines    = linesQ.data;
+  const events   = eventsQ.data;
 
-  // Live sensor readings via WebSocket
-  const { readings } = useRealtimeSensors(user?.tenant_id ?? "demo-tenant");
-
-  const totalOee = useMemo(() => {
-    const running = machines.filter((m) => m.status === "running");
-    return running.length
-      ? +(running.reduce((s, m) => s + (m.oee ?? 0), 0) / running.length).toFixed(1)
-      : 0;
+  const counts = useMemo(() => {
+    const c: Record<MachineStatus, number> = { running: 0, stopped: 0, maintenance: 0, error: 0, unknown: 0 };
+    for (const m of machines ?? []) c[m.status] += 1;
+    return c;
   }, [machines]);
 
-  const counts = useMemo(() => ({
-    running:     machines.filter((m) => m.status === "running").length,
-    stopped:     machines.filter((m) => m.status === "stopped").length,
-    maintenance: machines.filter((m) => m.status === "maintenance").length,
-    error:       machines.filter((m) => m.status === "error").length,
-  }), [machines]);
+  const activeAlerts = useMemo(
+    () =>
+      (events ?? [])
+        .filter((a) => !a.resolved_at)
+        .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.triggered_at.localeCompare(a.triggered_at)),
+    [events],
+  );
+  const criticalCount = activeAlerts.filter((a) => a.severity === "critical").length;
 
-  const activeAlerts = events.filter((a) => !a.resolved_at);
-
-  // Build live temperature series from WebSocket readings (or first mock reading)
-  const liveReadings = Array.from(readings.values());
+  const lineNames = useMemo(() => new Map((lines ?? []).map((l) => [l.id, l.name])), [lines]);
 
   return (
     <div className="space-y-6">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-        <StatCard
-          label="OEE Geral"
-          value={totalOee}
-          unit="%"
-          highlight
-          trend="up"
-          trendValue="vs meta 85%"
-          icon={
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-5">
-              <path d="M2 10a8 8 0 1 1 16 0A8 8 0 0 1 2 10zm8-3a1 1 0 0 0-1 1v2a1 1 0 0 0 .553.894l2 1a1 1 0 1 0 .894-1.789L11 9.618V8a1 1 0 0 0-1-1z" />
-            </svg>
-          }
+      {/* KPIs — real counts only */}
+      {machinesQ.isError ? (
+        <ErrorState
+          title="Não foi possível carregar as máquinas"
+          error={machinesQ.error}
+          onRetry={() => void machinesQ.refetch()}
         />
-        <StatCard
-          label="Máquinas Operando"
-          value={`${counts.running} / ${machines.length}`}
-          trend="neutral"
-          trendValue={`${lines.filter((l) => l.is_active).length} linhas ativas`}
-          icon={
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-5">
-              <path fillRule="evenodd" d="M14.5 10a4.5 4.5 0 0 0 4.284-5.882c-.105-.324-.51-.391-.752-.15L15.34 6.66a.454.454 0 0 1-.493.11 3.01 3.01 0 0 1-1.618-1.616.455.455 0 0 1 .11-.494l2.694-2.692c.24-.241.174-.647-.15-.752a4.5 4.5 0 0 0-5.873 4.575c.055.873-.128 1.808-.8 2.368l-7.23 6.024a2.724 2.724 0 1 0 3.837 3.837l6.024-7.23c.56-.672 1.495-.855 2.368-.8.096.007.193.01.291.01z" clipRule="evenodd" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="Alertas Ativos"
-          value={activeAlerts.length}
-          trend={activeAlerts.length > 0 ? "down" : "neutral"}
-          trendValue={`${activeAlerts.filter((a) => a.severity === "critical").length} críticos`}
-          icon={
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-5">
-              <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" clipRule="evenodd" />
-            </svg>
-          }
-        />
-        <StatCard
-          label="Linhas Ativas"
-          value={lines.filter((l) => l.is_active).length}
-          unit={`/ ${lines.length}`}
-          trend="neutral"
-          trendValue={`${machines.filter((m) => m.status === "error").length} em falha`}
-          icon={
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-5">
-              <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5z" clipRule="evenodd" />
-            </svg>
-          }
-        />
-      </div>
-
-      {/* Charts */}
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2 rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <p className="mb-4 text-sm font-semibold text-gray-200">OEE — Últimas 24h</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={OEE_TREND} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="gradOee" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="10%" stopColor="#25a368" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#25a368" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#1f2937" vertical={false} />
-              <XAxis dataKey="timestamp" tickFormatter={formatHour} tick={CHART_STYLE} axisLine={false} tickLine={false} interval={3} />
-              <YAxis tick={CHART_STYLE} axisLine={false} tickLine={false} domain={[40, 100]} />
-              <Tooltip
-                contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
-                labelFormatter={(v) => formatHour(v as string)}
-                formatter={(v: number) => [`${v.toFixed(1)}%`, ""]}
+      ) : (
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          {machines === undefined ? (
+            <KpiSkeletons />
+          ) : (
+            <>
+              <StatCard
+                label="Máquinas operando"
+                value={`${counts.running} / ${machines.length}`}
+                highlight={machines.length > 0 && counts.running === machines.length}
+                sub={machines.length === 0 ? "nenhuma cadastrada" : `${counts.stopped} paradas`}
               />
-              <Legend wrapperStyle={{ fontSize: 11, color: "#9ca3af" }} />
-              <Area type="monotone" dataKey="oee"          stroke="#25a368" fill="url(#gradOee)" strokeWidth={2} name="OEE" dot={false} />
-              <Area type="monotone" dataKey="availability" stroke="#60a5fa" fill="none"           strokeWidth={1.5} strokeDasharray="4 2" name="Disponib." dot={false} />
-              <Area type="monotone" dataKey="performance"  stroke="#a78bfa" fill="none"           strokeWidth={1.5} strokeDasharray="4 2" name="Desempenho" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <p className="mb-4 text-sm font-semibold text-gray-200">OEE por Linha</p>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={lines} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid stroke="#1f2937" horizontal={false} />
-              <XAxis type="number" domain={[0, 100]} tick={CHART_STYLE} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="name" width={90} tick={{ ...CHART_STYLE, fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: string) => v.split("—")[0].trim()} />
-              <Tooltip
-                contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
-                formatter={(v: number) => [`${v}%`, "OEE"]}
+              <StatCard
+                label="Sem comunicação"
+                value={counts.unknown}
+                tone={counts.unknown > 0 ? "warning" : undefined}
+                sub="status desconhecido"
               />
-              <Bar dataKey="oee" fill="#25a368" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Live sensor strip */}
-      {liveReadings.length > 0 && (
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <p className="mb-4 text-sm font-semibold text-gray-200">Leituras ao Vivo</p>
-          <div className="flex flex-wrap gap-4">
-            {liveReadings.map((r) => (
-              <div key={r.tag_id} className="rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 min-w-[140px]">
-                <p className="text-xs text-gray-500 truncate">{r.tag_name ?? r.tag_id}</p>
-                <p className="mt-1 font-mono text-xl font-bold text-brand-400">
-                  {r.value} <span className="text-sm text-gray-500">{r.unit}</span>
-                </p>
-              </div>
-            ))}
-          </div>
+              <StatCard
+                label="Alertas ativos"
+                value={events === undefined ? "—" : activeAlerts.length}
+                tone={criticalCount > 0 ? "danger" : undefined}
+                sub={eventsQ.isError ? "erro ao carregar" : `${criticalCount} críticos`}
+              />
+              <StatCard
+                label="Em falha"
+                value={counts.error}
+                tone={counts.error > 0 ? "danger" : undefined}
+                sub={`${counts.maintenance} em manutenção`}
+              />
+            </>
+          )}
         </div>
       )}
 
-      {/* Alerts + machine table */}
-      <div className="grid gap-4 xl:grid-cols-3">
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <p className="mb-4 text-sm font-semibold text-gray-200">Alertas Recentes</p>
-          <div className="space-y-3">
-            {events.slice(0, 5).map((alert) => (
-              <div key={alert.id} className="rounded-lg border border-gray-800 bg-gray-950 p-3 space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold text-gray-200 truncate">{alert.rule_name}</p>
-                  <SeverityBadge severity={alert.severity} />
-                </div>
-                <p className="text-xs text-gray-500 truncate">{alert.machine_name}</p>
-                <p className="text-xs text-gray-400">{alert.message}</p>
-                <p className="text-[10px] text-gray-600">
-                  {format(new Date(alert.triggered_at), "HH:mm · dd/MM", { locale: ptBR })}
-                  {alert.resolved_at && " · resolvido"}
-                </p>
-              </div>
-            ))}
-            {events.length === 0 && <p className="text-xs text-gray-600">Nenhum alerta.</p>}
-          </div>
-        </div>
+      {/* Status distribution + OEE placeholder */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <section className="rounded-xl border border-gray-800 bg-gray-900 p-5 xl:col-span-2" aria-labelledby="dash-status">
+          <h2 id="dash-status" className="mb-4 text-sm font-semibold text-gray-200">Status das máquinas</h2>
+          {machinesQ.isError ? (
+            <p className="text-xs text-gray-500">Indisponível.</p>
+          ) : machines === undefined ? (
+            <LoadingRegion><Skeleton className="h-3 w-full" /><Skeleton className="mt-4 h-4 w-2/3" /></LoadingRegion>
+          ) : machines.length === 0 ? (
+            <EmptyState title="Nenhuma máquina cadastrada" description="Cadastre máquinas pelo App Edge para acompanhar o status." />
+          ) : (
+            <StatusDistribution counts={counts} total={machines.length} />
+          )}
+        </section>
 
-        <div className="xl:col-span-2 rounded-xl border border-gray-800 bg-gray-900">
-          <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
-            <p className="text-sm font-semibold text-gray-200">Máquinas</p>
-            <span className="text-xs text-gray-500">{machines.length} total</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-800">
-                  {["Máquina", "Linha", "Status", "OEE", "Disponib.", "Desempenho", "Qualidade"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500">{h}</th>
+        <section className="rounded-xl border border-dashed border-gray-700 bg-gray-900/60 p-5" aria-labelledby="dash-oee">
+          <h2 id="dash-oee" className="text-sm font-semibold text-gray-200">OEE</h2>
+          <EmptyState
+            className="py-6"
+            icon={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-8" aria-hidden="true">
+                <path d="M3 3v18h18" /><path d="m7 15 4-4 3 3 5-6" />
+              </svg>
+            }
+            title="OEE disponível na Fase 2"
+            description="O cálculo de OEE (disponibilidade × desempenho × qualidade, ISO 22400) depende dos contadores de produção e estados de máquina previstos na Fase 1–2. Nenhum valor estimado é exibido até lá."
+          />
+        </section>
+      </div>
+
+      <LiveReadings />
+
+      {/* Alerts + machine table */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <section className="rounded-xl border border-gray-800 bg-gray-900 p-5" aria-labelledby="dash-alerts">
+          <h2 id="dash-alerts" className="mb-4 text-sm font-semibold text-gray-200">Alertas ativos</h2>
+          <QueryView
+            query={eventsQ}
+            errorTitle="Não foi possível carregar os alertas"
+            loading={<LoadingRegion><div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div></LoadingRegion>}
+          >
+            {() =>
+              activeAlerts.length === 0 ? (
+                <EmptyState className="py-6" title="Nenhum alerta ativo" description="Tudo em ordem no momento." />
+              ) : (
+                <ul className="space-y-3">
+                  {activeAlerts.slice(0, 5).map((alert) => (
+                    <li key={alert.id} className="space-y-1 rounded-lg border border-gray-800 bg-gray-950 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-xs font-semibold text-gray-200">{alert.rule_name}</p>
+                        <SeverityBadge severity={alert.severity} />
+                      </div>
+                      {alert.machine_name && <p className="truncate text-xs text-gray-500">{alert.machine_name}</p>}
+                      {alert.message && <p className="text-xs text-gray-400">{alert.message}</p>}
+                      <p className="text-[11px] text-gray-500">
+                        {format(new Date(alert.triggered_at), "HH:mm · dd/MM", { locale: ptBR })}
+                      </p>
+                    </li>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {machines.map((m, i) => (
-                  <tr key={m.id} className={`border-b border-gray-800/60 hover:bg-gray-800/40 transition-colors ${i === machines.length - 1 ? "border-b-0" : ""}`}>
-                    <td className="px-4 py-3 font-medium text-gray-200">{m.name}</td>
-                    <td className="px-4 py-3 text-gray-400">{m.line_name}</td>
-                    <td className="px-4 py-3"><MachineStatusBadge status={m.status} size="sm" /></td>
-                    <OeeCell value={m.oee}          active={m.status === "running"} />
-                    <OeeCell value={m.availability} active={m.status === "running"} />
-                    <OeeCell value={m.performance}  active={m.status === "running"} />
-                    <OeeCell value={m.quality}      active={m.status === "running"} />
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                </ul>
+              )
+            }
+          </QueryView>
+        </section>
+
+        <section className="rounded-xl border border-gray-800 bg-gray-900 xl:col-span-2" aria-labelledby="dash-machines">
+          <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
+            <h2 id="dash-machines" className="text-sm font-semibold text-gray-200">Máquinas</h2>
+            {machines && <span className="text-xs text-gray-500">{machines.length} total</span>}
           </div>
-        </div>
+          <QueryView
+            query={machinesQ}
+            errorTitle="Não foi possível carregar as máquinas"
+            loading={<LoadingRegion><div className="space-y-2 p-5">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div></LoadingRegion>}
+            isEmpty={(d) => d.length === 0}
+            empty={<EmptyState title="Nenhuma máquina cadastrada" />}
+          >
+            {(data) => <MachineTable machines={data} lineNames={lineNames} />}
+          </QueryView>
+        </section>
       </div>
     </div>
   );
 }
 
-function OeeCell({ value, active }: { value?: number; active: boolean }) {
-  if (!active || value == null) return <td className="px-4 py-3 text-gray-600 font-mono">—</td>;
-  const color = value >= 85 ? "text-brand-400" : value >= 65 ? "text-yellow-400" : "text-red-400";
-  return <td className={`px-4 py-3 font-mono font-medium ${color}`}>{value}%</td>;
+function KpiSkeletons() {
+  return (
+    <>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="rounded-xl border border-gray-800 bg-gray-900 p-5" role="status" aria-busy="true">
+          <span className="sr-only">Carregando…</span>
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="mt-3 h-8 w-16" />
+          <Skeleton className="mt-2 h-3 w-20" />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function StatusDistribution({ counts, total }: { counts: Record<MachineStatus, number>; total: number }) {
+  return (
+    <div>
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-gray-800" role="img"
+        aria-label={STATUS_ORDER.map((s) => `${statusLabel(s)}: ${counts[s]}`).join(", ")}>
+        {STATUS_ORDER.map((s) =>
+          counts[s] > 0 ? (
+            <div key={s} className={clsx("h-full transition-all duration-500", STATUS_BAR[s])} style={{ width: `${(counts[s] / total) * 100}%` }} />
+          ) : null,
+        )}
+      </div>
+      <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-3">
+        {STATUS_ORDER.map((s) => (
+          <li key={s} className="flex items-center gap-2 whitespace-nowrap">
+            <span className={clsx("size-2.5 shrink-0 rounded-full", STATUS_BAR[s])} aria-hidden="true" />
+            <span className="text-xs text-gray-400">{statusLabel(s)}</span>
+            <span className="font-mono text-sm font-semibold tabular-nums text-gray-100">{counts[s]}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function MachineTable({ machines, lineNames }: { machines: Machine[]; lineNames: Map<string, string> }) {
+  const now = useNow(1000);
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-800">
+            {["Máquina", "Linha", "Status", "Último sinal"].map((h) => (
+              <th key={h} scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {machines.map((m) => (
+            <tr key={m.id} className="border-b border-gray-800/60 transition-colors last:border-b-0 hover:bg-gray-800/40">
+              <td className="px-4 py-3 font-medium text-gray-200">{m.name}</td>
+              <td className="px-4 py-3 text-gray-400">{lineNames.get(m.line_id) ?? "—"}</td>
+              <td className="px-4 py-3"><MachineStatusBadge status={m.status} size="sm" /></td>
+              <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-400">{formatSeenAgo(m.last_seen_at, now)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }

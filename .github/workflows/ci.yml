@@ -1,0 +1,214 @@
+# CI — roda em todo push e pull request. Nada vai para `main` vermelho:
+# proteja a branch exigindo os jobs abaixo (Settings → Branches → Require status checks).
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  # ── Server (FastAPI) ─────────────────────────────────────────────
+  server:
+    name: server · pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.15-alpine
+        env:
+          POSTGRES_DB: factory_monitor
+          POSTGRES_USER: fm_user
+          POSTGRES_PASSWORD: fm_dev_password   # banco efêmero do CI, não é segredo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fm_user -d factory_monitor"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      influxdb:
+        image: influxdb:2.7.12-alpine
+        env:
+          DOCKER_INFLUXDB_INIT_MODE: setup
+          DOCKER_INFLUXDB_INIT_USERNAME: admin
+          DOCKER_INFLUXDB_INIT_PASSWORD: ci-admin-password
+          DOCKER_INFLUXDB_INIT_ORG: factory-monitor
+          DOCKER_INFLUXDB_INIT_BUCKET: sensors
+          DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: dev-token-change-me
+        ports: ["8086:8086"]
+        options: >-
+          --health-cmd "influx ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: fm_user
+      POSTGRES_PASSWORD: fm_dev_password
+      INFLUX_URL: http://localhost:8086
+      INFLUX_TOKEN: dev-token-change-me
+      INFLUX_ORG: factory-monitor
+      INFLUX_BUCKET: sensors
+      MQTT_BROKER_HOST: localhost
+      MQTT_BROKER_PORT: "1883"
+    steps:
+      - uses: actions/checkout@v4
+
+      # Mosquitto precisa do nosso mosquitto.conf (a config padrão da imagem só
+      # escuta em loopback) — por isso não é um `service` do job.
+      - name: Start mosquitto
+        run: |
+          docker run -d --name ci_mosquitto -p 1883:1883 \
+            -v "$PWD/infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" \
+            eclipse-mosquitto:2.0.22
+          for _ in $(seq 1 20); do
+            docker exec ci_mosquitto mosquitto_pub -h localhost -t health -m ping && exit 0
+            sleep 1
+          done
+          docker logs ci_mosquitto; exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            server/requirements*.txt
+            scripts/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r server/requirements-dev.txt -r scripts/requirements.txt
+          pip check
+
+      - name: Alembic upgrade head (banco limpo)
+        working-directory: server
+        env:
+          POSTGRES_DB: factory_monitor
+        run: alembic upgrade head
+
+      - name: pytest (server)
+        working-directory: server
+        env:
+          FM_TEST_DB: fm_test_server
+        run: python -m pytest -q
+
+      - name: pytest (scripts de operação)
+        run: python -m pytest -q scripts/tests
+
+  # ── Edge (gateway / simulador) ───────────────────────────────────
+  edge:
+    name: edge · pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: edge/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r edge/requirements.txt pytest==8.2.0 pytest-asyncio==0.23.7
+          pip check
+
+      - name: Import smoke test
+        run: python -c "import edge.app, edge.src.gateway, edge.src.simulator"
+
+      - name: pytest (edge)
+        run: |
+          if [ -d edge/tests ]; then
+            python -m pytest -q edge/tests
+          else
+            echo "::warning::edge/tests não existe — nenhum teste de edge executado"
+          fi
+
+      - name: Server + edge no mesmo ambiente (sem conflito de dependências)
+        run: |
+          pip install -r server/requirements.txt
+          pip check
+
+  # ── Web (React + TS) ─────────────────────────────────────────────
+  web:
+    name: web · tsc + vitest + build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npx vitest run
+      - name: Build
+        run: npx vite build
+
+  # ── Infra: compose, nginx, scripts ───────────────────────────────
+  infra:
+    name: infra · compose + nginx + shell
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: .env de CI a partir do exemplo
+        run: |
+          grep -vE '^\s*(#|$)' .env.example | sed 's/[[:space:]]*#.*$//' > .env
+          echo "INFLUX_ADMIN_PASSWORD=ci-only" >> .env
+      - name: docker compose config (dev e prod)
+        run: |
+          docker compose --env-file .env -f infra/docker-compose.yml config -q
+          docker compose --env-file .env -f infra/docker-compose.prod.yml config -q
+      - name: Imagens com versão fixa (sem :latest em imagens de terceiros)
+        run: |
+          bad=$(grep -hE '^\s*image:' infra/docker-compose*.yml .github/workflows/*.yml \
+                | sed -E 's/^\s*image:\s*//; s/\s*#.*$//' | grep -v '^factory-monitor-' \
+                | grep -vE ':[0-9][^:]*$' || true)
+          if [ -n "$bad" ]; then echo "::error::imagens sem versão fixa:"; echo "$bad"; exit 1; fi
+      - name: nginx -t (dev)
+        run: |
+          docker run --rm --add-host server:127.0.0.1 --add-host web:127.0.0.1 \
+            -v "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" nginx:1.30.5-alpine nginx -t
+      - name: shellcheck
+        run: shellcheck -S warning scripts/*.sh
+
+  # ── Build das imagens Docker ─────────────────────────────────────
+  docker:
+    name: docker build · ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: server, context: server, target: "" }
+          - { name: edge,   context: edge,   target: "" }
+          - { name: web,    context: web,    target: prod }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: false
+          load: false
+          tags: factory-monitor-${{ matrix.name }}:ci
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

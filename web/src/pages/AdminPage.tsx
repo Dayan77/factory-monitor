@@ -5,6 +5,7 @@ import { ptBR } from "date-fns/locale";
 import clsx from "clsx";
 import { adminApi } from "@/services/api";
 import type { TenantWithStats, TenantUser, TenantPlan } from "@/services/types";
+import { apiErrorMessage } from "@/utils/errors";
 
 // ── helpers ───────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ function CreateTenantModal({ onClose }: { onClose: () => void }) {
       trial_ends_at: form.trial_ends_at || null,
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin", "tenants"] }); onClose(); },
-    onError: (e: any) => setError(e.response?.data?.detail ?? "Erro ao criar empresa."),
+    onError: (e: unknown) => setError(apiErrorMessage(e, "Erro ao criar empresa.")),
   });
 
   function field(key: keyof typeof form) {
@@ -228,7 +229,7 @@ function EditTenantModal({ tenant, onClose }: { tenant: TenantWithStats; onClose
       is_active:        form.is_active,
     }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["admin", "tenants"] }); onClose(); },
-    onError: (e: any) => setError(e.response?.data?.detail ?? "Erro ao salvar."),
+    onError: (e: unknown) => setError(apiErrorMessage(e, "Erro ao salvar.")),
   });
 
   function field(key: keyof typeof form) {
@@ -325,7 +326,7 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
       setShowAdd(false);
       setNewUser({ name: "", email: "", password: "", role: "operator" });
     },
-    onError: (e: any) => setAddError(e.response?.data?.detail ?? "Erro ao criar usuário."),
+    onError: (e: unknown) => setAddError(apiErrorMessage(e, "Erro ao criar usuário.")),
   });
 
   const toggleUser = useMutation({

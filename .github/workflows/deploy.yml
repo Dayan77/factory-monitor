@@ -1,0 +1,114 @@
+# Deploy no VPS por SSH (chave de um usuário dedicado, não root).
+#
+# Dispara:
+#   - automaticamente quando o workflow CI termina com SUCESSO em um push na `main`
+#     (equivale a "push na main", mas nunca deploya commit vermelho);
+#   - manualmente (Actions → Deploy → Run workflow).
+#
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   VPS_HOST, VPS_USER, VPS_SSH_KEY  (obrigatórios — sem eles o deploy é pulado)
+#   VPS_KNOWN_HOSTS                  (recomendado: saída de `ssh-keyscan -H <host>`;
+#                                     sem ele a host key é obtida via ssh-keyscan na hora)
+# Variables opcionais: VPS_APP_DIR (padrão /opt/factory-monitor), PUBLIC_HEALTH_URL.
+#
+# Deploy em produção exige confirmação explícita do dono do projeto:
+# configure "Required reviewers" no environment `production`
+# (Settings → Environments → production).
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: verificar pré-requisitos
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - id: check
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          if [ -n "$VPS_HOST" ] && [ -n "$VPS_USER" ] && [ -n "$VPS_SSH_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secrets VPS_HOST/VPS_USER/VPS_SSH_KEY ausentes — deploy pulado."
+          fi
+
+  deploy:
+    name: deploy → VPS
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
+    env:
+      APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/factory-monitor' }}
+      SHA: ${{ needs.gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Configurar SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS não definido — usando ssh-keyscan (TOFU)."
+            ssh-keyscan -H "$VPS_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy (git → build → migrations → up -d → healthcheck, rollback se falhar)
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o ServerAliveInterval=30 "$VPS_USER@$VPS_HOST" \
+              'bash -s' -- "$SHA" "$APP_DIR" < scripts/remote_deploy.sh
+
+      - name: Healthcheck público
+        if: vars.PUBLIC_HEALTH_URL != ''
+        env:
+          URL: ${{ vars.PUBLIC_HEALTH_URL }}
+        run: |
+          for _ in $(seq 1 12); do
+            curl -fsS --max-time 5 "$URL" && exit 0
+            sleep 5
+          done
+          echo "::error::healthcheck público falhou: $URL"; exit 1
+
+      - name: Limpar chave
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
