@@ -7,6 +7,7 @@ export const meta = {
     { title: 'QA', detail: 'all suites + e2e on the running stack' },
     { title: 'Review', detail: 'adversarial review of the working-tree diff' },
     { title: 'Fix', detail: 'fix failures and blocking findings, re-verify' },
+    { title: 'Checkpoint', detail: 'WIP commit + push after each phase' },
   ],
 }
 
@@ -15,7 +16,7 @@ Shared environment (cloud container, repo at /home/user/factory-monitor, branch 
 - Docker daemon running; containers fm_postgres (5432, user fm_user / fm_dev_password, db factory_monitor), fm_influxdb (8086, token dev-token-change-me, org factory-monitor, bucket sensors), fm_mosquitto (1883) are UP. Do not stop them.
 - Python venvs: .venv (server deps) and .venv-edge (edge deps). Node 22 + web/node_modules installed. pip and npm registries work. apt inside docker builds is BLOCKED by the network, so 'docker build' of server/web cannot be verified here — say so instead of pretending.
 - A dev backend may be running on :8000 and vite on :5173. Other engineers work IN PARALLEL in this same checkout: stay inside your assigned area, use your own ports (pick from 8100-8199 / 5200-5299) and your own test database name (e.g. fm_test_<area>) for any servers/tests you start, and stop what you started.
-- DO NOT run git commit, git stash, git checkout, git reset or anything that changes git state — the orchestrator commits. Never touch .env or secrets.
+- DO NOT run git commit, git stash, git checkout, git reset or anything that changes git state — the orchestrator commits (WIP checkpoint commits happen between phases). Never touch .env or secrets.
 - Playwright: import from '/opt/node-tools/node_modules/playwright/index.mjs', chromium executablePath '/opt/pw-browsers/chromium'.
 - The outside internet (factoryconnect.tech, VPS) is unreachable from here.
 `
@@ -54,6 +55,11 @@ const REVIEW_SCHEMA = {
 }
 
 const role = r => `Your role: read .claude/agents/${r}.md and act as that agent (its principles are binding).`
+const BASE = args.baseSha || 'HEAD'
+// Container restarts are frequent: persist work after each phase with a WIP commit pushed to the sprint branch.
+const checkpoint = label => agent(`Run exactly, in /home/user/factory-monitor, and report the last line of output:
+git add -A && (git diff --cached --quiet || git commit -q -m "wip: sprint ${args.sprint} checkpoint (${label})" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>") && git push -q origin HEAD:claude/fervent-bardeen-tigs3b && git log --oneline -1
+Do not run anything else.`, { label: `checkpoint:${label}`, phase: 'Checkpoint', effort: 'low' })
 
 phase('Implement')
 log(`Sprint ${args.sprint}: ${args.goal}`)
@@ -62,6 +68,7 @@ const impl = await parallel(args.tasks.map(t => () =>
     { label: `impl:${t.role}`, phase: 'Implement', schema: IMPL_SCHEMA })))
 const reports = args.tasks.map((t, i) => ({ role: t.role, area: t.area, report: impl[i] }))
 const reportText = JSON.stringify(reports, null, 1)
+await checkpoint('implement')
 
 const qaPrompt = extra => `${role('qa-engineer')}\n${ENV}\nSprint ${args.sprint} goal: ${args.goal}
 The engineers' reports:\n${reportText}\n${extra || ''}
@@ -73,9 +80,10 @@ phase('QA')
 let qa = await agent(qaPrompt(), { label: 'qa', phase: 'QA', schema: QA_SCHEMA })
 
 phase('Review')
-const review = await agent(`${role('code-reviewer')}\n${ENV}\nReview the full uncommitted working tree diff (git diff HEAD plus untracked files from git status) for sprint ${args.sprint} (${args.goal}). Engineer reports:\n${reportText}`,
+const review = await agent(`${role('code-reviewer')}\n${ENV}\nReview the full sprint diff: git diff ${BASE} (WIP checkpoint commits may exist on top of the base) plus any untracked files from git status for sprint ${args.sprint} (${args.goal}). Engineer reports:\n${reportText}`,
   { label: 'review', phase: 'Review', schema: REVIEW_SCHEMA })
 
+await checkpoint('qa+review')
 let blocking = (review?.findings || []).filter(f => f.severity !== 'suggestion')
 let round = 0
 const fixLog = []
@@ -90,6 +98,7 @@ Fix root causes (never skip/disable tests). You may touch any area. Re-run the a
   fixLog.push(fix)
   qa = await agent(qaPrompt(`This is re-verification round ${round} after fixes:\n${JSON.stringify(fix, null, 1)}`), { label: `qa:round${round}`, phase: 'Fix', schema: QA_SCHEMA })
   blocking = []
+  await checkpoint(`fix${round}`)
 }
 
 return { sprint: args.sprint, reports, qa, review: review?.findings || [], fixRounds: round, fixLog }
