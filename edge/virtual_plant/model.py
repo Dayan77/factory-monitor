@@ -31,6 +31,11 @@ Caminhos de OEE exercitados (docs/domain.md §4, kpis.md §1):
 - Cilindros: contador do CLP de 16 bits (rola 65 535 → 0); tempo de curso = base + desgaste × vida
   acumulada + ruído; A2 tem degradação acelerada (+20 ms/1000 golpes) para exercitar alertas de desvio.
 
+- **Desgaste e falhas por uso** (Sprint 4, `wear.py`): vedações dos cilindros, rolamentos de motores, redutores do
+  robô e ferramentas têm vida até a falha sorteada na instalação (gerador próprio por componente, não desloca os
+  sorteios acima); a falha entra no `FaultProcess` da máquina (`source = "wear"`). Falhas impostas pela API de
+  controle (`inject_fault` / `clear_fault`) também não consomem sorteios da planta.
+
 `snapshot()["truth"]` traz a verdade de campo para o QA: eventos (falha, micro-parada, setup, starved, blocked)
 por máquina com início/duração em segundos simulados, produto ativo e tempos de run_state.
 """
@@ -45,6 +50,7 @@ from typing import Optional, Sequence, Union
 from .layout import (
     FAULT_CODES, PLANTA_MANAUS, Machine, MachineProduct, PlantLayout, ShiftDef, fault_category, signal_key,
 )
+from .wear import WearModel
 
 TICK_S = 0.1
 U16 = 0x1_0000
@@ -158,6 +164,8 @@ class PlantConfig:
     buffer_capacity_s: float = 900.0     # buffer centro → célula, em segundos de produção da célula
     buffer_refill_per_s: float = 2.0     # reposição enquanto o centro roda
     buffer_resume_s: float = 60.0        # célula volta a rodar quando o buffer chega aqui
+    wear_failures: bool = True           # falhas por desgaste (wear.py); o desgaste/sintomas existem sempre
+    wear_repair: str = "auto"            # "auto" (plantão troca o componente) | "manual" (espera a API)
 
     def with_micro_rate(self, per_h: Optional[float]) -> "PlantConfig":
         if per_h is not None:
@@ -180,6 +188,8 @@ class FaultProcess:
         self.code = 0
         self.remaining_s = 0.0
         self.events: list[dict] = []
+        self.source: Optional[str] = None     # "random" | "wear" | "forced" (falha ativa)
+        self._open: Optional[dict] = None     # evento da falha ativa
         self._run_left = rng.expovariate(1.0 / mtbf_s) if enabled else math.inf
 
     @property
@@ -194,8 +204,10 @@ class FaultProcess:
         self.code = self.rng.choice(self.codes)
         self.remaining_s = max(30.0, round(self.rng.expovariate(1.0 / self.mttr_s), 1))
         cat = fault_category(self.code)
-        self.events.append({"start_s": round(now, 1), "duration_s": self.remaining_s, "code": self.code,
-                            "category": cat["category"], "reason_code": cat["reason_code"]})
+        self._open = {"start_s": round(now, 1), "duration_s": self.remaining_s, "code": self.code,
+                      "category": cat["category"], "reason_code": cat["reason_code"]}
+        self.events.append(self._open)
+        self.source = "random"
         self._run_left = self.rng.expovariate(1.0 / self.mtbf_s)
         return True
 
@@ -204,6 +216,41 @@ class FaultProcess:
         if self.remaining_s <= 1e-9:
             self.code = 0
             self.remaining_s = 0.0
+            self._open = None
+            self.source = None
+
+    def inject(self, code: int, now: float, duration_s: Optional[float] = None, source: str = "forced",
+               **extra) -> dict:
+        """Falha imposta de fora (desgaste, API de controle). `duration_s=None` = até `clear()`.
+        Não usa o gerador da planta (não desloca os sorteios das falhas aleatórias)."""
+        if self.active:
+            self.clear(now)
+        cat = fault_category(code)
+        self.code = int(code)
+        self.remaining_s = math.inf if duration_s is None else max(TICK_S, float(duration_s))
+        self._open = {"start_s": round(now, 1), "duration_s": None if duration_s is None else self.remaining_s,
+                      "code": self.code, "category": cat["category"], "reason_code": cat["reason_code"],
+                      "source": source, **extra}
+        self.events.append(self._open)
+        self.source = source
+        return self._open
+
+    def clear(self, now: float) -> int:
+        """Encerra a falha ativa agora (reparo). Retorna o código que estava ativo (0 = nenhum)."""
+        if not self.active:
+            return 0
+        code = self.code
+        if self._open is not None:
+            self._open["duration_s"] = round(now - self._open["start_s"], 1)
+        self.code = 0
+        self.remaining_s = 0.0
+        self._open = None
+        self.source = None
+        return code
+
+    @property
+    def active_event(self) -> Optional[dict]:
+        return self._open if self.active else None
 
 
 class MicroStopProcess:
@@ -336,6 +383,12 @@ class Cylinder:
     strokes: int = 0                # golpes desde o início da simulação
     rollovers: int = 0
     stroke_ms: float = 0.0
+    strokes_at_install: int = 0     # `strokes` quando o componente atual foi instalado (troca, wear.py)
+    leak_threshold_ms: float = math.inf   # deriva do curso que vira vazamento (wear.py)
+
+    @property
+    def strokes_since_install(self) -> int:
+        return self.strokes - self.strokes_at_install
 
     def stroke(self, rng: random.Random) -> None:
         self.strokes += 1
@@ -348,7 +401,7 @@ class Cylinder:
 
     def nominal_stroke_ms(self) -> float:
         return (self.base_ms + self.wear_ms_per_kcycle * self.life_cycles / 1000.0
-                + self.degrade_ms_per_kcycle * self.strokes / 1000.0)
+                + self.degrade_ms_per_kcycle * self.strokes_since_install / 1000.0)
 
 
 def _machine(layout: PlantLayout, line_key: str, machine_key: str) -> Machine:
@@ -380,10 +433,16 @@ class MachiningMachine:
         self.scrap = 0
         self.gripper = 0
         self.cutting = False
+        self.cycles_done = 0            # ciclos completos (interno, não rola; desgaste da ferramenta)
 
     @property
     def ideal(self) -> float:
         return self.setup.product.ideal_cycle_time_s
+
+    def abort_cycle(self) -> None:
+        """Falha imposta (desgaste/API): o ciclo em curso é abortado, como numa falha aleatória."""
+        self.cycle_t, self.tc_done = 0.0, 0
+        self._stop()
 
     def _new_cycle_len(self) -> float:
         loss = self.cfg.speed_loss_pct / 100.0 + self.rng.uniform(0.0, self.cfg.speed_jitter_pct / 100.0)
@@ -428,6 +487,7 @@ class MachiningMachine:
                     self.scrap = (self.scrap + 1) % U32
                 else:
                     self.good = (self.good + 1) % U32
+            self.cycles_done += 1
             self.cycle_t, self.tc_done = 0.0, 0
             self.cycle_len = self._new_cycle_len()
             self.cutting = False
@@ -466,6 +526,7 @@ class AssemblyCell:
         self.cycle_len = self._new_cycle_len()
         self.done_strokes: dict[str, int] = {c.name: 0 for c in self.cylinders}
         self.weld_cycles = 0
+        self.cycles_done = 0            # ciclos completos (interno, não rola nem zera com o CLP)
         self.axis = [0] * 6
         self.good = 0
         self.scrap = 0
@@ -495,6 +556,11 @@ class AssemblyCell:
     def _reset_cycle(self) -> None:
         self.cycle_t = 0.0
         self.done_strokes = {c.name: 0 for c in self.cylinders}
+
+    def abort_cycle(self) -> None:
+        """Falha imposta (desgaste/API): célula para e o ciclo em curso é abortado."""
+        self._reset_cycle()
+        self.running, self.welding, self.stop_reason = False, False, "fault"
 
     def _run(self, dt: float, now: float, cal: CalendarState, plant_s: float) -> None:
         self.stop_reason = None
@@ -543,6 +609,7 @@ class AssemblyCell:
                 c.stroke(self.rng)
         if self.cycle_t >= self.cycle_len - 1e-9:
             self.weld_cycles = (self.weld_cycles + 1) % U32
+            self.cycles_done += 1
             self.axis = [(a + n) % U32 for a, n in zip(self.axis, self.AXIS_MOVES)]
             for _ in range(self.setup.product.parts_per_cycle):
                 if self.rng.random() < self.scrap_rate:
@@ -639,6 +706,8 @@ class PlantModel:
             if role == "run_state":
                 self.trackers[key] = BoolTracker()
         self._plc_code = {p.code: p.plc_code for p in layout.products}
+        self._machine_names = {f"{line.key}.{m.key}": m.name for line, m in layout.machines()}
+        self.wear = WearModel(self, repair_mode=cfg.wear_repair, failures=faults and cfg.wear_failures)
 
     # tempo
     @property
@@ -657,6 +726,7 @@ class PlantModel:
         self.torno.step(TICK_S, now, cal, plant_s)
         self.centro.step(TICK_S, now, cal, plant_s)
         self.cell.step(TICK_S, now, cal, plant_s, upstream_running=self.centro.running)
+        self.wear.tick(TICK_S, now)
         self.ticks += 1
         values = self._run_states()
         for key, tr in self.trackers.items():
@@ -674,6 +744,48 @@ class PlantModel:
 
     def run_for(self, seconds: float) -> None:
         self.advance_to(self.sim_time_s + seconds)
+
+    # falhas impostas (desgaste / API de controle da manutenção)
+    def fault_process(self, machine: str) -> FaultProcess:
+        cell = self.cell
+        procs = {self.torno.key: self.torno.fault, self.centro.key: self.centro.fault,
+                 "montagem.robo": cell.robot_fault, "montagem.fixacao": cell.fix_fault,
+                 "montagem.transportador": cell.conv_fault}
+        try:
+            return procs[machine]
+        except KeyError:
+            raise KeyError(machine) from None
+
+    def machine_name(self, machine: str) -> str:
+        return self._machine_names[machine]
+
+    def machine_key(self, ref: str) -> str:
+        """Chave da máquina a partir da chave ("montagem.robo") ou do nome ("Robô de Solda")."""
+        if ref in self._machine_names:
+            return ref
+        for k, name in self._machine_names.items():
+            if name.lower() == ref.strip().lower():
+                return k
+        raise KeyError(ref)
+
+    def inject_fault(self, machine: str, code: int, duration_s: Optional[float] = None, source: str = "forced",
+                     **extra) -> dict:
+        """Falha agora na máquina (para e aborta o ciclo). `duration_s=None` = até `clear_fault()`."""
+        fp = self.fault_process(machine)
+        ev = fp.inject(code, self.sim_time_s, duration_s, source, **extra)
+        if machine in (self.torno.key, self.centro.key):
+            (self.torno if machine == self.torno.key else self.centro).abort_cycle()
+        else:
+            self.cell.abort_cycle()
+        return ev
+
+    def clear_fault(self, machine: str, only_item: Optional[str] = None) -> int:
+        """Encerra a falha ativa da máquina (0 = não havia). `only_item`: só se a falha é desse item de desgaste."""
+        fp = self.fault_process(machine)
+        ev = fp.active_event
+        if only_item is not None and (ev is None or ev.get("item") != only_item):
+            return 0
+        return fp.clear(self.sim_time_s)
 
     # valores
     def _run_states(self) -> dict[str, bool]:
@@ -736,19 +848,27 @@ class PlantModel:
     def _analog(self) -> dict[str, float]:
         n = self.noise.gauss
         t, c, cell = self.torno, self.centro, self.cell
+        w = self.wear.items
+        f_tt = w["usinagem.torno.tool"].wear_frac
+        f_ct = w["usinagem.centro.tool"].wear_frac
+        f_mot = w["montagem.transportador.motor"].wear_frac
+        f_pump = w["usinagem.centro.coolant"].wear_frac
 
         def on(flag: bool, val: float, sd: float, idle: float = 0.0) -> float:
             return round(max(0.0, val + n(0, sd)) if flag else max(0.0, idle + abs(n(0, idle * 0.1 + 1e-6))), 2)
 
         return {
             "usinagem.torno.spindle.speed": on(t.cutting, 3200.0, 15.0),
-            "usinagem.torno.spindle.current": on(t.cutting, 22.0, 0.8, 0.4),
+            "usinagem.torno.spindle.current": on(t.cutting, 22.0 * (1 + 0.25 * f_tt ** 2), 0.8, 0.4),
             "usinagem.torno.servo_x.current": on(t.cutting, 4.5, 0.3, 0.2),
             "usinagem.torno.servo_z.current": on(t.cutting, 5.2, 0.3, 0.2),
             "usinagem.centro.spindle.speed": on(c.cutting, 8000.0, 40.0),
-            "usinagem.centro.spindle.current": on(c.cutting, 18.5, 0.7, 0.5),
-            "usinagem.centro.coolant.current": on(c.cutting, 6.5, 0.2),
-            "montagem.transportador.motor.current": on(cell.running, 3.2, 0.1),
+            "usinagem.centro.spindle.current": on(c.cutting, 18.5 * (1 + 0.25 * f_ct ** 2), 0.7, 0.5),
+            "usinagem.centro.coolant.current": on(c.cutting, 6.5 * (1 + 0.3 * f_pump ** 2), 0.2),
+            "montagem.transportador.motor.current": on(cell.running, 3.2 * (1 + 0.3 * f_mot ** 2), 0.1),
+            # vibração (mm/s RMS) cresce com o desgaste do rolamento; parado ≈ ruído de fundo
+            "usinagem.centro.coolant.vibration": on(c.cutting, 1.1 + 6.0 * f_pump ** 4, 0.08, 0.05),
+            "montagem.transportador.motor.vibration": on(cell.running, 1.1 + 6.0 * f_mot ** 4, 0.08, 0.05),
         }
 
     def values(self, include_analog: bool = True) -> dict[str, float | int | bool]:
@@ -809,5 +929,6 @@ class PlantModel:
                 "calendar": {"production": cal.production, "shift": cal.shift, "in_break": cal.in_break,
                              "plant_s": round(self.plant_seconds(), 1)},
                 "buffer_s": round(cell.buffer_s, 1),
+                "wear": self.wear.status(),
             },
         }

@@ -284,6 +284,9 @@ PLANTA_MANAUS = PlantLayout(
                         Signal("coolant.current", "Bomba de refrigeração — corrente", "current", "float", "A",
                                position="Motor da bomba de refrigeração"),
                         _product_signal(),
+                        # Sprint 4: vibração do mancal (desgaste do rolamento, wear.py)
+                        Signal("coolant.vibration", "Bomba de refrigeração — vibração", "analog", "float", "mm/s",
+                               position="Motor da bomba de refrigeração"),
                     ),
                 ),
             ),
@@ -365,6 +368,9 @@ PLANTA_MANAUS = PlantLayout(
                                "counter32", "pcs"),
                         _product_signal(),
                         *_flow_signals(),
+                        # Sprint 4: vibração do mancal (desgaste do rolamento, wear.py); bruto × 0,01 mm/s
+                        Signal("motor.vibration", "Motor — vibração", "analog", "float", "mm/s",
+                               position="Motor do transportador", scale=0.01),
                     ),
                 ),
             ),
@@ -411,6 +417,23 @@ FAULT_CODES: dict[str, dict[int, str]] = {
     "montagem.transportador": {151: "Correia desalinhada", 251: "Sobrecarga do motor",
                                351: "Emergência acionada (CLP de segurança)"},
 }
+
+# Falhas por desgaste (Sprint 4, edge/virtual_plant/wear.py): só acontecem quando o uso do componente atinge a
+# vida sorteada na instalação. Ficam FORA da tabela das falhas aleatórias (FaultProcess sorteia em FAULT_CODES),
+# mas entram no mapa do gateway (fault_code_map/fault_codes) como qualquer código da máquina.
+WEAR_FAULT_CODES: dict[str, dict[int, str]] = {
+    "usinagem.torno": {523: "Ferramenta no fim de vida (desgaste)"},
+    "usinagem.centro": {214: "Rolamento do motor da bomba de refrigeração travando",
+                        524: "Ferramenta no fim de vida (desgaste)"},
+    "montagem.robo": {131 + n: f"Folga excessiva no redutor do eixo {n}" for n in range(1, 7)},
+    "montagem.fixacao": {443 + i: f"Vazamento na vedação do cilindro A{i + 1}" for i in range(4)},
+    "montagem.transportador": {252: "Rolamento do motor travando (proteção do motor)"},
+}
+
+
+def all_fault_codes(machine: str) -> dict[int, str]:
+    """Todos os códigos que a máquina pode publicar (aleatórios + desgaste)."""
+    return {**FAULT_CODES.get(machine, {}), **WEAR_FAULT_CODES.get(machine, {})}
 
 
 def product_by_code(layout: "PlantLayout", code: str) -> Product:
@@ -498,7 +521,7 @@ def build_plant_map(
                               "parts_per_cycle": mp.parts_per_cycle, "is_default": mp.is_default}
                              for mp in m.products],
                 "fault_code_map": {str(c): fault_category(c)["reason_code"]
-                                   for c in sorted(FAULT_CODES.get(f"{line.key}.{m.key}", {}))},
+                                   for c in sorted(all_fault_codes(f"{line.key}.{m.key}"))},
                 "positions": [{
                     "name": p.name, "component_type": p.component_type,
                     "cycles_per_part": p.cycles_per_part,
@@ -581,8 +604,8 @@ def build_plant_map(
             "lines": lines,
         },
         "fault_categories": {f"{k}00-{k}99": v for k, v in FAULT_CATEGORIES.items()},
-        "fault_codes": {k: {str(c): {"description": d, **fault_category(c)} for c, d in sorted(v.items())}
-                        for k, v in FAULT_CODES.items()},
+        "fault_codes": {k: {str(c): {"description": d, **fault_category(c)}
+                            for c, d in sorted(all_fault_codes(k).items())} for k in FAULT_CODES},
         "product_codes": {str(p.plc_code): p.code for p in layout.products},
         "tags": tags,
     }

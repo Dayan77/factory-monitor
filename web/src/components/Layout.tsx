@@ -4,6 +4,7 @@ import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { useAuthStore } from "@/store/auth";
 import { useRealtimeConnection } from "@/hooks/useWebSocket";
+import EmergencyAlert from "./notifications/EmergencyAlert";
 
 export default function Layout() {
   const tenantId = useAuthStore((s) => s.user?.tenant_id);
@@ -19,6 +20,7 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+      <EmergencyAlert />
     </div>
   );
 }

@@ -4,6 +4,7 @@ com categoria, starved/blocked, refugo e tag de produto. Tudo determinístico (s
 import pytest
 
 from edge.virtual_plant.layout import (
+    WEAR_FAULT_CODES,
     FAULT_CATEGORIES, FAULT_CODES, PLANTA_MANAUS, STANDARD_SHIFTS, Break, ShiftDef, addresses, address_string,
     build_plant_map, fault_category,
 )
@@ -181,7 +182,9 @@ def test_fault_events_carry_category_and_stop_machine():
     for key, evs in faults.items():
         for e in evs:
             n += 1
-            assert e["code"] in FAULT_CODES[key]
+            # aleatórias da tabela da máquina; por desgaste (wear.py) da tabela de desgaste
+            table = WEAR_FAULT_CODES if e.get("source") == "wear" else FAULT_CODES
+            assert e["code"] in table[key]
             assert e["reason_code"] == fault_category(e["code"])["reason_code"]
             assert e["duration_s"] >= 30
     assert n >= 20

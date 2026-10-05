@@ -106,3 +106,32 @@ def test_production_oee_migration_seeds_reasons_dedupes_counter_tags_and_is_reve
         run_alembic("upgrade", "head", db=DB)
     finally:
         run_sync(_drop_db(DB))
+
+
+def test_maintenance_migration_backfills_roles_and_is_reversible():
+    """b9c0d1e2f3a4 (Sprint 4): users.roles = [role]; new roles usable; maintenance tables; downgrade turns
+    the new roles into operator and restores the original enum."""
+    run_sync(_recreate_db(DB))
+    try:
+        run_alembic("upgrade", "a8b9c0d1e2f3", db=DB)
+        t, u = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+        run_sync(_fetch(
+            f"insert into tenants (id, name, slug, is_active, plan, max_users, max_machines) values ('{t}', 'A', 'a', true, 'trial', 5, 10);"
+            f"insert into users (id, tenant_id, email, password_hash, name, role, is_active) values "
+            f"('{u}', '{t}', 'm@x.com', 'h', 'M', 'manager', true)"))
+        run_alembic("upgrade", "head", db=DB)
+        rows = run_sync(_fetch("select roles, on_call, line_ids from users"))
+        assert [(list(r["roles"]), r["on_call"], list(r["line_ids"])) for r in rows] == [(["manager"], False, [])]
+        run_sync(_fetch(f"update users set role = 'technician', roles = '{{technician,production_supervisor}}' where id = '{u}';"
+                        "select 1"))
+        for table in ("maintenance_plans", "work_orders", "work_order_history", "work_order_labor",
+                      "work_order_replacements", "notifications", "push_subscriptions", "api_tokens", "webhooks",
+                      "webhook_deliveries", "maintenance_settings", "maintenance_absences"):
+            assert run_sync(_columns(table)), table
+        assert {"component_id", "work_order_id", "usage_at_failure"} <= run_sync(_columns("failure_records"))
+        run_alembic("downgrade", "a8b9c0d1e2f3", db=DB)
+        assert [r["role"] for r in run_sync(_fetch("select role::text as role from users"))] == ["operator"]
+        assert "roles" not in run_sync(_columns("users")) and run_sync(_columns("work_orders")) == set()
+        run_alembic("upgrade", "head", db=DB)
+    finally:
+        run_sync(_drop_db(DB))

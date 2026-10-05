@@ -53,5 +53,11 @@ class EdgeSettings(BaseSettings):
     pulse_poll_ms: int = 0      # 0 = usa o pulse_poll_ms do mapa (padrão 20 ms)
     heartbeat_interval_s: float = 0.0   # 0 = usa o heartbeat_s do mapa (padrão 10 s)
 
+    # Configuração remota (edge/src/remote_config.py). Vazio = mapa do arquivo PLANT_MAP_PATH (padrão).
+    gateway_config_url: str = ""        # URL base do servidor, URL completa ou modelo com {gateway_id}
+    gateway_token: str = ""             # Authorization: Gateway <token> (segredo: só no .env do gateway)
+    gateway_config_cache: str = "/tmp/edge_gateway_config.json"   # cópia local para partir sem servidor
+    gateway_config_timeout_s: float = 10.0
+
 
 settings = EdgeSettings()

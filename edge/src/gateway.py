@@ -12,6 +12,9 @@ Responsibilities:
 Configuration:
 - PLANT_MAP_PATH=edge/config/plant.local.json → device/tag map (edge/src/plant_map.py), the full path
   `virtual plant + provision + gateway`;
+- GATEWAY_CONFIG_URL (+ GATEWAY_TOKEN, GATEWAY_ID) → the map is fetched from the server
+  (GET /api/gateways/{gateway_id}/config, Authorization: Gateway <token>) with a local cached copy for offline
+  start and the PLANT_MAP_PATH file as last resort (edge/src/remote_config.py);
 - otherwise the legacy MODBUS_HOST + MODBUS_TAGS settings.
 
 Heartbeat (not buffered — a stale heartbeat is meaningless):
@@ -42,6 +45,7 @@ from .plant_map import PlantMap, load_plant_map
 from .protocols.modbus import ModbusDriver, ModbusTagConfig
 from .protocols.mqtt_publisher import MqttPublisher, format_ts
 from .protocols.opcua import OpcTagConfig, OpcUaDriver
+from .remote_config import load_gateway_config, local_gateway_id
 
 log = structlog.get_logger()
 
@@ -160,7 +164,16 @@ class EdgeGateway:
         await self.buffer.initialize()
         await self.publisher.connect()
 
-        if settings.plant_map_path:
+        if settings.gateway_config_url:
+            loaded = await load_gateway_config(
+                settings.gateway_config_url,
+                settings.gateway_id or local_gateway_id(settings.plant_map_path),
+                settings.gateway_token, settings.gateway_config_cache,
+                fallback_path=settings.plant_map_path, timeout_s=settings.gateway_config_timeout_s,
+            )
+            log.info("edge_gateway.config", origin=loaded.origin, revision=loaded.revision, detail=loaded.detail)
+            self.load_plant_map(loaded.plant_map)
+        elif settings.plant_map_path:
             self.load_plant_map(load_plant_map(settings.plant_map_path))
         elif settings.modbus_host:
             tags = [ModbusTagConfig.from_dict(t) for t in settings.modbus_tags]

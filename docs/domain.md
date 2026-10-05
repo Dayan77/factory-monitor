@@ -502,3 +502,63 @@ cada item e `docs/scenarios/test_scenario_e.py` é o oráculo. O dia a dia de qu
 - Alertas: `attention` ≥ 0,80, `nominal_reached` ≥ 1,00 (sem truncar). Um componente com vida nominal atingida não
   gera OS sozinho: só se houver plano; a tela "componentes" lista e o planejador decide.
 - (E: R-1 redutor 0,86 → `attention`, fim projetado 25/05/2027; M-1 75 % por partidas.)
+
+---
+
+## Esclarecimentos Sprint 5 (preditiva)
+
+As regras do módulo preditivo estão em [`docs/predictive.md`](predictive.md) (P-1 … P-12) e o assistente de IA em
+[`docs/ai_assistant.md`](ai_assistant.md). Aqui ficam só os pontos que mudam o entendimento das seções acima.
+
+### S5-1 — Gatilho de condição do plano (§5.1)
+
+- O gatilho "condição (Fase 4)" é `condition_trigger = {feature, min_severity}` (padrão `warning`) sobre os alertas
+  preditivos da posição do plano — **não** uma regra solta sobre a tag. As regras e o limite "120 % da referência"
+  ficam no monitor da posição (predictive.md P-3/P-6); o plano só diz "quando a condição chegar a `warning`, gere a OS".
+- Ele não tem `consumed`: quando dispara, o plano fica **pelo menos `due`**, com `due_trigger = condition` e
+  `next_due_date` = data pessimista da RUL de condição (ou hoje). Os demais gatilhos seguem "o que vier primeiro"
+  (S4-3) e a invariante de uma OS aberta por plano (S4-4) vale igual.
+
+### S5-2 — OS preditiva (§5.2) e PMP
+
+- `predictive` = gerada por alerta de condição (conversão ou plano de condição) **ou** por inspeção preditiva
+  (vibração, termografia). Sempre planejada no PMP (kpis.md §3.1), inclusive quando não acha defeito;
+  `predictive_no_defect_hours` é devolvido à parte (predictive.md P-9).
+- OS preditiva com alerta de origem exige `finding` na conclusão (`defect_confirmed` + falha `incipient`/`degraded`
+  com `detection_method = continuous_condition_monitoring`, ou `no_defect`).
+- Falha que chega antes da preditiva: a corretiva emergencial substitui a preditiva (cancelada `superseded`, sai do
+  cumprimento) e o alerta fecha `failed_before_action`; para a avaliação da preditiva isso é um acerto com
+  antecedência insuficiente de ação, não um erro de detecção.
+
+### S5-3 — Linha de base e troca de componente (§5.4)
+
+- A troca de componente (S4-2) e a OS com `resets_baseline = true` reiniciam a linha de base de condição da posição
+  (com aquecimento). A linha de base é da **posição**, mas reflete o componente instalado desde o último reinício.
+
+---
+
+## Revisão ISO 14224 (Sprint 5)
+
+Conferência das listas de §5.5 (e de `server/src/services/maintenance/core.py`, que as reproduz) contra a estrutura
+da ISO 14224:2016, Anexo B: **modo de falha** (tabelas por classe de equipamento), **mecanismo** (Tabela B.2),
+**causa** (Tabela B.3), **método de detecção** (Tabela B.4) e **atividade de manutenção** (Tabela B.5). Sem acesso
+ao texto da norma neste ambiente: a conferência é de memória técnica; itens marcados **(confirmar)** precisam ser
+checados no texto oficial antes de mudar código ou dados.
+
+| # | Item | Situação | Recomendação |
+|---|---|---|---|
+| 1 | Mecanismos 1.1–6.4 (§5.5) | conferem com a estrutura da B.2 (6 grupos: mecânico, material, instrumento, elétrico, influência externa, diversos) | manter |
+| 2 | Causas 1.1–5.5 (§5.5) | conferem com a B.3 (projeto, fabricação/instalação, operação/manutenção, gestão, diversos) | manter |
+| 3 | Códigos de grupo `1`, `2`, … | a norma usa `x.0` ("… geral") quando só a categoria é conhecida **(confirmar rótulos)** | aceitar `1` e `1.0` como sinônimos na API; exportar como `x.0` na integração CMMS |
+| 4 | Métodos de detecção (10 valores) | conferem com a B.4 (manutenção periódica, teste funcional, inspeção, monitoramento de condição periódico e contínuo, interferência na produção, observação casual, manutenção corretiva, sob demanda, outro) | manter; `continuous_condition_monitoring` = alarme do FactoryConnect (predictive.md P-9) |
+| 5 | **Atividade de manutenção** (B.5) | **ausente** no modelo: substituir, reparar, modificar, ajustar, readequar, verificar, serviço, testar, inspecionar, revisão geral, combinação, outro **(confirmar lista)** | acrescentar `maintenance_activity` na conclusão da OS/falha (opcional no Sprint 5; necessário para exportar dados ISO 14224 completos) |
+| 6 | `LOO` | na norma é *low output* ("saída baixa"); o rótulo atual "Perda de saída" sugere perda total (que seria `BRD`/`FTS`) | trocar o rótulo PT para "Saída baixa"; existe também `HIO` *high output* **(confirmar)** |
+| 7 | `ELP` | na norma é vazamento externo **do meio de processo**; há `ELU` para **meio de utilidade** (óleo, água de refrigeração) **(confirmar)** | para cilindro/válvula pneumática o ar é o meio de trabalho → `ELP` está certo; acrescentar `ELU` para vazamento de óleo/água em motores, bombas e redutores |
+| 8 | Curso lento | hoje `PDE` (desvio de parâmetro); várias classes de válvula/atuador têm `DOP` *delayed operation* **(confirmar classes)** | acrescentar `DOP` à lista e à lista curta de `pneumatic_cylinder` e `valve`; manter `PDE` para desvio sem atraso de operação (pressão, força) |
+| 9 | Válvulas | faltam `SPO` (operação espúria), `LCP` (vazamento na posição fechada), `PLU` (entupida), `FTR`/`FTF` (falha ao regular/funcionar sob demanda) **(confirmar)** | acrescentar como opcionais da classe `valve` |
+| 10 | Listas por tipo (`MODES_BY_COMPONENT_TYPE`) | a norma define modos **por classe de equipamento** (indústria de óleo e gás); cilindro pneumático, garra e eixo de robô **não** são classes da norma | documentar como **extensão FactoryConnect** que usa o vocabulário da norma; não afirmar na UI que a lista curta é "a lista ISO" da classe |
+| 11 | Severidade | a norma tem também **`unknown`** (impacto não registrado) além de crítica/degradada/incipiente **(confirmar)** | aceitar `unknown` só em registros importados (integração CMMS), contado à parte (`severity_unknown`) e fora de `n` até ser classificado |
+| 12 | Modo × mecanismo × causa | a norma separa *como* (modo), *processo físico* (mecanismo) e *por quê* (causa) — o modelo já separa; mecanismo `6.4`/causa `5.5` até a análise está de acordo | manter; o relatório "maus atores" deve agrupar por modo (pergunta 9 de kpis.md §5) |
+
+Mudanças nos itens 5–9 e 11 são de **dados de referência** (listas no código; os campos são texto) — sem migration
+de schema, salvo o novo campo `maintenance_activity` (item 5), que vem por migration Alembic quando for implementado.

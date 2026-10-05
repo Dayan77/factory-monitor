@@ -14,13 +14,15 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import settings
 from .api.routes import (auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras,
-                         plants, positions, components, usage, public, production, oee)
+                         plants, positions, components, usage, public, production, oee, maintenance,
+                         notifications, integration, users)
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber, cancel_inflight
 from .services.oee.detector import run_downtime_detector
 from .services.machine_status import run_offline_sweeper
 from .services.influx import influx
 from .services.usage.broadcaster import usage_broadcaster
+from .services.maintenance.engine import run_maintenance_engine, run_webhook_worker
 
 # LOG_LEVEL (default INFO): structlog printed every level, i.e. one DEBUG line per MQTT reading.
 _level = logging.getLevelName(settings.log_level.upper())
@@ -61,6 +63,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_offline_sweeper(), name="machine_offline_sweeper"),
         asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"),
         asyncio.create_task(run_downtime_detector(), name="downtime_detector"),
+        asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"),
+        asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
     ]
 
     yield
@@ -118,6 +122,17 @@ app.include_router(production.runs_router,     prefix="/api/production-runs",   
 app.include_router(production.reasons_router,  prefix="/api/reason-codes",        tags=["production"])
 app.include_router(oee.downtime_router,        prefix="/api/downtime",            tags=["oee"])
 app.include_router(oee.kpi_router,             prefix="/api",                     tags=["oee"])
+
+app.include_router(users.router,                prefix="/api/users",               tags=["users"])
+app.include_router(maintenance.plans_router,    prefix="/api/maintenance-plans",   tags=["maintenance"])
+app.include_router(maintenance.wo_router,       prefix="/api/work-orders",         tags=["maintenance"])
+app.include_router(maintenance.failures_router, prefix="/api/failures",            tags=["maintenance"])
+app.include_router(maintenance.codes_router,    prefix="/api/failure-codes",       tags=["maintenance"])
+app.include_router(maintenance.mkpi_router,     prefix="/api/maintenance",         tags=["maintenance"])
+app.include_router(notifications.router,        prefix="/api/notifications",       tags=["notifications"])
+app.include_router(notifications.push_router,   prefix="/api/push",                tags=["notifications"])
+app.include_router(integration.tokens_router,   prefix="/api/api-tokens",          tags=["integration"])
+app.include_router(integration.webhooks_router, prefix="/api/webhooks",            tags=["integration"])
 
 app.include_router(ws_router, prefix="/ws")
 

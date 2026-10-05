@@ -23,6 +23,7 @@ import { formatDec1, formatInt, formatPct } from "@/utils/format";
 import { formatSeenAgo } from "@/utils/time";
 import { fillHourly } from "@/utils/series";
 import PositionDrawer from "./PositionDrawer";
+import { AssetMaintenance } from "@/components/maintenance/MaintenancePanels";
 import { findMachine } from "./lookup";
 
 const MACHINE_MEASURES = [
@@ -309,6 +310,8 @@ export default function MachinePage() {
           {(data) => <PositionsTable usage={data} onOpen={setPosition} />}
         </QueryView>
       </Card>
+
+      <AssetMaintenance machineId={machineId} />
 
       <UsageHistoryCard machineId={machineId} usage={usage.data} />
 

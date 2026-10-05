@@ -13,6 +13,10 @@ from .camera import Camera
 from .production import (Shift, CalendarException, Product, MachineProduct, ProductionRun, ReasonCode,
                          DowntimeEvent, FailureRecord, MicroStopBucket, MachineDataSpan, DowntimeDetectorState,
                          DowntimeDetectorSnapshot)
+from .maintenance import (MaintenancePlan, WorkOrder, WorkOrderHistory, WorkOrderLabor, WorkOrderReplacement,
+                          MaintenanceSettings, MaintenanceAbsence)
+from .notification import (Notification, NotificationPreference, PushSubscription, ApiToken, Webhook,
+                           WebhookDelivery)
 
 __all__ = [
     "Base", "TimestampMixin",
@@ -27,4 +31,7 @@ __all__ = [
     "Camera",
     "Shift", "CalendarException", "Product", "MachineProduct", "ProductionRun", "ReasonCode",
     "DowntimeEvent", "FailureRecord", "MicroStopBucket", "MachineDataSpan", "DowntimeDetectorState", "DowntimeDetectorSnapshot",
+    "MaintenancePlan", "WorkOrder", "WorkOrderHistory", "WorkOrderLabor", "WorkOrderReplacement",
+    "MaintenanceSettings", "MaintenanceAbsence",
+    "Notification", "NotificationPreference", "PushSubscription", "ApiToken", "Webhook", "WebhookDelivery",
 ]

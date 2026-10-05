@@ -6,6 +6,7 @@
  *   {type: "machine_status", machine_id, status, last_seen_at, ...}
  *   {type: "usage", position_id|null, machine_id|null, measure, delta, total, timestamp}
  *   {type: "downtime", action, event: {id, machine_id, start, end, duration_s, reason_code, ...}}
+ *   {type: "notification", notification: {id, type, title, body, url, severity, created_at, read_at, ...}}
  * Legacy sensor messages without `type` are accepted as readings.
  */
 
@@ -13,6 +14,7 @@ import type {
   DowntimeEvent, DowntimeEventPatch, DowntimeMessage, DowntimeQuery, Machine, MachineStatus, MachineUsage, PositionDetail, RealtimeMessage, StatusSummary, TreePlant,
   UsageMeasure, UsageMessage,
 } from "./types";
+import type { AppNotification } from "./maintenanceTypes";
 
 const STATUSES: readonly MachineStatus[] = ["running", "stopped", "maintenance", "error", "unknown"];
 const MEASURES: readonly UsageMeasure[] = ["cycles", "hours", "starts", "good", "scrap", "total"];
@@ -76,6 +78,11 @@ export function parseRealtimeMessage(raw: string): RealtimeMessage | null {
     const event = parseDowntimeEvent(data.event);
     if (!event) return null;
     return { type: "downtime", action: typeof data.action === "string" ? data.action : undefined, event };
+  }
+
+  if (data.type === "notification") {
+    const notification = parseNotification(data.notification);
+    return notification ? { type: "notification", notification } : null;
   }
 
   if (data.type === undefined || data.type === "sensor_reading") {
@@ -321,4 +328,28 @@ export function applyDowntimeToList(
   const next = list.slice();
   next[idx] = merged;
   return next;
+}
+
+/** Validates a notification payload (WebSocket or REST). */
+export function parseNotification(v: unknown): AppNotification | null {
+  if (!isRecord(v) || typeof v.id !== "string" || typeof v.title !== "string") return null;
+  const str = (x: unknown) => (typeof x === "string" ? x : null);
+  // server names: kind / link / priority / data{work_order_id, …} / read
+  const data = isRecord(v.data) ? v.data : {};
+  const readAt = str(v.read_at) ?? (v.read === true ? str(v.updated_at) ?? str(v.created_at) ?? new Date().toISOString() : null);
+  return {
+    id: v.id,
+    type: str(v.type) ?? str(v.kind) ?? "generic",
+    title: v.title,
+    body: str(v.body),
+    url: str(v.url) ?? str(v.link),
+    severity: str(v.severity) ?? str(v.priority),
+    entity_type: str(v.entity_type),
+    entity_id: str(v.entity_id),
+    work_order_id: str(v.work_order_id) ?? str(data.work_order_id),
+    downtime_event_id: str(v.downtime_event_id) ?? str(data.downtime_event_id),
+    count: typeof v.count === "number" ? v.count : undefined,
+    created_at: str(v.updated_at) ?? str(v.created_at) ?? new Date().toISOString(),
+    read_at: readAt,
+  };
 }

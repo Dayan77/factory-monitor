@@ -512,3 +512,97 @@ de `rejected_transitions` (422).
 6. **Cenário E**: teste de aceite do módulo de manutenção do Sprint 4 — semear posições, componentes (com o uso
    desde a instalação), falhas, planos (com `last_reset`) e OS (reproduzindo `history` pela API de transições);
    conferir `expected` pelos endpoints de planos, componentes, OS, PMP/cumprimento/backlog e confiabilidade.
+
+---
+
+## Cenário F — Preditiva (Sprint 5)
+
+Arquivos: [`scenario_f_predictive.json`](scenario_f_predictive.json) (entradas + `expected`) e o oráculo
+[`test_scenario_f.py`](test_scenario_f.py); a consistência do catálogo do assistente de IA fica em
+[`test_ai_assistant_spec.py`](test_ai_assistant_spec.py). Regras: [`docs/predictive.md`](../predictive.md) P-1…P-12.
+Parâmetros dos detectores = o bloco `predictive-defaults` de predictive.md (o teste confere), exceto janela e
+aquecimento, maiores aqui para caber no JSON (`detector_overrides_vs_defaults`).
+
+| Parâmetro | Valor | Conta |
+|---|---|---|
+| EWMA | λ = 0,2, L = 3 | limite = 3 · √(0,2 / 1,8) = 3 · 0,3333 = **1,0** |
+| CUSUM | k = 0,5, h = 5 | `S = max(0, S + z − 0,5)`, dispara em `S > 5` |
+| z de entrada | recortado em ±4 | um pico vale no máximo 0,2 · 4 = 0,8 no EWMA e 4 − 0,5 = 3,5 no CUSUM — sozinho não dispara |
+| z robusto móvel | 20 janelas anteriores, limite 3,5; alerta com 3 em 10 | — |
+| Tendência / RUL | K = 10 janelas, `b/SE > 2`, faixa `b ± 2·SE` | RUL `warning` se ≤ 30 dias, `critical` se `dias_low` ≤ 7 |
+
+Ruído determinístico (período 10, índice `i mod 10`): `[0, +1, −1, +0,5, −0,5, +1,5, −1,5, 0, +2, −2]` (F1, ms) e o
+mesmo × 0,1 (F2, A). Em 20 janelas consecutivas cada valor aparece 2 vezes → **mediana 0 e MAD 1,0** (F1) / 0,1 (F2).
+
+### F1 — Cilindro B3: tempo de curso sobe até a falha
+
+Cilindro novo em **04/01/2027 06:00** local (10:00Z), 20 000 ciclos/dia contínuos; janela = 10 000 ciclos
+(**12 h**); `x_i = 200 + ruído_i + 1,0 · max(0, i − 30)` ms; bloco 25 = **212,0** (queda momentânea de ar).
+Falha (planta virtual: tempo de curso nominal = 240 ms = 1,2 · m0) no fim do bloco 70 = **08/02/2027 10:00Z**.
+
+1. **Linha de base**: bloco 1 = aquecimento; blocos 2–21 → `m0 = 200,0`, `MAD = 1,0`,
+   `1,4826 · 1,0 = 1,48 < piso 1 % · 200 = 2,0` → **σ = 2,0 ms**; estabelecida no fim do bloco 21 = 14/01 22:00Z.
+   `L_f = 1,2 · 200 = 240 ms`.
+2. **Pico (bloco 25)**: z bruto (212 − 200)/2 = 6 → recortado **4**; EWMA = 0,2 · 4 + 0,8 · (−0,0742) = **0,741**
+   < 1; CUSUM = 0 + 4 − 0,5 = **3,5** < 5; z móvel (blocos 5–24: mediana 200, MAD 1 → σ 2) = **6,0** > 3,5 →
+   anomalia pontual, 1 de 10 → **sem alerta**.
+3. **Bloco 35** (x = 200 + 1,5 + 5 = 206,5): z = 3,25; EWMA = 0,2 · 3,25 + 0,8 · 0,8576 = **1,336 > 1**;
+   CUSUM = 3,25 + 3,25 − 0,5 = **6,0 > 5**; tendência dos blocos 26–35 significativa → RUL 26 dias (17–50) ≤ 30.
+   **Alerta abre já como `warning`** em 21/01 22:00Z (EWMA + CUSUM + RUL).
+4. Depois: taxa (`R-F1-ROC`, > 0,5 ms/10 000 ciclos por 2 blocos) no bloco 36; `critical` (dias_low ≤ 7) no bloco
+   48; `% da base` (> 220 ms por 2 blocos) no 52; limite absoluto (> 230 ms por 2 blocos) só no **62**.
+
+| Quem avisou | Bloco | Antecedência até a falha |
+|---|---|---|
+| EWMA / CUSUM / RUL ≤ 30 d (`warning`) | 35 | (70 − 35) × 12 h = **420 h (17,5 dias)** |
+| taxa de variação | 36 | 408 h |
+| RUL `critical` | 48 | **264 h (11 dias)** |
+| 110 % da base | 52 | 216 h |
+| limite fixo 230 ms | 62 | **96 h (4 dias)** |
+
+**RUL nos pontos de controle** (P-6; ritmo 20 000 ciclos/dia; janela de tendência = 10 últimos blocos):
+
+| Bloco | hoje | b (ms/10 000 ciclos) | x̂ (ms) | restante (ciclos) | dias (faixa) | data (faixa) | real |
+|---|---|---|---|---|---|---|---|
+| 40 | 24/01 | 0,9394 ± 0,1492 | 209,73 | 322 258 (244 560 – 472 315) | 17 (12–24) | 10/02 (05/02 – 17/02) | 300 000 · 15 d · 08/02 |
+| 50 | 29/01 | 0,9394 ± 0,1492 | 219,73 | 215 806 (163 774 – 316 295) | 11 (8–16) | 09/02 (06/02 – 14/02) | 200 000 · 10 d · 08/02 |
+| 60 | 03/02 | 0,9394 ± 0,1492 | 229,73 | 109 355 (82 989 – 160 275) | 6 (4–9) | 09/02 (07/02 – 12/02) | 100 000 · 5 d · 08/02 |
+| 66 | 06/02 | 0,9394 ± 0,1492 | 235,73 | 45 484 (34 517 – 66 663) | 3 (1–4) | 09/02 (07/02 – 10/02) | 40 000 · 2 d · 08/02 |
+
+Conta do bloco 50: `restante = (240 − 219,727) / 9,394·10⁻⁵ = 215 806`; `dias = ceil(215 806 / 20 000) =
+ceil(10,79) = 11`; `dias_low = floor(163 774 / 20 000) = 8`; `dias_high = ceil(316 295 / 20 000) = 16`. A data
+real (08/02) está dentro da faixa nos 4 pontos. Com **plano de produção** (P-7; 30 000/dia útil, 0 no fim de
+semana, a partir de sáb 30/01) o acumulado passa 215 806 na qua **10/02** (`production_plan_example`).
+
+### F2 — Motor B: corrente sobe sem falha (falso alarme)
+
+Dia 1 = 04/01/2027 (troca de rolamentos; aquecimento). Janela = 1 dia local, média com a máquina rodando 20 h/dia;
+`x_d = 12,0 + ruído_d + 0,02 · min(max(0, d − 30), 25)` A (sobe 0,5 A entre os dias 31 e 55 e estabiliza);
+**dia 47 = feriado** (0 h rodando → janela inválida: não gera ponto, não avança EWMA/CUSUM). Nenhuma falha.
+
+1. Base dias 2–21: `m0 = 12,0`, `MAD = 0,1`, `σ = max(0,14826, piso 0,12) = **0,14826 A**`; estabelecida em
+   25/01 04:00Z.
+2. **Dia 41**: EWMA > 1 → alerta **`watch`** em 14/02 04:00Z (CUSUM confirma no dia 42). Não escala: `% da base`
+   (> 13,8 A) e limite (> 15 A) nunca disparam e a RUL de condição, quando existe, é longa — dia 38: 75 dias
+   (43–268); dia 58: **80 dias (39–528)** com ritmo **18,57 h/dia** (14 dias com o feriado; faixa 17,14–20,0);
+   dia 50: `no_significant_trend`.
+3. Fim do dia 62: planejador fecha com **`rebaseline`** (carga maior do novo produto). Nova base sem aquecimento:
+   dias 63–82 → `m0 = 12,5`, σ = 0,14826; dias 83–90 sem disparo.
+
+### Avaliação (P-10) e PMP (P-9)
+
+- VP = 1 (F1: falha 17,5 dias depois de abrir, dentro de H = 30 dias), FA = 1 (F2). Precisão **0,5** em `≥ watch`
+  e **1,0** em `≥ warning`. Falhas detectadas 1/1.
+- Tempo monitorado: F1 14/01 22:00Z → 08/02 10:00Z = **24,5 dias**; F2 25/01 → 04/04 = 69 dias − 20 de
+  reaprendizado = **49 dias**; FA por posição-ano = 1 / 73,5 × 365 = **4,966** (`watch`) e **0** (`warning`).
+- PMP com OS preditivas: (60 + 6 + 4 + 2 + 3) / (75 + 5) = **0,9375**; horas de preditiva sem defeito = 2,0.
+
+### Como o QA roda o F de ponta a ponta
+
+7. **Cenário F** (Sprint 5): (a) **motor de detecção** — alimentar as séries `windows` de F1 e F2 como
+   características já agregadas (`condition_features`) e conferir linha de base, alerta (abertura, escalonamentos,
+   evidências), RUL nos pontos de controle e `GET /api/predictive/evaluation`; `POST /api/predictive/recompute`
+   DEVE reproduzir os mesmos alertas; (b) **agregação** — publicar tempos de curso por ciclo cuja mediana por bloco
+   dê a série de F1 (ex.: 10 000 leituras = valor do bloco ± ruído simétrico) e conferir a característica;
+   (c) **planta virtual** — perfil lento de degradação até a falha (predictive.md P-11) para medir antecedência e
+   falsos alarmes reais (não é ouro: é estocástica com seed).

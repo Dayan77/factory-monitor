@@ -116,6 +116,21 @@ class ServerSettings(BaseSettings):
     smtp_tls: bool = True
     telegram_bot_token: str = ""
 
+    # Web Push (VAPID) — notifications.webpush. Without a private key push is disabled.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = ""
+    # Maintenance module (Sprint 4): engine tick (emergency calls, escalation, overdue WOs, digests),
+    # full plan recompute interval (also recomputed when usage changes) and webhook delivery tick.
+    maintenance_tick_s: float = 30.0
+    maintenance_plan_recompute_s: float = 3600.0
+    webhook_tick_s: float = 5.0
+    webhook_timeout_s: float = 10.0
+    # Outbound webhooks to private/loopback addresses are refused (SSRF) unless this is true.
+    webhook_allow_private_hosts: bool = False
+    # Public URL of the web app (links in e-mails / push).
+    app_public_url: str = "https://app.factoryconnect.tech"
+
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
     jwt_refresh_token_expire_days: int = 7

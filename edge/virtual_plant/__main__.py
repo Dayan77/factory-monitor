@@ -13,6 +13,9 @@ Planta virtual "Planta Manaus" — CLI.
     python -m edge.virtual_plant --speed-loss-pct 8 --micro-stops-per-h 6
     # playback fiel de um cenário de ouro (8 h em 8 min), relógio do cenário deslocado N dias para o passado
     python -m edge.virtual_plant --scenario docs/scenarios/scenario_c_oee_shift.json --speed 60
+    # manutenção (Sprint 4): falhas por desgaste esperam a equipe (API de controle em 127.0.0.1:7070)
+    python -m edge.virtual_plant --speed 60 --wear-repair manual
+    python -m edge.virtual_plant.control force-failure --machine montagem.robo --code 331
     # sem servidores: roda N segundos simulados e imprime o snapshot (números conhecidos para o QA)
     python -m edge.virtual_plant --seed 42 --simulate 3600
     # (re)gera o mapa do gateway a partir do layout
@@ -69,7 +72,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario-shift-days", type=int, default=None,
                    help="dias a subtrair do horário do cenário (padrão: o menor que deixa o fim ≤ agora)")
     p.add_argument("--start-time", default=env("VP_START_TIME", "06:00"), help="hora do dia no tempo simulado 0")
-    p.add_argument("--no-faults", action="store_true", help="desliga falhas aleatórias")
+    p.add_argument("--no-faults", action="store_true", help="desliga falhas aleatórias (e as por desgaste)")
+    p.add_argument("--no-wear-failures", action="store_true",
+                   help="desgaste e sintomas continuam, mas sem falha quando a vida do componente acaba")
+    p.add_argument("--wear-repair", choices=("auto", "manual"), default=env("VP_WEAR_REPAIR", "auto"),
+                   help="auto = o plantão troca o componente após um tempo sorteado (padrão); manual = a falha "
+                        "fica ativa até POST /replace ou /repair na API de controle")
+    p.add_argument("--control-port", type=int, default=int(env("VP_CONTROL_PORT", "7070")),
+                   help="API de controle da manutenção (GET /status, POST /replace /repair /force-failure); 0 desliga")
+    p.add_argument("--control-host", default=env("VP_CONTROL_HOST", "127.0.0.1"),
+                   help="interface da API de controle (padrão 127.0.0.1; outra exige VP_CONTROL_TOKEN)")
     p.add_argument("--pulse-ms", type=int, default=int(env("VP_PULSE_MS", "50")),
                    help="largura real do pulso de fim de curso, alto e baixo (padrão 50 ms)")
     p.add_argument("--update-ms", type=int, default=100, help="período de atualização dos servidores")
@@ -85,7 +97,8 @@ def make_model(args: argparse.Namespace):
         sc = Scenario.load(args.scenario)
         clock = ScenarioClock(sc, args.scenario_clock, args.scenario_shift_days, speed=args.speed)
         return ScenarioModel(sc, clock, seed=args.seed, heartbeat_s=args.scenario_heartbeat_s)
-    cfg = PlantConfig(speed_loss_pct=args.speed_loss_pct, setups=not args.no_setups)
+    cfg = PlantConfig(speed_loss_pct=args.speed_loss_pct, setups=not args.no_setups,
+                      wear_failures=not args.no_wear_failures, wear_repair=args.wear_repair)
     cfg.with_micro_rate(args.micro_stops_per_h)
     shifts = args.shifts or ("standard" if args.calendar == "standard" else None)
     return PlantModel(seed=args.seed, faults=not args.no_faults, shifts=shifts,
@@ -99,6 +112,8 @@ async def _serve(args: argparse.Namespace) -> None:
         make_model(args), speed=args.speed, host=args.host, opcua_port=args.opcua_port,
         modbus_port=args.modbus_port, status_port=args.status_port or None, update_ms=args.update_ms,
         pulse_high_ms=args.pulse_ms, pulse_low_ms=args.pulse_ms,
+        control_port=(args.control_port or None) if not args.scenario else None,
+        control_host=args.control_host, control_token=os.environ.get("VP_CONTROL_TOKEN", ""),
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -109,6 +124,12 @@ async def _serve(args: argparse.Namespace) -> None:
     print(f"Planta virtual no ar — OPC UA {rt.opcua_endpoint} | Modbus {args.host}:{args.modbus_port} | "
           f"estado http://{args.host}:{args.status_port}/state | seed={args.seed} speed={args.speed}x",
           flush=True)
+    if args.speed > 1 and args.wear_repair == "auto" and not args.scenario:
+        print(f"Aviso: a {args.speed:g}× um reparo automático de 40 min dura {40 * 60 / args.speed:.0f} s reais — o "
+              "servidor vê micro-paradas, não falhas. Para o ciclo de manutenção use --wear-repair manual.", flush=True)
+    if rt._control_runner is not None:
+        print(f"Manutenção: http://{args.control_host}:{args.control_port}/status "
+              f"(POST /replace /repair /force-failure; reparo {args.wear_repair})", flush=True)
     if args.scenario:
         info = rt.model.snapshot()["scenario"]
         print(f"Cenário {info['id']} na máquina {info['machine']}: {info['duration_s'] / 3600:.2f} h, relógio "

@@ -92,3 +92,79 @@ Idempotente (procura antes de criar; diverge → PATCH). Além de planta/linhas/
 cria turnos com pausas (`/api/shifts/`), produtos (`/api/products/`), ciclo ideal por (máquina, produto)
 (`/api/machines/{id}/products`) e o `fault_code_map` da máquina (quando o servidor expõe o campo). Servidor sem
 os endpoints do Sprint 3 → aviso e segue.
+
+## Manutenção na planta virtual (Sprint 4)
+
+### Desgaste e falhas por uso (`edge/virtual_plant/wear.py`)
+
+Cada componente tem uma **vida até a falha** sorteada na instalação (`random.Random(f"{seed}/{item}/{instalação}")`):
+a falha acontece quando o **uso desde a instalação** chega a ela — mesmo seed ⇒ mesmas falhas no mesmo uso, qualquer
+que seja `--speed`, então MTBF/MCBF do servidor são reproduzíveis. Falhas aleatórias (MTBF) continuam como antes.
+
+| item (`id` na API) | medida | sintoma | falha |
+|---|---|---|---|
+| `montagem.fixacao.a1`…`a4` (vedação) | ciclos | `stroke_time` sobe com os ciclos (A2 já gasta: +20 ms/1000 golpes) | deriva ≥ 27–33 % do curso novo → 443–446 vazamento (`EQP-03`) |
+| `montagem.transportador.motor`, `usinagem.centro.coolant` (rolamento) | horas de operação | corrente ×(1 + 0,3·f²); tags novas `motor.vibration` / `coolant.vibration` (mm/s) 1,1 + 6·f⁴ | 252 / 214 (`EQP-02`) |
+| `montagem.robo.axis1`…`axis6` (redutor) | movimentos do eixo | — | Weibull(η 4,5 M, β 2,5) condicionada à idade → 132–137 (`EQP-01`) |
+| `usinagem.torno.tool`, `usinagem.centro.tool` (ferramenta) | ciclos de corte | corrente do eixo-árvore ×(1 + 0,25·f²) | Weibull(η 800 / 380, β 4) → 523 / 524 (`EQP-05`) |
+
+Códigos seguem a centena → categoria do layout (`FAULT_CATEGORIES`): vazamento de vedação é pneumático (4xx), folga
+de redutor é mecânica (1xx). Seed 42, calendário padrão: ferramenta do centro falha em ~15 h simuladas, vedação A2 em
+~18 h, ferramenta do torno em ~18 h (≈ 15–18 min reais a `--speed 60`). `--wear-repair auto` (padrão): o plantão troca
+o componente após um tempo sorteado; `--wear-repair manual`: a máquina fica em falha até a API de controle agir.
+`--no-wear-failures` mantém só os sintomas; `--no-faults` desliga as duas. **Atenção à aceleração:** durações são em
+tempo simulado, mas o servidor mede paradas no relógio real — a `--speed 60` um reparo automático de 40 min dura 40 s
+reais e vira micro-parada (< 120 s) no servidor, assim como as falhas aleatórias. Para demonstrar o ciclo de
+manutenção acelerado use `--wear-repair manual` (a falha dura até a API agir) ou `force-failure`. Pelo mesmo motivo,
+horas de operação no servidor não aceleram (o `run_state` é integrado pelo relógio real) e, acima de ~25×, partidas
+de ciclos curtos (bomba/eixo-árvore, < 1 s real desligado) caem no debounce de `run_state` do servidor.
+
+A verdade de campo está em `GET :8091/state` → `truth.wear` e em `GET :7070/status` → `components`: por item
+`usage_since_install`, `life_to_failure`, `fails_at_usage`, `remaining`, `failures[]` (início, uso, ação) e
+`replacements[]` (idade na remoção, motivo).
+
+### API de controle (`127.0.0.1:7070`, `edge/virtual_plant/control.py`)
+
+| ação | corpo | efeito |
+|---|---|---|
+| `GET /status` | — | componentes (acima) + falha ativa por máquina |
+| `POST /replace` | `{"position": "montagem.fixacao.a2", "reset_counter": false, "reason": "preventive_replacement"}` | troca: desgaste zerado, nova vida; `reset_counter` zera o contador do CLP da posição; encerra a falha do componente |
+| `POST /repair` | `{"machine": "montagem.robo"}` | libera a máquina; falha por desgaste sem troca = paliativo (volta a falhar logo) |
+| `POST /force-failure` | `{"machine": "Robô de Solda", "code": 331, "duration_s": null}` ou `{"position": "montagem.robo.axis1"}` | falha agora (até `/repair`, ou por `duration_s` simulados); por posição = falha por desgaste do componente |
+
+Só localhost (fora disso exige `VP_CONTROL_TOKEN` + cabeçalho `X-Control-Token`). Cliente sem dependências:
+
+```bash
+python -m edge.virtual_plant.control status
+python -m edge.virtual_plant.control force-failure --machine montagem.robo --code 331   # critério de aceite 7
+python -m edge.virtual_plant.control repair montagem.robo                               # máquina volta (restored_at)
+python -m edge.virtual_plant.control replace montagem.fixacao.a2 --reset-counter         # troca com reset do CLP
+```
+
+Demonstração do ciclo completo (stack local, ~1 h): `make dev` (ou backend local) → `python -m edge.virtual_plant
+--speed 60` → `python -m edge.src.provision --speed 60` → `python -m edge.src.provision_maintenance --speed 60
+--demo-minutes 60` → gateway com `PLANT_MAP_PATH=edge/config/plant.local.json`. Os planos de calendário já nascem
+`due_soon`/`due` (rascunho de OS na hora); os de uso cruzam 80 %/100 % durante a janela; forçar a falha do robô abre a
+parada `EQP-04` e a falha; `/repair` encerra a parada (restabelecimento); `/replace` reproduz a troca da OS.
+
+### Planos de manutenção (`python -m edge.src.provision_maintenance`)
+
+Um plano por posição da Planta Manaus (e dois de máquina, por calendário), sufixo `(planta virtual)`, idempotente pelo
+nome (`POST /api/maintenance-plans/`, divergência de configuração → `PATCH`; `last_done_at` só na criação).
+`--profile demo` (padrão com `--speed > 1`): intervalo de uso = ritmo medido da posição × janela (`--demo-minutes` ×
+`--speed` para ciclos e partidas; horas de operação não aceleram — o servidor integra o `run_state` pelo relógio real)
+÷ alvo (1,5 → vence em ~40 min; 1,0 → `due_soon` em ~48 min; 0,3–0,5 → `ok`). `--profile realistic`:
+intervalos de fábrica (2 000 000 ciclos / 180 dias para vedações etc.).
+
+## Configuração remota do gateway (`edge/src/remote_config.py`)
+
+Padrão inalterado: mapa do arquivo `PLANT_MAP_PATH`. Com `GATEWAY_CONFIG_URL` (URL base do servidor) o gateway busca
+`GET {url}/api/gateways/{GATEWAY_ID}/config` com `Authorization: Gateway <GATEWAY_TOKEN>` (`If-None-Match` com o ETag
+da cópia local), valida o mapa e grava a cópia em `GATEWAY_CONFIG_CACHE` (atômica, 0600, sem o token). Sem servidor,
+401/403, 5xx ou mapa inválido → cópia local; sem cópia → `PLANT_MAP_PATH`; nada disso → não sobe. Resposta esperada:
+`{"gateway_id": "...", "revision": "...", "plant_map": {mapa v1}}` (ou o mapa v1 direto no corpo). O endpoint do
+servidor vem num sprint seguinte.
+
+No compose (`fm_virtual_plant`), a API de controle fica no localhost do container:
+`docker exec fm_virtual_plant python -m virtual_plant.control status`. Para expô-la numa rede de testes:
+`VP_CONTROL_HOST=0.0.0.0` + `VP_CONTROL_TOKEN=<segredo>` (o cliente lê `VP_CONTROL_TOKEN` e `VP_CONTROL_URL`).

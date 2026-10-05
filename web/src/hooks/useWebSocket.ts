@@ -10,6 +10,8 @@ import type {
 } from "@/services/types";
 import { queryKeys } from "@/hooks/useAssets";
 import { useRealtimeStore } from "@/store/realtime";
+import { isEmergency, useNotificationStore } from "@/store/notifications";
+import type { AppNotification } from "@/services/maintenanceTypes";
 
 const RETRY_MS = 3000;
 /** KPI queries (overview, OEE, Pareto) are recomputed server-side; refetch at most this often on stop events. */
@@ -23,6 +25,8 @@ const KPI_REFRESH_MS = 5000;
  * - usage deltas patch the cached machine usage / position detail (live counters)
  * - downtime events patch cached ["downtime", query] lists in place (or refetch them when the
  *   event is new) and schedule a throttled refresh of the KPI views (overview / OEE / Pareto)
+ * - notification messages are prepended to the cached ["notifications"] list (bell), emergency calls
+ *   raise the full-screen alert, and work-order related ones refresh the ["maintenance"] queries
  * - close 4401 (token expired/invalid): refresh the token through the API
  *   client (its 401 interceptor rotates it, or logs out) and reconnect
  * - close 4403 (token of another tenant): stop, never retry
@@ -77,6 +81,16 @@ export function useRealtimeConnection(tenantId: string | undefined) {
       }
     }
 
+    function applyNotification(n: AppNotification) {
+      qc.setQueryData<AppNotification[]>(["notifications"], (old) =>
+        old ? (old.some((o) => o.id === n.id) ? old : [n, ...old]) : old);
+      if (!qc.getQueryData(["notifications"])) void qc.invalidateQueries({ queryKey: ["notifications"], exact: true });
+      if (isEmergency(n) && !n.read_at) useNotificationStore.getState().raise(n);
+      if (n.work_order_id || /work_order|plan|failure|maint|emergenc/i.test(n.type)) {
+        void qc.invalidateQueries({ queryKey: ["maintenance"] });
+      }
+    }
+
     function connect() {
       if (destroyed || !tenantId) return;
       const token = localStorage.getItem("access_token");
@@ -99,6 +113,8 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           void qc.invalidateQueries({ queryKey: ["positions"] });
           void qc.invalidateQueries({ queryKey: ["downtime"] });
           void qc.invalidateQueries({ queryKey: ["efficiency"] });
+          void qc.invalidateQueries({ queryKey: ["maintenance"] });
+          void qc.invalidateQueries({ queryKey: ["notifications"] });
         }
         wasConnected = true;
       };
@@ -113,6 +129,8 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           applyUsage(msg);
         } else if (msg.type === "downtime") {
           applyDowntime(msg);
+        } else if (msg.type === "notification") {
+          applyNotification(msg.notification);
         } else {
           qc.setQueriesData<Machine[]>({ queryKey: ["machines"] }, (old) => applyMachineStatus(old, msg));
           qc.setQueryData<TreePlant[]>(queryKeys.tree, (old) => applyMachineStatusToTree(old, msg));

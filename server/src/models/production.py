@@ -182,6 +182,18 @@ class FailureRecord(Base, TimestampMixin):
     mechanism:         Mapped[Optional[str]]      = mapped_column(String(16), nullable=True)
     detection_method:  Mapped[Optional[str]]      = mapped_column(String(64), nullable=True)
     status:            Mapped[str]                = mapped_column(String(16), nullable=False, default="draft")
+    # Sprint 4 (domain.md §5.5): item mais baixo conhecido, tempos de reparo, vínculo com a OS.
+    component_id:      Mapped[Optional[str]]      = mapped_column(UUID(as_uuid=False), ForeignKey("components.id", ondelete="SET NULL"), nullable=True, index=True)
+    work_order_id:     Mapped[Optional[str]]      = mapped_column(UUID(as_uuid=False), ForeignKey("work_orders.id", ondelete="SET NULL", use_alter=True), nullable=True, index=True)
+    detected_at:       Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    repair_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    repair_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # snapshot de usage_since_install (componente) e usage_total (posição) em failed_at
+    usage_at_failure:  Mapped[Optional[dict]]     = mapped_column(JSONB, nullable=True)
+    note:              Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    # chamado emergencial já disparado / escalonamento (> 2 × MTTR da posição) já disparado
+    emergency_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    escalated_at:      Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MicroStopBucket(Base):

@@ -36,15 +36,36 @@ class ConnectionManager:
     def __init__(self) -> None:
         # tenant_id → set of WebSocket connections
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
+        # WebSocket → user id (per-user messages: {type: 'notification'})
+        self._users: dict[WebSocket, str] = {}
 
-    async def connect(self, ws: WebSocket, tenant_id: str, accept: bool = True) -> None:
+    async def connect(self, ws: WebSocket, tenant_id: str, accept: bool = True, user_id: Optional[str] = None) -> None:
         if accept:
             await ws.accept()
         self._connections[tenant_id].add(ws)
+        if user_id:
+            self._users[ws] = str(user_id)
         log.info("ws.connected", tenant_id=tenant_id, total=len(self._connections[tenant_id]))
 
     def disconnect(self, ws: WebSocket, tenant_id: str) -> None:
         self._connections[tenant_id].discard(ws)
+        self._users.pop(ws, None)
+
+    async def send_to_user(self, tenant_id: str, user_id: str, message: dict) -> int:
+        """Sends to the sockets of one user of the tenant (tenant isolation: only that tenant's
+        connections are considered). Returns how many sockets got it."""
+        sent, dead = 0, set()
+        for ws in list(self._connections.get(tenant_id, ())):
+            if self._users.get(ws) != str(user_id):
+                continue
+            try:
+                await ws.send_json(message)
+                sent += 1
+            except Exception:
+                dead.add(ws)
+        for ws in dead:
+            self.disconnect(ws, tenant_id)
+        return sent
 
     async def broadcast(self, tenant_id: str, message: dict) -> None:
         dead = set()
@@ -79,32 +100,39 @@ def _extract_token(ws: WebSocket) -> tuple[Optional[str], Optional[str]]:
 
 async def authorize_ws(token: Optional[str], tenant_id: str) -> tuple[Optional[int], Optional[datetime]]:
     """Checks the access token for tenant_id. Returns (close_code | None, token_expiry)."""
+    code, exp, _ = await authorize_ws_user(token, tenant_id)
+    return code, exp
+
+
+async def authorize_ws_user(token: Optional[str], tenant_id: str
+                            ) -> tuple[Optional[int], Optional[datetime], Optional[str]]:
+    """Like authorize_ws, also returning the user id (per-user notification messages)."""
     from ..db import AsyncSessionLocal       # local import: keeps module importable in tests
     from ..models import User, UserRole
 
     if not token:
-        return WS_UNAUTHORIZED, None
+        return WS_UNAUTHORIZED, None, None
     try:
         payload = decode_token(token)
     except JWTError:
-        return WS_UNAUTHORIZED, None
+        return WS_UNAUTHORIZED, None, None
     user_id = payload.get("sub")
     if not user_id or payload.get("refresh") or not is_uuid(str(user_id)):
-        return WS_UNAUTHORIZED, None
+        return WS_UNAUTHORIZED, None, None
     if not is_uuid(tenant_id):
-        return WS_FORBIDDEN, None
+        return WS_FORBIDDEN, None, None
 
     async with AsyncSessionLocal() as db:
         user = (await db.execute(
             select(User).where(User.id == user_id, User.is_active.is_(True))
         )).scalar_one_or_none()
     if user is None:
-        return WS_UNAUTHORIZED, None
+        return WS_UNAUTHORIZED, None, None
     if user.role != UserRole.superadmin and str(user.tenant_id) != ensure_uuid(tenant_id):
-        return WS_FORBIDDEN, None
+        return WS_FORBIDDEN, None, None
     exp = payload.get("exp")
     expires_at = datetime.fromtimestamp(exp, tz=timezone.utc) if isinstance(exp, (int, float)) else None
-    return None, expires_at
+    return None, expires_at, str(user.id)
 
 
 @ws_router.websocket("/sensors/{tenant_id}")
@@ -114,17 +142,17 @@ async def sensor_stream(ws: WebSocket, tenant_id: str):
     # (a pre-accept close is just an HTTP 403 with no reason in browsers).
     await ws.accept(subprotocol=subprotocol)
     try:
-        code, expires_at = await authorize_ws(token, tenant_id)
+        code, expires_at, ws_user_id = await authorize_ws_user(token, tenant_id)
     except Exception as e:  # noqa: BLE001 — DB down etc.: fail closed
         log.warning("ws.auth_error", error=str(e))
-        code, expires_at = 1011, None
+        code, expires_at, ws_user_id = 1011, None, None
     if code is not None:
         log.info("ws.rejected", tenant_id=tenant_id[:36], code=code)
         await ws.close(code=code)
         return
 
     tenant_id = ensure_uuid(tenant_id)   # same canonical form the MQTT subscriber broadcasts to
-    await manager.connect(ws, tenant_id, accept=False)
+    await manager.connect(ws, tenant_id, accept=False, user_id=ws_user_id)
     try:
         while True:
             # Keep connection alive; server pushes via manager.broadcast().

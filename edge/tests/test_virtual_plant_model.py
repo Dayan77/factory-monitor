@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from edge.virtual_plant.layout import PLANTA_MANAUS, addresses, build_plant_map
+from edge.virtual_plant.layout import PLANTA_MANAUS, addresses, all_fault_codes, build_plant_map
 from edge.virtual_plant.model import TICK_S, U16, PlantConfig, PlantModel, in_shift, parse_shifts
 
 EDGE = Path(__file__).resolve().parents[1]
@@ -88,7 +88,7 @@ def test_faults_have_code_duration_and_stop_the_machine():
     for key, evs in events.items():
         for e in evs:
             assert e["duration_s"] >= 30
-            assert e["code"] in __import__("edge.virtual_plant.layout", fromlist=["FAULT_CODES"]).FAULT_CODES[key]
+            assert e["code"] in all_fault_codes(key)
 
 
 def test_no_faults_flag():

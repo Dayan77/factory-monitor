@@ -16,6 +16,8 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import {
   canManageAssets, componentName, componentTypeLabel, LIFE_MEASURE_LABEL, REMOVAL_REASON_LABEL, rulReasonLabel,
 } from "@/utils/assets";
+import { AssetMaintenance } from "@/components/maintenance/MaintenancePanels";
+import { can } from "@/utils/maintenance";
 import { formatDate, formatDateTime, formatDec1, formatInt, formatPct } from "@/utils/format";
 import { apiErrorMessage } from "@/utils/errors";
 
@@ -309,7 +311,8 @@ function CreateForm({ d, onDone }: { d: PositionDetail; onDone: () => void }) {
 }
 
 function DrawerBody({ d }: { d: PositionDetail }) {
-  const role = useAuthStore((s) => s.user?.role);
+  const user = useAuthStore((s) => s.user);
+  const role = user?.role;
   const admin = canManageAssets(role);
   const [mode, setMode] = useState<Mode>("view");
   const c = d.installed_component;
@@ -370,6 +373,12 @@ function DrawerBody({ d }: { d: PositionDetail }) {
           {d.usage.cycles_estimated && ` Ciclos estimados: peças × ${d.cycles_per_part} ciclo(s) por peça.`}
         </p>
       </Section>
+
+      {(can(user, "maintenance.view") || can(user, "maintenance.request")) && (
+        <Section title="Manutenção">
+          <AssetMaintenance machineId={d.machine_id} positionId={d.id} compact />
+        </Section>
+      )}
 
       <HistorySection positionId={d.id} />
     </div>

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
+import { can, hasRole } from "@/utils/maintenance";
 
 export default function LoginPage() {
   const [email,    setEmail]    = useState("");
@@ -17,7 +18,10 @@ export default function LoginPage() {
     setError("");
     try {
       await login(email, password);
-      navigate("/dashboard", { replace: true });
+      // technicians land on their phone app (Minhas OS); everyone else on the Raio-X
+      const u = useAuthStore.getState().user;
+      const techOnly = hasRole(u, "technician") && !can(u, "maintenance.plan") && !hasRole(u, "production_supervisor", "operator");
+      navigate(techOnly ? "/m/work-orders" : "/dashboard", { replace: true });
     } catch {
       setError("E-mail ou senha incorretos.");
     }

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { OverdueWorkOrdersCard } from "@/components/maintenance/MaintenancePanels";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -256,6 +257,7 @@ export default function RaioXPage() {
             <MachinesInFault tree={plant} overview={data} now={now} />
             {data ? <TopLosses data={data} plantId={plant?.id} /> : <Skeleton className="h-64 rounded-xl" />}
             {data ? <NearEol data={data} /> : <Skeleton className="h-64 rounded-xl" />}
+            <OverdueWorkOrdersCard />
           </div>
         </>
       )}

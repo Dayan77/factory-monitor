@@ -45,8 +45,16 @@ SUPERADMIN_EMAIL = os.getenv("SEED_SUPERADMIN_EMAIL", "superadmin@factory-monito
 SUPERADMIN_PASS  = os.getenv("SEED_SUPERADMIN_PASS",  "Super@1234")
 SUPERADMIN_NAME  = os.getenv("SEED_SUPERADMIN_NAME",  "Super Admin")
 
+# Maintenance demo users (Sprint 4) — development only (never created in production mode).
+PLANNER_EMAIL     = os.getenv("SEED_PLANNER_EMAIL",     "planejador@factory-monitor.com")
+PLANNER_PASSWORD  = os.getenv("SEED_PLANNER_PASSWORD",  "Planner@1234")
+TECH_EMAIL        = os.getenv("SEED_TECH_EMAIL",        "tecnico@factory-monitor.com")
+TECH_PASSWORD     = os.getenv("SEED_TECH_PASSWORD",     "Tecnico@1234")
+SUPERVISOR_EMAIL  = os.getenv("SEED_SUPERVISOR_EMAIL",  "supervisor@factory-monitor.com")
+SUPERVISOR_PASSWORD = os.getenv("SEED_SUPERVISOR_PASSWORD", "Supervisor@1234")
+
 # Public dev defaults (README / .env.example / CLAUDE.md): never valid in production.
-DEV_DEFAULT_PASSWORDS = frozenset({"Admin@1234", "Super@1234"})
+DEV_DEFAULT_PASSWORDS = frozenset({"Admin@1234", "Super@1234", "Planner@1234", "Tecnico@1234", "Supervisor@1234"})
 MIN_PROD_PASSWORD_LEN = 12
 PASSWORD_VARS = ("SEED_ADMIN_PASSWORD", "SEED_SUPERADMIN_PASS")
 
@@ -344,6 +352,159 @@ async def seed_demo_production(db, tenant_id: str, doc: dict) -> dict:
     return stats
 
 
+# ── Demo maintenance (Sprint 4): users, plans, a few historical WOs and failures ─────────
+
+# (machine, position | None, name, intervals, wo_type, estimated_hours, days since the last execution)
+DEMO_PLANS = [
+    ("Estação de Fixação", "Cilindro A1", "Troca de vedações — Cilindro A1", {"interval_cycles": 2_000_000, "interval_days": 180}, "preventive", 1.5, 40),
+    ("Estação de Fixação", "Cilindro A2", "Troca de vedações — Cilindro A2", {"interval_cycles": 2_000_000, "interval_days": 180}, "preventive", 1.5, 165),
+    ("Estação de Fixação", "Cilindro A3", "Troca de vedações — Cilindro A3", {"interval_cycles": 2_000_000, "interval_days": 180}, "preventive", 1.5, 90),
+    ("Estação de Fixação", "Cilindro A4", "Troca de vedações — Cilindro A4", {"interval_cycles": 2_000_000, "interval_days": 180}, "preventive", 1.5, 20),
+    ("Transportador de Saída", "Motor do transportador", "Lubrificação dos rolamentos — Motor do transportador",
+     {"interval_hours": 4000, "interval_starts": 30000, "interval_days": 365}, "preventive", 1.0, 225),
+    ("Robô de Solda", "Eixo 1", "Troca de óleo do redutor — Eixo 1", {"interval_hours": 5000, "interval_days": 365}, "preventive", 6.0, 346),
+    ("Robô de Solda", "Eixo 2", "Análise de vibração — Eixo 2", {"interval_days": 90}, "predictive", 0.5, 60),
+    ("Estação de Fixação", None, "Inspeção NR-12 da célula", {"interval_days": 30}, "preventive", 2.0, 28),
+    ("Estação de Fixação", None, "Limpeza do filtro regulador de ar — Estação", {"interval_days": 7}, "preventive", 0.5, 12),
+    ("Torno CNC", "Eixo-árvore", "Lubrificação do eixo-árvore — Torno", {"interval_hours": 2000, "interval_days": 120}, "preventive", 2.0, 70),
+]
+
+
+async def seed_demo_maintenance(db, tenant_id: str, plant_id: str) -> dict:
+    """Planner, technician (on call for Linha de Montagem) and production supervisor (dev passwords from env
+    defaults), maintenance plans on the Planta Manaus positions, and a few historical work orders / failures
+    so the maintenance screens are not empty. Idempotent: skipped when the tenant already has plans.
+    Development only (production_mode() → skipped). Commits."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from src.auth.security import hash_password
+    from src.models import (FailureRecord, Line, Machine, MaintenancePlan, Position, User, UserRole, WorkOrder)
+    from src.services.maintenance import service as ms
+    from src.services.maintenance import usage as mu
+
+    stats = {"users": 0, "plans": 0, "work_orders": 0, "failures": 0}
+    if production_mode():
+        return stats
+    lines = {ln.name: ln for ln in (await db.execute(select(Line).where(Line.tenant_id == tenant_id,
+                                                                        Line.plant_id == plant_id))).scalars()}
+    assembly = lines.get("Linha de Montagem") or next(iter(lines.values()), None)
+
+    async def user(email, password, name, role, **kw):
+        u = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if u is not None and u.tenant_id != tenant_id:
+            raise SystemExit(f"✗ {email} já pertence a outro tenant (defina SEED_*_EMAIL).")
+        if u is None:
+            u = User(tenant_id=tenant_id, email=email, password_hash=hash_password(password), name=name,
+                     role=role, roles=[role.value], **kw)
+            db.add(u)
+            await db.flush()
+            stats["users"] += 1
+        return u
+
+    area = [assembly.id] if assembly else []
+    planner = await user(PLANNER_EMAIL, PLANNER_PASSWORD, "Paula Planejadora", UserRole.maintenance_planner)
+    tech = await user(TECH_EMAIL, TECH_PASSWORD, "Tiago Técnico", UserRole.technician, line_ids=area, on_call=True)
+    await user(SUPERVISOR_EMAIL, SUPERVISOR_PASSWORD, "Sílvia Supervisora", UserRole.production_supervisor, line_ids=area)
+    await db.commit()
+    if (await db.execute(select(MaintenancePlan.id).where(MaintenancePlan.tenant_id == tenant_id).limit(1))).first():
+        return stats
+
+    machines = {}
+    for m in (await db.execute(select(Machine).where(Machine.tenant_id == tenant_id,
+                                                     Machine.line_id.in_([ln.id for ln in lines.values()])))).scalars():
+        machines[m.name] = m
+    positions = {}
+    for p in (await db.execute(select(Position).where(Position.tenant_id == tenant_id,
+                                                      Position.machine_id.in_([m.id for m in machines.values()])))).scalars():
+        positions[(p.machine_id, p.name)] = p
+    now = datetime.now(timezone.utc)
+    for mname, pname, name, iv, wo_type, est, ago in DEMO_PLANS:
+        m = machines.get(mname)
+        pos = positions.get((m.id, pname)) if m and pname else None
+        if m is None or (pname and pos is None):
+            continue
+        at = now - timedelta(days=ago)
+        scope, eid = ("position", pos.id) if pos else ("machine", m.id)
+        plan = MaintenancePlan(tenant_id=tenant_id, position_id=pos.id if pos else None, machine_id=m.id, name=name,
+                               task_list=[{"id": "t1", "text": "Bloquear e etiquetar a energia (LOTO)"},
+                                          {"id": "t2", "text": name},
+                                          {"id": "t3", "text": "Testar e liberar para a produção"}],
+                               estimated_hours=est, wo_type=wo_type, last_reset_at=at, last_reset_by="cadastro (seed)",
+                               last_reset_usage=await mu.usage_at(db, tenant_id, scope, eid, at, now),
+                               stops_machine=True, created_by=planner.id, **iv)
+        db.add(plan)
+        stats["plans"] += 1
+    await db.flush()
+
+    # historical work orders (last weeks) — through the same state machine as the API
+    fix = machines.get("Estação de Fixação") or next(iter(machines.values()), None)
+    if fix is not None:
+        a1 = positions.get((fix.id, "Cilindro A1"))
+        history = [
+            ("preventive", None, "Lubrificação geral da célula", 1.0, 1.0, 20, "closed"),
+            ("predictive", None, "Termografia do painel elétrico", 2.0, 2.0, 12, "completed"),
+            ("corrective", "deferred", "Trocar sensor de presença de peça", 2.5, 3.0, 9, "completed"),
+            ("improvement", None, "Regulador de pressão dedicado", 8.0, 2.0, 5, "on_hold"),
+            ("corrective", "deferred", "Vazamento de ar na linha principal", 3.0, 0.0, 2, "scheduled"),
+        ]
+        for wtype, urg, title, est, labor, ago, final in history:
+            t0 = now - timedelta(days=ago, hours=4)
+            wo = WorkOrder(tenant_id=tenant_id, number=await ms.next_number(db, tenant_id), type=wtype, urgency=urg,
+                           state="open", machine_id=fix.id, title=title, estimated_hours=est, created_by=planner.id,
+                           created_at=t0, requested_at=t0, stops_machine=wtype != "predictive")
+            db.add(wo)
+            await db.flush()
+            await ms.add_history(db, wo, t0, planner.id, None, "open", "seed")
+            steps = [("approved", 0.5, planner, {}),
+                     ("scheduled", 1, planner, {"scheduled_for": (t0 + timedelta(days=1)).date(), "assignee_id": tech.id})]
+            if final in ("completed", "closed", "on_hold"):
+                steps.append(("in_progress", 26, tech, {}))
+            if final == "on_hold":
+                steps.append(("on_hold", 28, tech, {"hold_reason": "aguardando peça do fornecedor", "labor_hours": labor}))
+            if final in ("completed", "closed"):
+                steps.append(("completed", 26 + labor, tech, {"labor_hours": labor}))
+            if final == "closed":
+                steps.append(("closed", 30, planner, {}))
+            for to, h, who, kw in steps:
+                await ms.transition(db, wo, to, who, at=t0 + timedelta(hours=h), note="seed", check_permission=False, **kw)
+            stats["work_orders"] += 1
+        # an emergency corrective with its failure (restored) on Cilindro A1
+        if a1 is not None:
+            f_at = now - timedelta(days=6, hours=3)
+            f = FailureRecord(tenant_id=tenant_id, machine_id=fix.id, position_id=a1.id, failed_at=f_at,
+                              restored_at=f_at + timedelta(minutes=50), severity="critical", failure_mode="ELP",
+                              mechanism="1.1", cause="3.4", detection_method="production_interference", status="complete",
+                              emergency_notified_at=f_at, note="vazamento externo (seed)")
+            from src.services.maintenance.kpis import attribute_component
+            from src.models import Component
+            comps = (await db.execute(select(Component).where(Component.last_position_id == a1.id))).scalars().all()
+            f.component_id = attribute_component(f, {a1.id: list(comps)})
+            db.add(f)
+            await db.flush()
+            wo = WorkOrder(tenant_id=tenant_id, number=await ms.next_number(db, tenant_id), type="corrective",
+                           urgency="emergency", state="open", machine_id=fix.id, position_id=a1.id, failure_id=f.id,
+                           title="Vazamento no Cilindro A1", estimated_hours=1.0, created_by=tech.id,
+                           created_at=f_at + timedelta(minutes=3), requested_at=f_at + timedelta(minutes=3))
+            db.add(wo)
+            await db.flush()
+            f.work_order_id = wo.id
+            await ms.add_history(db, wo, wo.created_at, tech.id, None, "open", "seed")
+            await ms.transition(db, wo, "in_progress", tech, at=f_at + timedelta(minutes=8), check_permission=False)
+            await ms.transition(db, wo, "completed", tech, at=f_at + timedelta(minutes=50), labor_hours=0.75,
+                                check_permission=False)
+            db.add(FailureRecord(tenant_id=tenant_id, machine_id=fix.id, position_id=a1.id, component_id=f.component_id,
+                                 failed_at=now - timedelta(days=40), severity="incipient", failure_mode="PDE",
+                                 mechanism="6.4", cause="5.5", detection_method="continuous_condition_monitoring",
+                                 status="complete", emergency_notified_at=now, note="tempo de curso subindo (seed)"))
+            stats["failures"] += 2
+            stats["work_orders"] += 1
+    await db.flush()
+    await ms.run_plan_engine(db, tenant_id)            # states + one draft per plan ≥ 80 %
+    await db.commit()
+    db.info.pop("fm_pending_notifications", None)     # nobody is connected while seeding
+    return stats
+
+
 async def seed() -> None:
     ensure_safe_credentials()
 
@@ -409,6 +570,15 @@ async def seed() -> None:
             print(f"✓  Produção: {prod['shifts']} turnos, {prod['products']} produtos, "
                   f"{prod['machine_products']} tempos de ciclo, {prod['runs']} ordens abertas.")
             print("   Ids das tags no gateway: python -m edge.src.provision (grava edge/config/plant.local.json)")
+            mnt = await seed_demo_maintenance(db, demo.id, stats["plant_id"])
+            if production_mode():
+                print("⚠  Usuários/dados demo de manutenção não criados em produção.")
+            else:
+                print(f"✓  Manutenção: {mnt['users']} usuários, {mnt['plans']} planos, {mnt['work_orders']} OS, "
+                      f"{mnt['failures']} falhas.")
+                print(f"   Planejador: {PLANNER_EMAIL} / {_shown(PLANNER_PASSWORD)}")
+                print(f"   Técnico (plantão Linha de Montagem): {TECH_EMAIL} / {_shown(TECH_PASSWORD)}")
+                print(f"   Supervisor de produção: {SUPERVISOR_EMAIL} / {_shown(SUPERVISOR_PASSWORD)}")
 
     print(f"✓  Superadmin: {SUPERADMIN_EMAIL} / {_shown(SUPERADMIN_PASS)}")
     print()

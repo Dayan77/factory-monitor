@@ -4,7 +4,7 @@ Pydantic schemas for request/response serialization.
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from ..models.user import UserRole
 from ..models.tenant import TenantPlan
@@ -94,16 +94,30 @@ class RefreshRequest(BaseModel):
 # ── User ─────────────────────────────────────────────────────────
 
 class UserOut(BaseModel):
-    id: str
+    id: Optional[str]
     tenant_id: str
     email: str
     name: str
     role: UserRole
+    # Sprint 4: every role of the user (includes `role`, the primary one kept for compatibility)
+    roles: list[str] = []
+    line_ids: list[str] = []
+    on_call: bool = False
     is_active: bool
-    last_login_at: Optional[datetime]
-    created_at: datetime
+    last_login_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _roles(cls, v):
+        if hasattr(v, "all_roles"):
+            return {"id": v.id, "tenant_id": v.tenant_id, "email": v.email, "name": v.name, "role": v.role,
+                    "roles": v.all_roles, "line_ids": [str(x) for x in (v.line_ids or [])],
+                    "on_call": bool(v.on_call), "is_active": v.is_active, "last_login_at": v.last_login_at,
+                    "created_at": v.created_at}
+        return v
 
 
 class UserCreate(BaseModel):
@@ -111,6 +125,9 @@ class UserCreate(BaseModel):
     password: str
     name: str
     role: UserRole = UserRole.operator
+    roles: Optional[list[UserRole]] = None
+    line_ids: list[str] = []
+    on_call: bool = False
 
     @field_validator("password")
     @classmethod
@@ -123,6 +140,9 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[UserRole] = None
+    roles: Optional[list[UserRole]] = None
+    line_ids: Optional[list[str]] = None
+    on_call: Optional[bool] = None
     is_active: Optional[bool] = None
 
 

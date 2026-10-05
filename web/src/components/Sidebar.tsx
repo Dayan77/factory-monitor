@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { useAuthStore } from "@/store/auth";
+import { can, type Capability } from "@/utils/maintenance";
 
 const ICON_RAIOX = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
@@ -75,7 +76,49 @@ const ICON_AI = (
       </svg>
     );
 
-interface NavItem { label: string; to: string; icon: JSX.Element }
+const ICON_WRENCH = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4z" />
+      </svg>
+    );
+const ICON_CALENDAR = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" />
+      </svg>
+    );
+const ICON_BOARD = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="3" y="4" width="5" height="16" rx="1.5" /><rect x="10" y="4" width="5" height="10" rx="1.5" /><rect x="17" y="4" width="4" height="13" rx="1.5" />
+      </svg>
+    );
+const ICON_LIFE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="3" y="7" width="16" height="10" rx="2" /><path d="M21 10v4M6 10v4M9 10v4" />
+      </svg>
+    );
+const ICON_FAILURE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5h.01" />
+      </svg>
+    );
+const ICON_KPI = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </svg>
+    );
+const ICON_RELIABILITY = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="m9 12 2 2 4-4" />
+      </svg>
+    );
+const ICON_PHONE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" />
+      </svg>
+    );
+const ICON_PLANS = ICON_CALENDAR;
+
+interface NavItem { label: string; to: string; icon: JSX.Element; cap?: Capability }
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -86,6 +129,19 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: "Linha do tempo", to: "/timeline", icon: ICON_TIMELINE },
       { label: "Paradas", to: "/stops", icon: ICON_STOPS },
       { label: "Relatório de turno", to: "/reports/shift", icon: ICON_REPORT },
+    ],
+  },
+  {
+    section: "Manutenção",
+    items: [
+      { label: "Próximas manutenções", to: "/maintenance/upcoming", icon: ICON_WRENCH, cap: "maintenance.plan" },
+      { label: "Ordens de serviço", to: "/maintenance/work-orders", icon: ICON_BOARD, cap: "maintenance.view" },
+      { label: "Programação", to: "/maintenance/schedule", icon: ICON_CALENDAR, cap: "maintenance.plan" },
+      { label: "Componentes", to: "/maintenance/components", icon: ICON_LIFE, cap: "maintenance.plan" },
+      { label: "Falhas", to: "/maintenance/failures", icon: ICON_FAILURE, cap: "maintenance.failures" },
+      { label: "Gestão", to: "/maintenance/kpis", icon: ICON_KPI, cap: "maintenance.kpis" },
+      { label: "Confiabilidade", to: "/maintenance/reliability", icon: ICON_RELIABILITY, cap: "maintenance.kpis" },
+      { label: "App do técnico", to: "/m/work-orders", icon: ICON_PHONE, cap: "maintenance.execute" },
     ],
   },
   {
@@ -107,7 +163,10 @@ const NAV: { section: string; items: NavItem[] }[] = [
   },
   {
     section: "Sistema",
-    items: [{ label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS }],
+    items: [
+      { label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS },
+      { label: "Planos de manutenção", to: "/settings/maintenance-plans", icon: ICON_PLANS, cap: "maintenance.plan" },
+    ],
   },
 ];
 
@@ -128,6 +187,9 @@ const ROLE_LABELS: Record<string, string> = {
   manager:    "Gestor",
   admin:      "Administrador",
   superadmin: "Super Admin",
+  maintenance_planner: "Planejador de manutenção",
+  technician: "Técnico de manutenção",
+  production_supervisor: "Supervisor de produção",
 };
 
 interface SidebarProps {
@@ -184,7 +246,9 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav aria-label="Principal" className="flex-1 space-y-0.5 overflow-y-auto p-3">
-        {NAV.map((group) => (
+        {NAV.map((group) => ({ ...group, items: group.items.filter((it) => !it.cap || can(user, it.cap)) }))
+          .filter((group) => group.items.length > 0)
+          .map((group) => (
           <div key={group.section} className="pb-2">
             <p className="px-3 pb-1 pt-2 text-overline uppercase text-fg-subtle">{group.section}</p>
             {group.items.map((item) => (
@@ -238,7 +302,9 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           </div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-fg">{user?.name ?? "—"}</p>
-            <p className="truncate text-xs text-fg-subtle">{ROLE_LABELS[user?.role ?? ""] ?? user?.role}</p>
+            <p className="truncate text-xs text-fg-subtle">
+              {(user?.roles?.length ? user.roles : [user?.role ?? ""]).map((r) => ROLE_LABELS[r] ?? r).join(" · ")}
+            </p>
           </div>
         </div>
         <button

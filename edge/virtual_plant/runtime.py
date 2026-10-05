@@ -10,6 +10,8 @@ Runtime da planta virtual: liga o modelo determinístico a servidores reais.
   que cabem nessa largura, sobra fila (`backlog` no /state) — nunca se perde nem se inventa pulso.
 - HTTP de estado (aiohttp): GET /state = snapshot determinístico + verdade de campo + pulsos emitidos;
   GET /health.
+- API de controle da manutenção (edge/virtual_plant/control.py, padrão 127.0.0.1:7070): GET /status,
+  POST /replace, /repair, /force-failure — a ação é aplicada no modelo e publicada na hora.
 
 Tempo: o modelo avança `speed` segundos simulados por segundo real, sempre em passos inteiros, então o
 estado num dado tempo simulado não depende do relógio real. Timestamps publicados são o relógio real (UTC).
@@ -149,6 +151,9 @@ class VirtualPlantRuntime:
         update_ms: int = 100,
         pulse_high_ms: int = 50,
         pulse_low_ms: int = 50,
+        control_port: Optional[int] = None,
+        control_host: str = "127.0.0.1",
+        control_token: str = "",
     ) -> None:
         if speed <= 0:
             raise ValueError("speed deve ser > 0")
@@ -158,6 +163,10 @@ class VirtualPlantRuntime:
         self.opcua_port = opcua_port
         self.modbus_port = modbus_port
         self.status_port = status_port
+        self.control_port = control_port
+        self.control_host = control_host
+        self.control_token = control_token
+        self._control_runner: Optional[web.AppRunner] = None
         self.update_s = update_ms / 1000.0
         self.addresses = addresses(model.layout)
         self.by_key = {a.key: a for a in self.addresses}
@@ -189,6 +198,8 @@ class VirtualPlantRuntime:
         await self._push(force=True)
         if self.status_port:
             await self._start_http()
+        if self.control_port:
+            await self._start_control()
         self._running = True
         self.started_at = datetime.now(timezone.utc)
         self._tasks = [asyncio.create_task(self._pulse_loop())]
@@ -238,6 +249,9 @@ class VirtualPlantRuntime:
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
+        if self._control_runner:
+            await self._control_runner.cleanup()
+            self._control_runner = None
         if self.modbus:
             await self.modbus.stop()
             self.modbus = None
@@ -390,3 +404,16 @@ class VirtualPlantRuntime:
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, self.host, self.status_port).start()
+
+    async def _start_control(self) -> None:
+        from .control import PlantControl, _is_loopback, build_app
+        if not _is_loopback(self.control_host) and self.control_host != "localhost" and not self.control_token:
+            log.warning("virtual_plant.control_disabled host=%s — fora de localhost exige VP_CONTROL_TOKEN",
+                        self.control_host)
+            return
+        app = build_app(PlantControl(self.model), token=self.control_token, after_change=self._push)
+        self._control_runner = web.AppRunner(app, access_log=None)
+        await self._control_runner.setup()
+        await web.TCPSite(self._control_runner, self.control_host, self.control_port).start()
+        log.info("virtual_plant.control http://%s:%s (GET /status, POST /replace /repair /force-failure)",
+                 self.control_host, self.control_port)

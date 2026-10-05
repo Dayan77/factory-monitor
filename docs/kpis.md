@@ -747,3 +747,22 @@ C9) e o buraco continua fora do PBT (D5). Isso superestima P do período na prop
 ou nada, se a linha rodou). No D o buraco não tem peças (a linha estava parada): sem declaração, S4 fica com
 PBT 395 e OEE 0,891139; com `UTL-01` declarada, PBT 435 e OEE 0,809195 — por isso a parada sem dados deve ser
 justificada no fluxo de paradas, como as demais.
+
+---
+
+## Indicadores da preditiva (Sprint 5)
+
+Definições completas, casos de borda e exemplos numéricos em [`docs/predictive.md`](predictive.md) P-6 (RUL de
+condição) e P-10 (avaliação), com os números do cenário F ([`scenarios/README.md`](scenarios/README.md#cenário-f--preditiva-sprint-5)).
+Resumo para quem procura aqui:
+
+| Indicador | Fórmula | Unidade | Exemplo (cenário F) |
+|---|---|---|---|
+| Antecedência do alerta | `failed_at − opened_at` (também por severidade) | h | F1: 420 h (`warning`), 264 h (`critical`); só com limite fixo: 96 h |
+| Precisão | VP / (VP + FA), por severidade mínima | fração | 0,5 (`≥ watch`), 1,0 (`≥ warning`) |
+| Falsos alarmes por posição-ano | FA / dias monitorados × 365 (sem períodos de reaprendizado) | 1/ano | 1 / 73,5 × 365 = 4,966 (`watch`) |
+| RUL de condição | `(L_f − x̂) / b`, faixa `(L_f − x̂)/(b ± 2·SE)`; dias pelo ritmo de 14 dias (C17/C18) ou plano de produção | ciclos/h → dias | F1 bloco 50: 215 806 ciclos → 11 dias (8–16) |
+| `predictive_no_defect_hours` | horas de OS preditivas concluídas com `finding = no_defect` | h | 2,0 (PMP continua 0,9375 — preditiva é planejada) |
+
+Pergunta de toda manhã nº 11 (complementa §5): **Manutenção** — "O que está degradando e quando vai falhar?" →
+tela Preditiva (`/maintenance/predictive`) → alertas por severidade, RUL de condição com faixa (predictive.md P-8).

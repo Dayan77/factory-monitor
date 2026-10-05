@@ -161,3 +161,47 @@ async def test_seed_demo_production_fallback_without_map_data(db):
     assert st == {"shifts": 3, "products": 1, "machine_products": 1, "runs": 1}
     shifts = (await db.execute(select(Shift).where(Shift.tenant_id == t.id))).scalars().all()
     assert all(x.weekdays == [0, 1, 2, 3, 4, 5] for x in shifts)
+
+
+async def test_seed_demo_maintenance(client, monkeypatch):
+    """Sprint 4: planner / on-call technician / supervisor, plans on the Planta Manaus positions, historical
+    WOs and failures through the state machine; drafts by the plan engine; idempotent; skipped in production."""
+    import json
+    import uuid
+    from src.db import AsyncSessionLocal
+    from src.models import FailureRecord, MaintenancePlan, Tenant, User, WorkOrder, WorkOrderHistory
+    from src.services.maintenance import core
+    if not MAP.exists():
+        import pytest
+        pytest.skip("virtual plant map not generated")
+    sfx = uuid.uuid4().hex[:6]
+    for var in ("PLANNER", "TECH", "SUPERVISOR"):
+        monkeypatch.setattr(seed_dev, f"{var}_EMAIL", f"{var.lower()}-{sfx}@example.com")
+    doc = json.loads(MAP.read_text(encoding="utf-8"))
+    async with AsyncSessionLocal() as db:
+        t = Tenant(name="Seed M", slug=f"seed-m-{sfx}")
+        db.add(t)
+        await db.commit()
+        st = await seed_dev.seed_demo_plant(db, t.id, doc)
+        out = await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"])
+        assert out["users"] == 3 and out["plans"] == len(seed_dev.DEMO_PLANS) and out["work_orders"] == 6
+        again = await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"])
+        assert again == {"users": 0, "plans": 0, "work_orders": 0, "failures": 0}
+        users = (await db.execute(select(User).where(User.tenant_id == t.id))).scalars().all()
+        tech = next(u for u in users if u.role.value == "technician")
+        assert tech.on_call and len(tech.line_ids) == 1
+        plans = (await db.execute(select(MaintenancePlan).where(MaintenancePlan.tenant_id == t.id))).scalars().all()
+        assert {p.state for p in plans} >= {"ok", "due_soon", "overdue"}
+        wos = (await db.execute(select(WorkOrder).where(WorkOrder.tenant_id == t.id))).scalars().all()
+        assert {w.state for w in wos} >= {"closed", "completed", "on_hold", "scheduled", "draft"}
+        for p in plans:
+            open_wos = [w for w in wos if w.plan_id == p.id and w.state in core.OPEN_STATES]
+            assert len(open_wos) == (1 if (p.consumed or 0) >= 0.8 else 0), p.name
+        hist = (await db.execute(select(func.count()).select_from(WorkOrderHistory).where(
+            WorkOrderHistory.tenant_id == t.id))).scalar_one()
+        assert hist >= 20
+        assert (await db.execute(select(func.count()).select_from(FailureRecord).where(
+            FailureRecord.tenant_id == t.id))).scalar_one() == 2
+    monkeypatch.setenv("SEED_ENFORCE_PROD_CREDENTIALS", "1")
+    async with AsyncSessionLocal() as db:
+        assert (await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"]))["users"] == 0

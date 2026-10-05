@@ -10,6 +10,7 @@ import Sheet from "@/components/ui/Sheet";
 import { Field, inputClass } from "@/components/ui/Field";
 import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import ReasonPicker from "@/components/efficiency/ReasonPicker";
+import CallMaintenanceButton from "@/components/maintenance/CallMaintenanceButton";
 import {
   useCreateDowntime, useDowntime, useJustifyDowntime, useMachineProducts, useOpenRun, usePlant, useReasonCodes,
   useStartRun, useStopRun,
@@ -118,6 +119,7 @@ function JustifySheet({ ev, onClose, onDone }: { ev: DowntimeEvent | null; onClo
         <p role="alert" className="text-danger">Não foi possível carregar os motivos.</p>
       ) : (
         <div className="space-y-5">
+          {ev && ev.end == null && <CallMaintenanceButton ev={ev} />}
           <ReasonPicker groups={groups} value={code} suggested={ev?.suggested_reason_code} onChange={setCode} />
           <Field label="Comentário (opcional)" htmlFor="stop-comment">
             <textarea id="stop-comment" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} maxLength={2000}
@@ -341,7 +343,10 @@ export default function StopsPage() {
                 <p className="mb-2 text-caption font-medium text-fg-muted">{list.length} parada{list.length > 1 ? "s" : ""} sem justificativa</p>
                 <ul className="space-y-3">
                   {list.map((ev) => (
-                    <li key={ev.id}><StopCard ev={ev} now={now} reasons={reasons.data} onOpen={() => setSelected(ev)} /></li>
+                    <li key={ev.id} className="space-y-2">
+                      <StopCard ev={ev} now={now} reasons={reasons.data} onOpen={() => setSelected(ev)} />
+                      {ev.end == null && <CallMaintenanceButton ev={ev} size="md" />}
+                    </li>
                   ))}
                 </ul>
               </>

@@ -1,6 +1,7 @@
 import { useLocation } from "react-router-dom";
 import ConnectionBadge from "./ConnectionBadge";
 import ThemeToggle from "./ThemeToggle";
+import NotificationBell from "./notifications/NotificationCenter";
 
 const TITLES: Record<string, string> = {
   "/dashboard": "Raio-X",
@@ -9,6 +10,15 @@ const TITLES: Record<string, string> = {
   "/stops": "Paradas",
   "/reports": "Relatórios",
   "/settings": "Configurações",
+  "/settings/maintenance-plans": "Planos de manutenção",
+  "/maintenance": "Manutenção",
+  "/maintenance/upcoming": "Próximas manutenções",
+  "/maintenance/components": "Componentes por % de vida",
+  "/maintenance/work-orders": "Ordens de serviço",
+  "/maintenance/schedule": "Programação da semana",
+  "/maintenance/failures": "Falhas",
+  "/maintenance/kpis": "Gestão da manutenção",
+  "/maintenance/reliability": "Confiabilidade",
   "/factory": "Fábrica",
   "/lines": "Linhas de Produção",
   "/machines": "Máquinas",
@@ -65,6 +75,7 @@ export default function Header({ onMenu, menuOpen = false }: Props) {
             year: "numeric",
           })}
         </span>
+        <NotificationBell />
         <ThemeToggle />
       </div>
     </header>

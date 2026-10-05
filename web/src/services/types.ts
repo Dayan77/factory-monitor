@@ -1,3 +1,5 @@
+import type { NotificationMessage } from "./maintenanceTypes";
+
 // ── Admin / Superadmin ────────────────────────────────────────────
 
 export type TenantPlan = "trial" | "starter" | "professional" | "enterprise";
@@ -152,7 +154,8 @@ export interface UsageMessage {
   timestamp?: string;
 }
 
-export type RealtimeMessage = SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage;
+export type RealtimeMessage =
+  | SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage | NotificationMessage;
 
 // ── Assets & usage (Fase 1 — mirror server/src/api/schemas_assets.py) ──
 // Conventions: life_consumed_pct is a FRACTION (0..1, may exceed 1, never truncated);

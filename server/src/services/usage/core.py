@@ -250,7 +250,11 @@ def rul(today: date, nominal: Mapping[str, float], usage: Mapping[str, float],
         else:
             days = math.ceil(remaining / rate - 1e-9)
             cand = Rul(today + timedelta(days=days), days, m, remaining, rate, low_confidence=low_conf)
-        if best is None or cand.days < best.days:
+        # C18 / S4-12: fewest days; tie → the measure with the larger % of life
+        if best is None or cand.days < best.days or (
+                cand.days == best.days
+                and float(usage.get(m, 0.0) or 0.0) / float(nominal[m])
+                > float(usage.get(best.measure, 0.0) or 0.0) / float(nominal[best.measure])):
             best = cand
     if best is None:
         return Rul(None, None, None, reason="no_recent_usage", low_confidence=low_conf)

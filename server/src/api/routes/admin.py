@@ -13,6 +13,7 @@ from ...models import User, UserRole
 from ...models.tenant import Tenant
 from ...models.machine import Machine
 from ...auth import get_current_user, require_roles, hash_password
+from .users import set_roles
 from ..schemas import (
     TenantOut, TenantWithStats, TenantCreate, TenantUpdate,
     UserOut, UserCreate, UserUpdate,
@@ -173,6 +174,7 @@ async def create_tenant_user(tenant_id: str, body: UserCreate, _: SuperAdmin, db
         name=body.name,
         role=body.role,
     )
+    await set_roles(db, user, body.role, body.roles, body.line_ids, body.on_call)
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -189,7 +191,10 @@ async def update_tenant_user(tenant_id: str, user_id: str, body: UserUpdate, _: 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    await set_roles(db, user, data.pop("role", None), data.pop("roles", None), data.pop("line_ids", None),
+                    data.pop("on_call", None))
+    for field, value in data.items():
         setattr(user, field, value)
     await db.commit()
     await db.refresh(user)
