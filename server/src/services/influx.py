@@ -60,14 +60,13 @@ class InfluxService:
         flux = f"""
         from(bucket: "{settings.influx_bucket}")
           |> range(start: {start.isoformat()}, stop: {stop.isoformat()})
-          |> filter(fn: (r) => r["measurement"] == "sensors")
+          |> filter(fn: (r) => r["_measurement"] == "sensors")
           |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
           |> filter(fn: (r) => r["tag_id"] == "{tag_id}")
           |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
           |> yield(name: "mean")
         """
-        async with self._client.query_api() as q:
-            tables = await q.query(flux, org=settings.influx_org)
+        tables = await self._client.query_api().query(flux, org=settings.influx_org)
 
         rows = []
         for table in tables:
@@ -81,13 +80,12 @@ class InfluxService:
         flux = f"""
         from(bucket: "{settings.influx_bucket}")
           |> range(start: -5m)
-          |> filter(fn: (r) => r["measurement"] == "sensors")
+          |> filter(fn: (r) => r["_measurement"] == "sensors")
           |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
           |> filter(fn: (r) => {ids_filter})
           |> last()
         """
-        async with self._client.query_api() as q:
-            tables = await q.query(flux, org=settings.influx_org)
+        tables = await self._client.query_api().query(flux, org=settings.influx_org)
 
         result = {}
         for table in tables:

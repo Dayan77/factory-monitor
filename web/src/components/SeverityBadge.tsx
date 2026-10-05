@@ -9,7 +9,7 @@ const C: Record<Severity, { label: string; cls: string }> = {
 };
 
 export default function SeverityBadge({ severity }: { severity: Severity }) {
-  const { label, cls } = C[severity];
+  const { label, cls } = C[severity] ?? C.info;
   return (
     <span className={clsx("rounded-full px-2 py-0.5 text-xs font-medium", cls)}>
       {label}

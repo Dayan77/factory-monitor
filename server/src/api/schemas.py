@@ -271,6 +271,10 @@ class AlertRuleCreate(BaseModel):
 class AlertEventOut(BaseModel):
     id: str
     rule_id: str
+    rule_name: str
+    severity: AlertSeverity
+    machine_name: Optional[str] = None
+    message: Optional[str] = None
     triggered_at: datetime
     resolved_at: Optional[datetime]
     value_at_trigger: Optional[float]
