@@ -232,9 +232,10 @@ async def monitor_out(db: AsyncSession, m: PredictiveMonitor, names: dict, now: 
         state = "monitoring"
     else:
         state = "learning"
-    learning = st.get("learning") or {"windows": 0, "required": (m.params or {}).get(
+    fresh = reset is not None and st.get("baseline_id") not in (None, reset.id)   # cache of a previous segment
+    learning = (None if fresh else st.get("learning")) or {"windows": 0, "required": (m.params or {}).get(
         "baseline_min_windows", DEFAULTS["baseline_min_windows"])}
-    last = st.get("last") or {}
+    last = (None if fresh else st.get("last")) or {}
     cond = last.get("rul") if state == "monitoring" else None
     nominal = await _rul_nominal(db, m, now)
     eff, src = _effective(nominal, cond)

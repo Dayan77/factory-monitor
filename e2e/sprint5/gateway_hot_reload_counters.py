@@ -61,6 +61,8 @@ env.update(SERVER_URL=API, ENROLL_CODE=code, GATEWAY_CREDENTIALS_PATH=f"{work}/c
            MQTT_BROKER_HOST="127.0.0.1", MQTT_BROKER_PORT=BROKER, MQTT_TLS="false", BUFFER_DB_PATH=f"{work}/buf.db",
            COUNTER_DB_PATH=f"{work}/cnt.db", ENCRYPTION_KEY="", EDGE_VERSION="qa-reload", LOG_LEVEL="INFO")
 log = open(f"{work}/gw.log", "w")
+# readings of THIS gateway only (an earlier run of this script leaves its own edge-counted values in the history)
+GW_START = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "+00:00")
 p = subprocess.Popen([f"{REPO}/.venv-edge/bin/python", "-m", "edge.src.gateway"], cwd=REPO, env=env, stdout=log,
                      stderr=subprocess.STDOUT)
 
@@ -91,12 +93,22 @@ try:
         time.sleep(1)
     txt = open(f"{work}/gw.log").read()
     check("config_reloaded" in txt and p.poll() is None and p.pid == pid, "same gateway process hot-reloaded", txt[-600:])
-    time.sleep(45)
+    # the Fixação cycle is >= 40 s (ideal) and one cylinder may skip a cycle: wait (up to 240 s) until every counter
+    # that was moving before the reload has moved past its pre-reload value, instead of a fixed 45 s window
+    t2 = time.time()
+    while time.time() - t2 < 240:
+        time.sleep(10)
+        pend = [t for t in counters if t["name"] in moving
+                and not any(before[t["id"]][0] and ts > before[t["id"]][0] and v > (before[t["id"]][1] or 0)
+                            for ts, v in series(t["id"], 15))]
+        if not pend:
+            break
     for t in counters:
         s = series(t["id"], 15)
         b = before[t["id"]]
         after_reload = [v for ts, v in s if b[0] and ts > b[0]]
-        drops = [(s[i - 1], s[i]) for i in range(1, len(s)) if s[i][1] < s[i - 1][1]]
+        mine = [x for x in s if datetime.fromisoformat(x[0]) >= datetime.fromisoformat(GW_START)]
+        drops = [(mine[i - 1], mine[i]) for i in range(1, len(mine)) if mine[i][1] < mine[i - 1][1]]
         check(not drops, f"{t['name']}: never decreases across the reload (before {b[1]}, now {s[-1][1] if s else None})",
               drops[:3])
         if t["name"] in moving:

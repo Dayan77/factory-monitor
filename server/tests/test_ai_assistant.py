@@ -152,7 +152,8 @@ async def test_verifier_rejects_ungrounded_number_then_template(client, ai, scri
     s = p.sessions[0]
     assert s.notes and "912,5" in s.notes[0] and "VERIFICADOR" in s.notes[0]       # one retry with the finding
     assert r["answer_source"] == "template" and r["verified"] is True
-    assert "37" not in r["reply"] and "[1]" in r["reply"]
+    # the invented sentence must be gone; a bare "37" may legitimately appear in a template timestamp (e.g. 07:37)
+    assert "37 paradas" not in r["reply"] and "912,5" not in r["reply"] and "[1]" in r["reply"]
     assert any("modelo fixo" in w for w in r["warnings"])
     # the template is built only from the tool result
     from src.services.ai import verifier

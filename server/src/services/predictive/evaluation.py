@@ -77,12 +77,16 @@ def evaluate(alerts: list[EvAlert], failures: list[EvFailure], segments: list[Ev
         return [f for f in failures if f.position_id == a_pos and compatible(feature, f)]
 
     def outcome(a: EvAlert, since: datetime) -> tuple[str, Optional[EvFailure]]:
+        if a.resolution == "duplicate":
+            # repeats another alert's detection (closed by a person, or superseded by recompute): counting its
+            # failure again would give two true positives for one failure
+            return "excluded", None
         hits = [f for f in fails_for(a.position_id, a.feature) if since < f.failed_at <= since + H]
         if hits:
             return "tp", min(hits, key=lambda f: f.failed_at)
         if a.resolution == "confirmed" or a.finding == "defect_confirmed":
             return "tp", None
-        if a.resolution in ("duplicate", "known_cause"):
+        if a.resolution == "known_cause":
             return "excluded", None
         if a.state == "closed" and (a.resolution in FALSE_ALARM_RESOLUTIONS or a.finding == "no_defect"):
             return "fa", None

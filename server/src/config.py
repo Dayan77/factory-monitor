@@ -91,6 +91,14 @@ class ServerSettings(BaseSettings):
     # unbounded handlers took every pooled connection under a backlog and API requests waited
     # for the 30 s pool timeout. Excess readings wait (in arrival order per tag) instead.
     mqtt_max_concurrency: int = 12
+    # Max MQTT readings received and not finished yet (backpressure). When reached, the subscriber stops
+    # taking messages: QoS 1 deliveries are acknowledged only when accepted, so the broker stops sending
+    # (its max_inflight_messages window) and keeps the backlog in its own bounded queue instead of the
+    # server growing one task per reading without limit (Sprint 5 QA: 448k in flight, 1.5 GB RSS).
+    mqtt_max_inflight: int = 2000
+    # A transient failure (timeout, database/Influx unavailable) on the tag check or the Influx write is
+    # retried with backoff for up to this long before the reading is given up (and logged as lost).
+    mqtt_transient_retry_s: float = 600.0
     # Payload ts older than this vs. receive time is not sane (PLC/gateway clock unset):
     # the reading is stamped with the receive time instead.
     source_ts_max_age_s: int = 30 * 24 * 3600

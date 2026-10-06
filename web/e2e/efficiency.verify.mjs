@@ -32,7 +32,13 @@ function check(cond, msg) {
 }
 
 // ── fixtures (mocked mode) ──────────────────────────────────────────
-const NOW = Date.now();
+// Mocked mode runs at a fixed instant — 15:00 in Manaus (19:00Z) of the current UTC date — and the browser
+// clock is pinned to it (newPage): the fixtures below go back up to 330 min, which must stay inside the
+// plant's "today" whatever the time the suite runs (relative to the real clock it failed from 00:00 to ~04:10).
+const NOW = MODE === "real" ? Date.now() : (() => {
+  const d = new Date();
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 19, 0, 0);
+})();
 const iso = (ms) => new Date(ms).toISOString();
 const ago = (min) => iso(NOW - min * 60_000);
 const HOUR = 3600e3;
@@ -147,7 +153,7 @@ async function mockApi(page, log) {
     if (p === "/api/products/") return json(PRODUCTS);
     if (/^\/api\/machines\/[^/]+\/products$/.test(p)) return json(MACHINE_PRODUCTS);
     if (p === "/api/production-runs/") {
-      if (req.method() === "POST") return json({ id: "r-2", machine_id: "m-1", product_id: "p-2", product_code: "SUP-200", started_at: iso(Date.now()), ended_at: null }, 201);
+      if (req.method() === "POST") return json({ id: "r-2", machine_id: "m-1", product_id: "p-2", product_code: "SUP-200", started_at: iso(NOW), ended_at: null }, 201);
       return json([{ id: "r-1", machine_id: "m-1", product_id: "p-1", product_code: "SUP-100", started_at: ago(200), ended_at: null }]);
     }
     if (p === "/api/downtime/" && req.method() === "POST") return json({ ...DOWNTIME[1], id: "d-new", source: "manual", reason_code: "MAT-01" }, 201);
@@ -183,6 +189,7 @@ async function mockApi(page, log) {
 
 async function newPage(browser, { theme, viewport }) {
   const context = await browser.newContext({ viewport, colorScheme: theme, deviceScaleFactor: 1, hasTouch: viewport.width < 1100 });
+  if (MODE !== "real") await context.clock.install({ time: NOW });   // starts at the fixtures' "now", then runs
   const page = await context.newPage();
   const errors = [];
   page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
@@ -250,6 +257,9 @@ async function runMocked(browser) {
 
       // 2) OEE analysis
       await page.locator(".recharts-line-curve").first().waitFor();
+      // the charts mount one after the other: wait (bounded) for all the lines instead of counting at the first one
+      await page.waitForFunction(() => document.querySelectorAll(".recharts-line-curve").length >= 5, null, { timeout: 5000 })
+        .catch(() => {});
       check((await page.locator(".recharts-line-curve").count()) >= 5, "trend: A/P/Q/OEE lines + Pareto cumulative");
       check(await page.getByRole("img", { name: /Cascata de tempo: POT 8 h 00 min/ }).isVisible(), "time waterfall POT→…");
       check(await page.getByRole("img", { name: /Pareto de perdas: 6 motivos/ }).isVisible(), "Pareto rendered");

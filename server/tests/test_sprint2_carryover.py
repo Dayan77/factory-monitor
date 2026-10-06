@@ -190,7 +190,7 @@ async def test_subscriber_stops_when_cancel_is_swallowed_while_connecting(monkey
         async def __aexit__(self, *exc):
             return False
 
-        async def subscribe(self, topic):
+        async def subscribe(self, topic, qos=0):
             return None
 
         @property
@@ -228,7 +228,7 @@ async def test_subscriber_stops_on_mqtt_error_raised_by_cancel(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def subscribe(self, topic):
+        async def subscribe(self, topic, qos=0):
             return None
 
         @property

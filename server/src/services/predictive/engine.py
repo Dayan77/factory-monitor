@@ -548,6 +548,23 @@ async def apply_fold(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBas
                 changes["mismatch"].append(a.opened_window)
             elif a not in changes["escalated"]:
                 changes["updated"].append(a)
+    # alerts of this segment the fold no longer produces (its inputs changed: a failure date corrected, late
+    # data re-extracted): one that only the engine and failure closures touched was opened on stale inputs — it
+    # is closed as `duplicate` (kept for audit, excluded from P-10); one a person or a WO acted on is reported.
+    for a in seg_alerts.values():
+        if a.id in seen_ids or a.resolution == "duplicate":
+            continue
+        srcs = set((await db.execute(select(PredictiveAlertEvent.source).where(
+            PredictiveAlertEvent.tenant_id == m.tenant_id, PredictiveAlertEvent.alert_id == a.id))).scalars())
+        if a.work_order_id or srcs - {"engine", "failure", "failure_void"}:
+            changes["mismatch"].append(a.opened_window)
+            continue
+        frm = a.state
+        a.state, a.resolution, a.closed_at = "closed", "duplicate", a.closed_at or now
+        ps.add_event(db, a, now, "close", "engine", from_state=frm, to_state="closed", resolution="duplicate",
+                     comment="recálculo: o alerta não se reproduz com os dados atuais (ex.: data da falha corrigida)")
+        log.info("predictive.alert_superseded", alert_id=a.id, opened_window=a.opened_window)
+        changes["closed"].append(a)
     await db.flush()
     # 4) condition plans (P-9) and notifications / websocket
     for a in changes["opened"] + changes["escalated"]:
@@ -613,6 +630,8 @@ async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[dateti
     before = {a.opened_window: _db_alert_view(a) for a in (await db.execute(select(PredictiveAlert).where(
         PredictiveAlert.tenant_id == m.tenant_id, PredictiveAlert.monitor_id == m.id,
         PredictiveAlert.baseline_id == reset.id))).scalars()}
+    # closures by failure follow the current failure records (a corrected failed_at moves them)
+    await ps.failure_sweep(db, m, now)
     reextracted = 0
     if reextract_invalid and m.window_hours and m.tag_id:
         reextracted = await reextract_late(db, m, reset, await _tags(db, m),
@@ -620,6 +639,9 @@ async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[dateti
     _, _, _, _, _, res = await fold(db, m, reset)
     after = {a["opened_window"]: _alert_key_view(a) | {"evidence": a["evidence"]}
              for a in res.alerts if not a.get("carried")}
+    # an alert already superseded by an earlier recompute (closed `duplicate`, no longer produced by the fold)
+    for w in [w for w, v in before.items() if v["resolution"] == "duplicate" and w not in after]:
+        del before[w]
     diff = []
     for w in sorted(set(before) | set(after)):
         if before.get(w) != after.get(w):

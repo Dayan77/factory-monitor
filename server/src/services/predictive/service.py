@@ -103,8 +103,12 @@ async def create_reset(db: AsyncSession, m: PredictiveMonitor, at: datetime, kin
     db.add(b)
     await db.flush()
     st = dict(m.status or {})
+    # the cached learning progress / last point belong to the previous segment: a monitor read before the next
+    # engine run must show the new segment (0/N windows), not 'aprendendo (20/20)' (Sprint 5 QA)
     st.update(phase="warmup" if warmup and m.warmup_windows else "learning", baseline=None, ewma=None, cusum=None,
-              cycle_cursor=None)
+              cycle_cursor=None, baseline_id=b.id, last=None,
+              learning={"windows": 0, "required": monitor_cfg(m, []).p("baseline_min_windows"),
+                        "warmup_remaining": m.warmup_windows if warmup else 0})
     m.status = st
     return b
 
@@ -416,25 +420,76 @@ async def on_wo_transition(db: AsyncSession, wo: WorkOrder, frm: str, to: str, a
             await queue_ws(db, a, "updated")
 
 
+def _closing_failure_q(m: PredictiveMonitor, a: PredictiveAlert, now: datetime):
+    """The failures that close alert `a` (P-8): critical/degraded at the position, at or after it opened, not the
+    finding of the alert's own WO (condition monitoring) — earliest first."""
+    q = select(FailureRecord).where(
+        FailureRecord.tenant_id == m.tenant_id, FailureRecord.position_id == m.position_id,
+        FailureRecord.severity.in_(("critical", "degraded")), FailureRecord.failed_at >= a.opened_at,
+        FailureRecord.failed_at <= now,
+        or_(FailureRecord.detection_method.is_(None),
+            FailureRecord.detection_method != "continuous_condition_monitoring"))
+    if a.work_order_id:
+        q = q.where(or_(FailureRecord.work_order_id.is_(None), FailureRecord.work_order_id != a.work_order_id))
+    return q.order_by(FailureRecord.failed_at).limit(1)
+
+
+async def failure_resync(db: AsyncSession, m: PredictiveMonitor, now: datetime) -> int:
+    """Closures by failure follow the CURRENT failure records: a failure whose failed_at was corrected moves the
+    closure to the corrected instant; one deleted or no longer qualifying (severity, position) reopens the alert.
+    The superseded close event is kept for audit with source `failure_void` (not replayed by the fold)."""
+    alerts = (await db.execute(select(PredictiveAlert).where(
+        PredictiveAlert.tenant_id == m.tenant_id, PredictiveAlert.monitor_id == m.id,
+        PredictiveAlert.state == "closed", PredictiveAlert.resolution == "failed_before_action"))).scalars().all()
+    n = 0
+    for a in alerts:
+        ev = (await db.execute(select(PredictiveAlertEvent).where(
+            PredictiveAlertEvent.tenant_id == m.tenant_id, PredictiveAlertEvent.alert_id == a.id,
+            PredictiveAlertEvent.source == "failure", PredictiveAlertEvent.action == "close")
+            .order_by(PredictiveAlertEvent.at.desc()).limit(1))).scalar_one_or_none()
+        if ev is None:
+            continue
+        f = (await db.execute(_closing_failure_q(m, a, now))).scalar_one_or_none()
+        if f is not None and aware(f.failed_at) == aware(ev.at):
+            continue
+        ev.source = "failure_void"
+        ev.comment = ((ev.comment or "") + " — anulado: registro de falha corrigido")[:2000]
+        if f is not None:
+            at = aware(f.failed_at)
+            a.closed_at = at
+            add_event(db, a, at, "close", "failure", from_state=ev.from_state, to_state="closed",
+                      resolution="failed_before_action",
+                      comment=f"falha registrada na posição ({f.failure_mode or 'modo a classificar'}) — data corrigida")
+        else:
+            back = ev.from_state or "open"
+            if back == "converted" and a.work_order_id:
+                wo = await db.get(WorkOrder, a.work_order_id)
+                if wo is None or wo.state == "cancelled":
+                    back = "acknowledged"
+            a.state, a.resolution, a.closed_at = back, None, None
+            add_event(db, a, now, "reopen", "engine", from_state="closed", to_state=back,
+                      comment="reaberto: a falha que o fechou foi corrigida ou removida")
+        log.info("predictive.failure_closure_resynced", alert_id=a.id, moved_to=f.failed_at.isoformat() if f else None)
+        await queue_ws(db, a, "updated")
+        n += 1
+    if n:
+        await db.flush()
+    return n
+
+
 async def failure_sweep(db: AsyncSession, m: PredictiveMonitor, now: datetime) -> int:
     """P-8: a critical/degraded failure registered at the position while the alert is not closed closes it with
     `failed_before_action`; its predictive WO not started yet is cancelled `superseded`. Failures recorded as the
-    finding of the alert's own WO (condition monitoring) do not count."""
+    finding of the alert's own WO (condition monitoring) do not count. Closures already made are first re-derived
+    from the current failure records (failure_resync)."""
     from ..maintenance.service import add_history
+    await failure_resync(db, m, now)
     alerts = (await db.execute(select(PredictiveAlert).where(
         PredictiveAlert.tenant_id == m.tenant_id, PredictiveAlert.monitor_id == m.id,
         PredictiveAlert.state != "closed"))).scalars().all()
     n = 0
     for a in alerts:
-        q = select(FailureRecord).where(
-            FailureRecord.tenant_id == m.tenant_id, FailureRecord.position_id == m.position_id,
-            FailureRecord.severity.in_(("critical", "degraded")), FailureRecord.failed_at >= a.opened_at,
-            FailureRecord.failed_at <= now,
-            or_(FailureRecord.detection_method.is_(None),
-                FailureRecord.detection_method != "continuous_condition_monitoring"))
-        if a.work_order_id:
-            q = q.where(or_(FailureRecord.work_order_id.is_(None), FailureRecord.work_order_id != a.work_order_id))
-        f = (await db.execute(q.order_by(FailureRecord.failed_at).limit(1))).scalar_one_or_none()
+        f = (await db.execute(_closing_failure_q(m, a, now))).scalar_one_or_none()
         if f is None:
             continue
         frm = a.state

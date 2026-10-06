@@ -774,8 +774,13 @@ async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch) 
                 for msg in res.messages:
                     await manager.broadcast(tid, msg)
                 n += 1
+            except asyncio.TimeoutError:
+                # nothing is lost: the machine's cursor did not advance, the next tick picks it up again
+                log.warning("downtime.detector.timeout", machine_id=mid[:8],
+                            timeout_s=settings.downtime_machine_timeout_s)
             except Exception as e:  # noqa: BLE001
-                log.warning("downtime.detector.error", machine_id=mid[:8], error=str(e)[:300])
+                log.warning("downtime.detector.error", machine_id=mid[:8], error=str(e)[:300],
+                            error_type=type(e).__name__)
     return n
 
 

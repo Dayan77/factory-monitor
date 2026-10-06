@@ -230,6 +230,7 @@ open ──► acknowledged ──► converted ──► closed
 | `converted → closed` | automático | ao concluir a OS: `finding = defect_confirmed` → resolução `confirmed`; `no_defect` → `false_alarm` |
 | `converted → acknowledged` | automático | OS cancelada com motivo ≠ `superseded` (o alerta continua sem ação) |
 | `open/acknowledged/converted → closed` | automático | falha `critical`/`degraded` registrada na posição enquanto o alerta está aberto → resolução `failed_before_action` (a OS preditiva não iniciada é cancelada `superseded` pela corretiva) |
+| `closed (failed_before_action)` → corrigido | automático | o fechamento segue o registro de falha **atual**: `failed_at` corrigido move o fechamento para o novo instante; falha removida da posição (ou rebaixada) reabre o alerta no estado anterior. O evento antigo fica no histórico com origem `failure_void`. Um alerta que a dobra deixa de reproduzir (aberto sobre o fechamento errado) e que só o motor e falhas tocaram é fechado `duplicate` (P-12) |
 | `open/acknowledged → closed` | planejador, gerente | resoluções `false_alarm`, `rebaseline` (reinicia a linha de base sem aquecimento, P-2), `duplicate`, `known_cause` (ex.: teste de engenharia) |
 | `open → closed` | automático | `auto_cleared`: nenhum disparo ativo por 6 janelas válidas seguidas **e** ninguém reconheceu |
 
@@ -288,6 +289,7 @@ Verdade de campo: falha real (`FailureRecord` `critical`/`degraded`) na mesma po
 |---|---|---|
 | **Antecedência** (lead time) | `failed_at − opened_at` do alerta; também por severidade (`failed_at − instante em que virou warning/critical`) | mediana ≥ 7 dias em `warning`; ≥ `min_useful_lead` = 24 h para contar como detectada |
 | **Verdadeiro positivo** | falha compatível em `(opened_at, opened_at + H]`, `H = 30 dias`; ou OS do alerta com `defect_confirmed` | — |
+| **Excluído** | alerta fechado `duplicate` (repete a detecção de outro alerta — inclusive o substituído pelo recálculo quando a data de uma falha é corrigida) nunca conta, nem como VP; `known_cause` sem falha em H não conta | — |
 | **Falso alarme** | alerta sem falha compatível em H e sem defeito confirmado (`false_alarm`, `rebaseline`, `no_defect`, `auto_cleared`) | ≤ 1 por posição-ano em `≥ warning` |
 | **Precisão** | VP / (VP + FA), por severidade mínima | ≥ 0,7 em `≥ warning` |
 | **Detecção** (recall) | falhas com alerta aberto ≥ 24 h antes ÷ falhas compatíveis em posições monitoradas | ≥ 0,8 |
@@ -361,6 +363,14 @@ virtual (`edge/virtual_plant/`) roda **até a falha**, com seed, e é a régua d
   monitorados a 1–2 s de ciclo publica ~10–20 leituras/s de curso + contadores: folga de ~10×. Abaixo dessa
   capacidade o broker enfileira; o gauge `fm_mqtt_inflight_messages` e o log `mqtt.backlog` mostram quando o
   servidor não acompanha (ex.: planta virtual acelerada 150× no F1).
+- **Contrapressão e perda zero na ingestão** (QA Sprint 5, F1 a 500×: 448 mil leituras em memória, 1,5 GB, e uma
+  leitura descartada por timeout na verificação da tag): o servidor assina com QoS 1 e só confirma (PUBACK) cada
+  leitura quando há vaga (`MQTT_MAX_INFLIGHT`, padrão 2000); cheio, ele para de confirmar, o broker para de entregar
+  (janela `max_inflight_messages`) e o backlog fica na fila do broker (`max_queued_messages`/`max_queued_bytes` em
+  `infra/mosquitto/*.conf`). Falha transitória (timeout, Postgres/Influx indisponível) na verificação da tag ou na
+  escrita no Influx é repetida com *backoff* por até `MQTT_TRANSIENT_RETRY_S`; só tag inexistente é recusada de
+  imediato. Uma leitura só se perde se a fila do broker estourar ou após o prazo de repetição (log
+  `reading_lost=true`).
 - **Tudo por tenant** (`tenant_id` em toda tabela e consulta) e teste de isolamento em todo endpoint.
 - **API proposta** (o `backend-engineer` pode ajustar nomes, não semântica):
 

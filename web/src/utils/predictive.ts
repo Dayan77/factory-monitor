@@ -91,6 +91,7 @@ const ACTION_LABEL: Record<string, string> = {
   unconvert: "OS cancelada — alerta volta a reconhecido",
   close: "Fechado",
   auto_cleared: "Fechado automaticamente (normalizou)",
+  reopen: "Reaberto (falha corrigida ou removida)",
 };
 
 /** History action → label. */

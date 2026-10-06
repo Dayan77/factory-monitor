@@ -301,7 +301,8 @@ se a série sumir com o servidor no ar (`absent()`). `infra/tests/test_monitorin
 4. **Sintomas comuns**:
    - API fora: `docker logs fm_server --tail 200`; `dc up -d server`; banco cheio? `df -h`, `docker system df`.
    - Dados ao vivo parados: `FmMqttNoMessages`/backlog → `docker logs fm_mosquitto | tail` (`not authorised`?
-     certificado expirado?), `fm_mqtt_inflight_messages` alto → servidor não acompanha (`MQTT_MAX_CONCURRENCY`, CPU).
+     certificado expirado?), `fm_mqtt_inflight_messages` alto → servidor não acompanha (`MQTT_MAX_CONCURRENCY`, CPU); no teto
+     (`MQTT_MAX_INFLIGHT`) o backlog passa para a fila do broker — olhar `$SYS/broker/store/messages/count`.
    - Gateway específico: credencial revogada? tenant errado no `.env` do gateway (ACL nega em silêncio)? relógio?
    - Latência alta: p95 por rota no painel; `docker stats`; consultas longas
      `docker exec fm_postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "select pid, now()-query_start, query from pg_stat_activity where state<>'idle' order by 2 desc limit 5"`.

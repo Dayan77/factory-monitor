@@ -59,6 +59,39 @@ def cancel_inflight() -> list[asyncio.Task]:
     return tasks
 
 
+_capacity: Optional[asyncio.Semaphore] = None
+
+
+def _inflight_capacity() -> asyncio.Semaphore:
+    global _capacity
+    if _capacity is None:
+        _capacity = asyncio.Semaphore(max(1, settings.mqtt_max_inflight))
+    return _capacity
+
+
+def _reading_done(task: asyncio.Task) -> None:
+    _inflight.discard(task)
+    _inflight_capacity().release()
+
+
+def _enable_manual_ack(client: Any) -> bool:
+    """Turns on paho's manual acknowledgement (aiomqtt does not expose it). False if unavailable: paho then
+    acknowledges on receipt and the subscriber has no broker-side flow control (only the in-process bound)."""
+    paho = getattr(client, "_client", None)
+    setter = getattr(paho, "manual_ack_set", None)
+    if setter is None or not hasattr(paho, "ack"):
+        log.warning("mqtt.manual_ack_unavailable")
+        return False
+    setter(True)
+    return True
+
+
+def _ack(client: Any, message: Any) -> None:
+    qos = getattr(message, "qos", 0) or 0
+    if qos > 0:
+        client._client.ack(message.mid, qos)   # noqa: SLF001 — in receive order (this loop is sequential)
+
+
 def _processing_slots() -> asyncio.Semaphore:
     global _slots
     if _slots is None:
@@ -110,7 +143,10 @@ async def run_subscriber() -> None:
                 password=settings.mqtt_password or None,
             ) as client:
                 log.info("mqtt.connected", broker=settings.mqtt_broker_host)
-                await client.subscribe(TOPIC)
+                manual_ack = _enable_manual_ack(client)
+                # QoS 1 + acknowledge-on-accept = flow control: the broker sends at most its
+                # max_inflight_messages unacknowledged readings and queues the rest (bounded, on its side).
+                await client.subscribe(TOPIC, qos=1)
                 log.info("mqtt.subscribed", topic=TOPIC)
                 # a cancellation delivered while connecting can be swallowed by the client library:
                 # the task is still marked as cancelling, so stop instead of serving forever
@@ -120,14 +156,24 @@ async def run_subscriber() -> None:
                 async for message in client.messages:
                     if _cancelling():
                         raise asyncio.CancelledError()
-                    # Fire-and-forget — never let a slow handler block message delivery.
-                    # Kept in _inflight so shutdown can cancel them (cancel_inflight()).
-                    task = asyncio.create_task(
-                        _tracked(_handle_message(str(message.topic), bytes(message.payload))),
-                        name="mqtt_reading",
-                    )
+                    # Backpressure: wait for room before accepting (and acknowledging) the reading. While
+                    # we wait, nothing more is acknowledged and the broker stops delivering.
+                    capacity = _inflight_capacity()
+                    await capacity.acquire()
+                    try:
+                        if manual_ack:
+                            _ack(client, message)
+                        # Processed concurrently (per-tag order kept by _handle_message's tag lock).
+                        # Kept in _inflight so shutdown can cancel them (cancel_inflight()).
+                        task = asyncio.create_task(
+                            _tracked(_handle_message(str(message.topic), bytes(message.payload))),
+                            name="mqtt_reading",
+                        )
+                    except BaseException:
+                        capacity.release()
+                        raise
                     _inflight.add(task)
-                    task.add_done_callback(_inflight.discard)
+                    task.add_done_callback(_reading_done)
 
         except aiomqtt.MqttError as e:
             # aiomqtt turns a cancellation during message iteration into MqttError("Disconnected
@@ -209,21 +255,90 @@ async def _handle_message(topic: str, raw: bytes, received_at: Optional[datetime
         await fin
 
 
-async def _finish_write(topic: str, tenant_id: str, tag, ts: datetime, received_at: datetime, write) -> None:
+async def _lookup_tag(tenant_id: str, tag_id: str):
+    async with AsyncSessionLocal() as db:
+        return await asyncio.wait_for(topology_cache.tag_info(db, tenant_id, tag_id), timeout=5.0)
+
+
+def _is_transient(e: BaseException) -> bool:
+    """Failures that say nothing about the reading itself: retrying later can succeed."""
+    if isinstance(e, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError)):
+        return True
     try:
-        await asyncio.wait_for(write, timeout=10.0)
+        from sqlalchemy.exc import DBAPIError, TimeoutError as PoolTimeout
+        if isinstance(e, (DBAPIError, PoolTimeout)):
+            return True
+    except ImportError:  # pragma: no cover
+        pass
+    try:
+        import aiohttp
+        if isinstance(e, aiohttp.ClientError):
+            return True
+    except ImportError:  # pragma: no cover
+        pass
+    try:
+        from influxdb_client.client.exceptions import InfluxDBError
+        if isinstance(e, InfluxDBError):
+            status = getattr(getattr(e, "response", None), "status", None)
+            return status is None or status >= 500 or status == 429
+    except ImportError:  # pragma: no cover
+        pass
+    return False
+
+
+RETRY_FIRST_S = 0.5
+RETRY_MAX_S = 15.0
+
+
+async def _retry_transient(what: str, topic: str, fn, *args):
+    """Calls fn(*args); on a transient failure retries with exponential backoff for up to
+    settings.mqtt_transient_retry_s, then re-raises. Non-transient errors are raised at once. The reading
+    keeps its in-flight slot meanwhile, so a persistent outage turns into backpressure, not a growing heap."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + settings.mqtt_transient_retry_s
+    delay = RETRY_FIRST_S
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await fn(*args)
+        except Exception as e:  # noqa: BLE001
+            if not _is_transient(e) or loop.time() + delay > deadline:
+                raise
+            log.warning(f"{what}.retry", topic=topic, attempt=attempt, error=str(e),
+                        error_type=type(e).__name__, retry_in_s=delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, RETRY_MAX_S)
+
+
+async def _finish_write(topic: str, tenant_id: str, tag, ts: datetime, received_at: datetime, write,
+                        rewrite=None) -> None:
+    """Awaits the Influx write; a transient failure is re-sent with rewrite() (idempotent in Influx: same
+    series + timestamp overwrites) instead of losing the reading."""
+    first = [write]
+
+    async def attempt():
+        w = first.pop() if first else rewrite()
+        return await asyncio.wait_for(w, timeout=10.0)
+
+    try:
+        if rewrite is None:
+            await attempt()
+        else:
+            await _retry_transient("mqtt.influx", topic, attempt)
     except asyncio.TimeoutError:
-        log.warning("mqtt.influx.timeout", topic=topic)
+        log.error("mqtt.influx.timeout", topic=topic, reading_lost=True)
     except Exception as e:
-        log.warning("mqtt.influx.error", topic=topic, error=str(e))
+        log.error("mqtt.influx.error", topic=topic, error=str(e), error_type=type(e).__name__, reading_lost=True)
     else:
         # a detector signal written well after its own timestamp (gateway buffer flush, replay,
-        # backlog): the downtime detector may already have passed it → rewind (detector.py)
+        # backlog, write retries): the downtime detector may already have passed it → rewind (detector.py)
+        written_at = max(received_at, datetime.now(timezone.utc))
         if (tag.machine_id and tag.role in USAGE_ROLES
-                and (received_at - ts).total_seconds() > settings.downtime_settle_s):
+                and (written_at - ts).total_seconds() > settings.downtime_settle_s):
             note_late(tenant_id, tag.machine_id, ts)
         # …and the predictive engine may already have stored its time window as invalid → re-extract it
-        if tag.machine_id and received_at - ts > predictive_late_threshold():
+        if tag.machine_id and written_at - ts > predictive_late_threshold():
             predictive_note_late(tenant_id, tag.machine_id, ts)
 
 
@@ -284,11 +399,13 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
         replayed = received_at - ts > replay_threshold()
 
         # 0. The tag must belong to the topic's tenant (fail closed if it can't be checked)
+        #    A tag that does not exist is rejected; a check that could not be made (timeout, database
+        #    unavailable) is retried — dropping it lost valid readings under backlog (Sprint 5 QA).
         try:
-            async with AsyncSessionLocal() as db:
-                tag = await asyncio.wait_for(topology_cache.tag_info(db, tenant_id, tag_id), timeout=5.0)
+            tag = await _retry_transient("mqtt.tag_lookup", topic, _lookup_tag, tenant_id, tag_id)
         except Exception as e:  # noqa: BLE001
-            log.warning("mqtt.tag_lookup.error", topic=topic, error=str(e))
+            log.error("mqtt.tag_lookup.error", topic=topic, error=str(e), error_type=type(e).__name__,
+                      reading_lost=True)
             MQTT_MESSAGES.labels("error").inc()
             return
         if tag is None:
@@ -325,9 +442,10 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
 
         # 2. Persist to InfluxDB at the source timestamp (timeout so it never blocks forever). Started now,
         #    awaited after the tag lock is released (_handle_message) — or here when called directly.
-        write = asyncio.ensure_future(influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit,
-                                                   ts=ts, machine_id=tag.machine_id))
-        fin = _finish_write(topic, tenant_id, tag, ts, received_at, write)
+        def start_write():
+            return asyncio.ensure_future(influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit,
+                                                      ts=ts, machine_id=tag.machine_id))
+        fin = _finish_write(topic, tenant_id, tag, ts, received_at, start_write(), start_write)
         if pending is not None:
             pending.append(fin)
         else:
