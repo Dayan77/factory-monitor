@@ -125,8 +125,11 @@ async def chat_stream(body: AiChatRequest, user: CurrentUser, token: Bearer):
     queue: asyncio.Queue = asyncio.Queue()
     user_id, ctx = user.id, _ctx(body)
 
+    sent = {"done": False}
+
     async def emit(kind: str, data: dict) -> None:
         if kind == "done":
+            sent["done"] = True
             reply = data.get("reply") or ""
             for i in range(0, len(reply), 48):            # the verified answer, in chunks
                 await queue.put(("delta", {"text": reply[i:i + 48]}))
@@ -137,7 +140,11 @@ async def chat_stream(body: AiChatRequest, user: CurrentUser, token: Bearer):
         try:
             async with AsyncSessionLocal() as db:
                 u = await db.get(User, user_id)
-                await assistant.chat(db, u, token, body.message, ctx, body.conversation_id, emit=emit)
+                res = await assistant.chat(db, u, token, body.message, ctx, body.conversation_id, emit=emit)
+                if not sent["done"]:
+                    # answered without a model turn (assistant disabled, no provider configured): the client still
+                    # gets the system reply as delta + done, like any other answer
+                    await emit("done", res.to_dict())
         except LookupError:
             await queue.put(("error", {"status": 404, "detail": "Conversa não encontrada."}))
         except Exception as e:  # noqa: BLE001

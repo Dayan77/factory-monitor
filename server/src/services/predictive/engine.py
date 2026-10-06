@@ -33,7 +33,6 @@ EXT_SOURCES = ("user", "work_order", "failure", "plan")
 ACTION_OF = {"acknowledge": "acknowledge", "convert": "convert", "unconvert": "unconvert", "close": "close"}
 # late readings: a window is extracted this long after it closes (settings.predictive_grace_s, default 2 min)
 GRACE = timedelta(seconds=float(getattr(settings, "predictive_grace_s", 120.0)))
-SKIP_EMPTY_AFTER = timedelta(hours=6)      # empty stroke slices older than this are skipped for good
 MAX_WINDOWS_PER_RUN = 400
 
 
@@ -102,6 +101,108 @@ def _gap_s(m: PredictiveMonitor) -> float:
     return float((m.params or {}).get("data_gap_s") or settings.machine_offline_timeout_s)
 
 
+async def _time_window(m: PredictiveMonitor, tags: dict, start: datetime, end: datetime) -> fx.WindowFeature:
+    gap = _gap_s(m)
+    ids = [m.tag_id] + ([tags["run_state"]] if tags["run_state"] else []) + \
+          ([m.ambient_tag_id] if m.ambient_tag_id else [])
+    pts = await fx.influx_points(m.tenant_id, ids, start, end)
+    held0 = await fx.last_before(m.tenant_id, ids, start, timedelta(seconds=max(gap, 1.0) * 2))
+    for tid, (t, v) in held0.items():
+        if tid in pts and (start - t).total_seconds() <= gap:
+            pts[tid].insert(0, (start, v))
+    pres = await fx.presence(m.tenant_id, m.machine_id, start, end, gap)
+    return fx.time_window_feature(pts.get(m.tag_id, []), pts.get(tags["run_state"]) if tags["run_state"] else None,
+                                  start, end, pres, pts.get(m.ambient_tag_id) if m.ambient_tag_id else None)
+
+
+# ── late data (gateway store-and-forward) ─────────────────────────────────────
+# The MQTT handler notes readings that reached Influx after the engine may already have extracted their window
+# (`note_late`, in memory, like the downtime detector's); each engine run persists the notes into the monitors'
+# status (`late_from`) and re-extracts the stored *invalid* time windows of the current baseline segment that the
+# late readings touch. Valid windows are never rewritten (their points already fed alerts and notifications);
+# cycle blocks need no note: their cursor never skips ahead of the data (extract_cycles).
+
+_late: dict[tuple[str, str], datetime] = {}
+
+
+def note_late(tenant_id: str, machine_id: str, ts: datetime) -> None:
+    k = (tenant_id, machine_id)
+    cur = _late.get(k)
+    if cur is None or ts < cur:
+        _late[k] = ts
+
+
+def late_threshold() -> timedelta:
+    """A reading older than this when it reaches Influx may belong to a window already extracted."""
+    return GRACE
+
+
+async def flush_late(db: AsyncSession) -> int:
+    """Moves the in-memory late notes into `status.late_from` of the machines' time-window monitors."""
+    items = list(_late.items())
+    _late.clear()
+    n = 0
+    for (tid, mid), ts in items:
+        mons = (await db.execute(select(PredictiveMonitor).where(
+            PredictiveMonitor.tenant_id == tid, PredictiveMonitor.machine_id == mid,
+            PredictiveMonitor.window_hours.is_not(None)).with_for_update())).scalars().all()
+        for m in mons:
+            mark_late(m, ts)
+            n += 1
+    await db.flush()
+    return n
+
+
+def mark_late(m: PredictiveMonitor, ts: datetime) -> None:
+    st = dict(m.status or {})
+    old = ps.parse_iso(st.get("late_from"))
+    if old is None or _utc(ts) < old:
+        st["late_from"] = clock.iso(_utc(ts))
+        m.status = st
+
+
+async def reextract_late(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseline, tags: dict,
+                         since: Optional[datetime] = None) -> int:
+    """Re-extracts the invalid windows of the current segment that end after `since` (default: the monitor's
+    `late_from` note). A window that becomes valid gets its point; its running hours change the usage `u` of every
+    later window by the same amount. Returns how many windows changed."""
+    st = dict(m.status or {})
+    since = since or ps.parse_iso(st.get("late_from"))
+    if since is None:
+        return 0
+    rows = list((await db.execute(select(ConditionFeature).where(
+        ConditionFeature.tenant_id == m.tenant_id, ConditionFeature.monitor_id == m.id,
+        ConditionFeature.baseline_id == reset.id, ConditionFeature.valid.is_(False),
+        ConditionFeature.end_at > since).order_by(ConditionFeature.i).limit(MAX_WINDOWS_PER_RUN + 1))).scalars().all())
+    more = len(rows) > MAX_WINDOWS_PER_RUN
+    rows = rows[:MAX_WINDOWS_PER_RUN]
+    changed = 0
+    for f in rows:
+        wf = await _time_window(m, tags, _utc(f.start_at), _utc(f.end_at))
+        if wf.valid == bool(f.valid) and (wf.running_h or 0.0) == (f.running_h or 0.0) and wf.n == f.n:
+            continue
+        delta = (wf.running_h or 0.0) - (f.running_h or 0.0)
+        f.x = wf.x if wf.valid else None
+        f.valid, f.n, f.running_h, f.coverage = bool(wf.valid and wf.x is not None), wf.n, wf.running_h, wf.coverage
+        if delta:
+            later = (await db.execute(select(ConditionFeature).where(
+                ConditionFeature.tenant_id == m.tenant_id, ConditionFeature.monitor_id == m.id,
+                ConditionFeature.i >= f.i))).scalars().all()
+            for g in later:
+                g.u = (g.u or 0.0) + delta
+        changed += 1
+    st = dict(m.status or {})
+    if more:
+        st["late_from"] = clock.iso(_utc(rows[-1].end_at))
+    else:
+        st.pop("late_from", None)
+    m.status = st
+    await db.flush()
+    if changed:
+        log.info("predictive.late_windows", monitor_id=m.id, changed=changed)
+    return changed
+
+
 async def extract(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseline, now: datetime) -> int:
     """Closed windows not yet stored (P-1), from Influx."""
     if not m.tag_id:
@@ -121,57 +222,93 @@ async def extract(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseli
             start = anchor + k * dur
             if prev is not None and _utc(prev.end_at) > start:
                 start = _utc(prev.end_at)
-        gap = _gap_s(m)
+        made += await reextract_late(db, m, reset, tags)
         while start + dur <= horizon and made < MAX_WINDOWS_PER_RUN:
             end = start + dur
-            ids = [m.tag_id] + ([tags["run_state"]] if tags["run_state"] else []) + \
-                  ([m.ambient_tag_id] if m.ambient_tag_id else [])
-            pts = await fx.influx_points(m.tenant_id, ids, start, end)
-            held0 = await fx.last_before(m.tenant_id, ids, start, timedelta(seconds=max(gap, 1.0) * 2))
-            for tid, (t, v) in held0.items():
-                if tid in pts and (start - t).total_seconds() <= gap:
-                    pts[tid].insert(0, (start, v))
-            pres = await fx.presence(m.tenant_id, m.machine_id, start, end, gap)
-            wf = fx.time_window_feature(pts.get(m.tag_id, []), pts.get(tags["run_state"]) if tags["run_state"] else None,
-                                        start, end, pres, pts.get(m.ambient_tag_id) if m.ambient_tag_id else None)
+            wf = await _time_window(m, tags, start, end)
             await store_window(db, m, reset, start=start, end=end, x=wf.x, n=wf.n, valid=wf.valid,
                                running_h=wf.running_h, coverage=wf.coverage)
             made += 1
             start = end
         return made
-    # cycle blocks
+    return await extract_cycles(db, m, reset, horizon, prev, seg_prev, tags)
+
+
+_US = timedelta(microseconds=1)
+COUNTER_LOOKBACK = timedelta(days=366)
+
+
+async def _counter_at(m: PredictiveMonitor, counter: str, at: datetime) -> Optional[float]:
+    """Counter value held at `at` (the reading AT `at` included: it is the one that closed the previous block)."""
+    got = await fx.last_before(m.tenant_id, [counter], at + _US, COUNTER_LOOKBACK)
+    return got.get(counter, (None, None))[1]
+
+
+async def _next_close(m: PredictiveMonitor, tags: dict, after: datetime, horizon: datetime, carry: float
+                      ) -> Optional[datetime]:
+    """Instant at which the next block of `window_cycles` closes after `after` (None: still open, or no data).
+    Answered with aggregates computed inside Influx, so an open block costs a couple of small queries per tick
+    instead of re-reading (and parsing) every raw reading since the last block end."""
+    n_block = m.window_cycles
+    counter = tags["counter"]
+    if not counter:
+        probe = await fx.tag_probe(m.tenant_id, m.tag_id, after, horizon)
+        if probe["count"] < n_block:
+            return None
+        return await fx.nth_reading_time(m.tenant_id, m.tag_id, after, horizon, n_block)
+    probe = await fx.tag_probe(m.tenant_id, counter, after, horizon)
+    if probe["first"] is None:
+        return None
+    pv = await _counter_at(m, counter, after)
+    ref = pv if pv is not None else probe["first"][1]
+    if probe["drops"] or probe["first"][1] < ref:
+        # a reset/rollover inside the open block (rare): walk the counter readings themselves
+        pts = (await fx.influx_points(m.tenant_id, [counter], after, horizon)).get(counter, [])
+        cum = fx.cumulative_cycles([p for p in pts if p[0] > after], tags["counter_max"], pv)
+        return next((t for t, c in cum if c + carry >= n_block), None)
+    if probe["last"][1] - ref + carry < n_block:
+        return None
+    return await fx.first_reaching(m.tenant_id, counter, after, horizon, ref + n_block - carry)
+
+
+async def extract_cycles(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseline, horizon: datetime,
+                         prev: Optional[ConditionFeature], seg_prev: Optional[ConditionFeature], tags: dict) -> int:
+    """Blocks of N cycles (P-1: block i = cycles (i−1)·N+1 … i·N since the reset), resumed from the cursor = the
+    instant of the reading that closed the last block (and the cycles it overshot, `carry`).
+
+    * The counter reading AT the cursor belongs to the previous block: it is the reference value (`prev_value`)
+      and is not counted again (otherwise every resumed block closes one cycle early).
+    * Nothing is skipped: while no block closes, the cursor stays at the last block end, so readings that arrive
+      late (gateway store-and-forward flush, hours after the fact) still land in the right block."""
+    made = 0
     st = dict(m.status or {})
     cur = st.get("cycle_cursor") if (st.get("cycle_cursor") or {}).get("baseline_id") == reset.id else None
     after = ps.parse_iso(cur["end_at"]) if cur else _utc(reset.reset_at)
     carry = float(cur["carry"]) if cur else 0.0
     k0 = (seg_prev.i + 1) if seg_prev else ((prev.i + 1) if prev else 1)
-    stop = min(horizon, after + timedelta(days=2))
+    counter = tags["counter"]
     while after < horizon and made < MAX_WINDOWS_PER_RUN:
-        ids = [m.tag_id] + ([tags["counter"]] if tags["counter"] else [])
+        close_at = await _next_close(m, tags, after, horizon, carry)
+        if close_at is None:
+            break
+        # read the raw readings once a block closes (2 days at a time when catching up)
+        stop = min(horizon, max(close_at + _US, after + timedelta(days=2)))
+        ids = [m.tag_id] + ([counter] if counter else [])
         pts = await fx.influx_points(m.tenant_id, ids, after, stop)
         cum = None
-        if tags["counter"]:
-            before = await fx.last_before(m.tenant_id, [tags["counter"]], after, timedelta(days=7))
-            pv = before.get(tags["counter"], (None, None))[1]
-            cum = fx.cumulative_cycles(pts.get(tags["counter"], []), tags["counter_max"], pv)
+        if counter:
+            pv = await _counter_at(m, counter, after)
+            cum = fx.cumulative_cycles([p for p in pts.get(counter, []) if p[0] > after], tags["counter_max"], pv)
         blocks, cursor = fx.cycle_blocks(pts.get(m.tag_id, []), m.window_cycles, after, k0, cum, carry)
         for blk in blocks:
             await store_window(db, m, reset, start=blk.start, end=blk.end, x=blk.x, n=blk.n, valid=blk.valid, i=blk.k)
             made += 1
-        skip_to = min(stop, now - SKIP_EMPTY_AFTER)
-        if not cursor and not pts.get(m.tag_id) and not (cum or []) and skip_to > after:
-            # nothing at all in the slice (machine stopped): skip it — but only the part older than the late-data
-            # tolerance, so a gateway flushing its buffer late still lands in the right block
-            cursor = {"end_at": skip_to, "carry": carry}
-            blocks = []
-        if cursor:
-            after, carry, k0 = cursor["end_at"], cursor["carry"], k0 + len(blocks)
-            st["cycle_cursor"] = {"baseline_id": reset.id, "end_at": clock.iso(after), "carry": carry}
-            m.status = st
-        if stop >= horizon:
+        if not cursor:
+            log.warning("predictive.cycle_probe_mismatch", monitor_id=m.id, after=clock.iso(after))
             break
-        # next slice: from the last block end (or widen the slice when no block closed in it)
-        stop = min(horizon, (after if cursor else stop) + timedelta(days=2))
+        after, carry, k0 = cursor["end_at"], cursor["carry"], k0 + len(blocks)
+        st["cycle_cursor"] = {"baseline_id": reset.id, "end_at": clock.iso(after), "carry": carry}
+        m.status = st
     return made
 
 
@@ -302,6 +439,9 @@ async def process_monitor(db: AsyncSession, m: PredictiveMonitor, now: Optional[
     await ps.sync_resets(db, m, now)
     reset = await ps.latest_reset(db, m)
     made = 0
+    noted = _late.get((m.tenant_id, m.machine_id))
+    if noted is not None and m.window_hours:
+        mark_late(m, noted)          # the note itself stays for the machine's other monitors (flush_late)
     if do_extract and m.enabled:
         try:
             made = await extract(db, m, reset, now)
@@ -459,9 +599,13 @@ def _slim(p: Optional[dict]) -> Optional[dict]:
 
 # ── recompute (P-12) ──────────────────────────────────────────────────────────
 
-async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[datetime] = None) -> dict:
+async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[datetime] = None,
+                    reextract_invalid: bool = True) -> dict:
     """Recomputes the last baseline segment from its stored windows and the recorded events, and reports whether
-    the alerts are the same (instants and evidence). Nothing is deleted: alerts are matched by window."""
+    the alerts are the same (instants and evidence). Nothing is deleted: alerts are matched by window.
+    With `reextract_invalid`, the segment's invalid time windows are first re-read from Influx (readings that
+    arrived late, e.g. a gateway buffer flushed after the window was extracted); the windows that changed are
+    reported and make `same` false only if they change the alerts."""
     now = now or clock.now()
     reset = await ps.latest_reset(db, m)
     if reset is None:
@@ -469,6 +613,10 @@ async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[dateti
     before = {a.opened_window: _db_alert_view(a) for a in (await db.execute(select(PredictiveAlert).where(
         PredictiveAlert.tenant_id == m.tenant_id, PredictiveAlert.monitor_id == m.id,
         PredictiveAlert.baseline_id == reset.id))).scalars()}
+    reextracted = 0
+    if reextract_invalid and m.window_hours and m.tag_id:
+        reextracted = await reextract_late(db, m, reset, await _tags(db, m),
+                                           since=_utc(reset.reset_at) - timedelta(seconds=1))
     _, _, _, _, _, res = await fold(db, m, reset)
     after = {a["opened_window"]: _alert_key_view(a) | {"evidence": a["evidence"]}
              for a in res.alerts if not a.get("carried")}
@@ -478,6 +626,7 @@ async def recompute(db: AsyncSession, m: PredictiveMonitor, now: Optional[dateti
             diff.append({"opened_window": w, "stored": before.get(w), "recomputed": after.get(w)})
     summary = await apply_fold(db, m, reset, now)
     return {"monitor_id": m.id, "baseline_id": reset.id, "same": not diff, "differences": diff,
+            "windows_reextracted": reextracted,
             "alerts": [after[w] for w in sorted(after)], **{k: summary[k] for k in ("points",)}}
 
 
@@ -493,6 +642,14 @@ def _db_alert_view(a: PredictiveAlert) -> dict:
 
 async def run_once(now: Optional[datetime] = None) -> int:
     now = now or clock.now()
+    if _late:
+        async with AsyncSessionLocal() as db:
+            try:
+                await flush_late(db)
+                await db.commit()
+            except Exception:  # noqa: BLE001 — the notes are lost; /recompute re-extracts invalid windows too
+                await db.rollback()
+                log.exception("predictive.flush_late_failed")
     async with AsyncSessionLocal() as db:
         ids = [(i, t) for i, t in (await db.execute(select(PredictiveMonitor.id, PredictiveMonitor.tenant_id).where(
             PredictiveMonitor.enabled.is_(True)))).all()]

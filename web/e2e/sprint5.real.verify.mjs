@@ -167,7 +167,10 @@ try {
       await page.getByRole("button", { name: "Criar e gerar código" }).click();
       const code = (await page.getByTestId("enroll-code").innerText({ timeout: 20_000 })).trim();
       check(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code), `wizard: enrollment code shown (${code})`);
-      check((await page.getByTestId("cmd-run").innerText()).includes("GATEWAY_ID="), "wizard: docker run command with GATEWAY_ID");
+      const runCmd = await page.getByTestId("cmd-run").innerText();
+      // fix loop: one-step install — the gateway enrolls itself with ENROLL_CODE; no token/MQTT password/curl
+      check(runCmd.includes(`ENROLL_CODE=${code}`) && runCmd.includes("SERVER_URL=") && !/GATEWAY_TOKEN|MQTT_PASSWORD|curl /.test(runCmd),
+        "wizard: single docker run command with SERVER_URL + ENROLL_CODE (no token, no MQTT password)");
       await page.screenshot({ path: path.join(OUT, `gateways-wizard-${theme}.png`) });
       // the device enrolls itself and sends a heartbeat (device API, no JWT)
       const en = await api("POST", "/api/gateways/enroll", null, { code });

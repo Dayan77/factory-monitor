@@ -246,6 +246,81 @@ async def last_before(tenant_id: str, tag_ids: list[str], before: datetime, look
     return out
 
 
+def _flt(tenant_id: str, tag_id: str) -> str:
+    return (f'|> filter(fn: (r) => r["_measurement"] == "sensors")\n'
+            f'      |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")\n'
+            f'      |> filter(fn: (r) => r["tag_id"] == "{tag_id}")\n'
+            f'      |> filter(fn: (r) => r["_field"] == "value")')
+
+
+async def _query(flux: str) -> list:
+    return await influx._client.query_api().query(flux, org=settings.influx_org)
+
+
+async def tag_probe(tenant_id: str, tag_id: str, after: datetime, stop: datetime) -> dict:
+    """Aggregates of one tag in (after, stop), computed inside Influx (no raw rows are transferred):
+    first reading, last reading, number of readings and the number of drops (reset/rollover) between consecutive readings.
+    Several series of one tag (e.g. the unit changed) are combined: earliest first, latest last, summed drops."""
+    tenant_id = ensure_uuid(tenant_id, "tenant_id")
+    tag_id = ensure_uuid(tag_id, "tag_id")
+    flux = f"""
+    base = from(bucket: "{settings.influx_bucket}")
+      |> range(start: {_rfc(after + timedelta(microseconds=1))}, stop: {_rfc(stop)})
+      {_flt(tenant_id, tag_id)}
+    base |> first() |> yield(name: "first")
+    base |> last() |> yield(name: "last")
+    base |> count() |> yield(name: "count")
+    base |> difference() |> filter(fn: (r) => r["_value"] < 0) |> count() |> yield(name: "drops")
+    """
+    out: dict = {"first": None, "last": None, "drops": 0, "count": 0}
+    for table in await _query(flux):
+        for rec in table.records:
+            kind, v = rec.values.get("result"), rec.get_value()
+            if v is None:
+                continue
+            if kind in ("drops", "count"):
+                out[kind] += int(v)
+            elif kind == "first" and (out["first"] is None or rec.get_time() < out["first"][0]):
+                out["first"] = (rec.get_time(), float(v))
+            elif kind == "last" and (out["last"] is None or rec.get_time() > out["last"][0]):
+                out["last"] = (rec.get_time(), float(v))
+    return out
+
+
+async def first_reaching(tenant_id: str, tag_id: str, after: datetime, stop: datetime, target: float
+                         ) -> Optional[datetime]:
+    """Instant of the first reading in (after, stop) with value ≥ target (monotonic counter, no drops)."""
+    tenant_id = ensure_uuid(tenant_id, "tenant_id")
+    tag_id = ensure_uuid(tag_id, "tag_id")
+    flux = f"""
+    from(bucket: "{settings.influx_bucket}")
+      |> range(start: {_rfc(after + timedelta(microseconds=1))}, stop: {_rfc(stop)})
+      {_flt(tenant_id, tag_id)}
+      |> filter(fn: (r) => r["_value"] >= {float(target)!r})
+      |> first()
+    """
+    ts = [rec.get_time() for table in await _query(flux) for rec in table.records]
+    return min(ts) if ts else None
+
+
+async def nth_reading_time(tenant_id: str, tag_id: str, after: datetime, stop: datetime, n: int
+                           ) -> Optional[datetime]:
+    """Instant of the n-th reading of a tag in (after, stop), or None when there are fewer."""
+    tenant_id = ensure_uuid(tenant_id, "tenant_id")
+    tag_id = ensure_uuid(tag_id, "tag_id")
+    flux = f"""
+    from(bucket: "{settings.influx_bucket}")
+      |> range(start: {_rfc(after + timedelta(microseconds=1))}, stop: {_rfc(stop)})
+      {_flt(tenant_id, tag_id)}
+      |> group()
+      |> sort(columns: ["_time"])
+      |> limit(n: {int(n)})
+      |> keep(columns: ["_time", "_value"])
+    """
+    ts = sorted(rec.get_time() for table in await _query(flux) for rec in table.records)
+    return ts[n - 1] if len(ts) >= n else None
+
+
 async def presence(tenant_id: str, machine_id: str, start: datetime, stop: datetime, gap_s: float
                    ) -> list[Interval]:
     """Intervals in which the machine had data (any tag): each reading covers up to `gap_s` after it

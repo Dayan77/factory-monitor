@@ -70,8 +70,6 @@ async def test_cycle_blocks_resumed_one_run_per_block_do_not_drift(client, clk):
     assert [p["x"] for p in pts] == [200.0 + b for b in range(blocks)]
 
 
-@pytest.mark.xfail(strict=True, reason="known limitation (backend report): stroke slices empty for > SKIP_EMPTY_AFTER (6 h) "
-                   "are skipped for good, so a gateway backlog flushed later is never cut into blocks — needs a decision")
 async def test_cycle_blocks_survive_a_gateway_backlog_older_than_6h(client, clk):
     """A gateway that was offline buffers its readings and flushes them when it reconnects (edge SQLite buffer).
     If the engine ran meanwhile (no data yet), the late readings must still be cut into blocks from the start —

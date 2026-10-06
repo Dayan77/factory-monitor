@@ -25,7 +25,7 @@ from typing import Iterable, Optional
 from sqlalchemy import false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import Component, Machine, Position, Tag
+from ...models import Component, Gateway, Machine, Position, Tag
 from ...models.tag import CYCLE_ROLES, SemanticRole
 from .core import hour_floor, resolve_max_rate, split_hourly
 
@@ -39,6 +39,7 @@ class TagInfo:
     role: SemanticRole
     counter_max: Optional[int]
     max_rate_per_s: Optional[float]
+    gateway_revoked: bool = False     # assigned to a revoked gateway: its readings are discarded (gateways.py)
 
 
 @dataclass(frozen=True)
@@ -202,9 +203,14 @@ async def load_tag_info(db: AsyncSession, tenant_id: str, tag_id: str) -> Option
         machine_id = (await db.execute(
             select(Position.machine_id).where(Position.id == position_id)
         )).scalar_one_or_none()
+    revoked = False
+    if row.gateway_id is not None:
+        gw = (await db.execute(select(Gateway.mqtt_username, Gateway.mqtt_password_hash).where(
+            Gateway.id == row.gateway_id, Gateway.tenant_id == tenant_id))).first()
+        revoked = gw is not None and gw[0] is not None and gw[1] is None
     return TagInfo(id=row.id, tenant_id=row.tenant_id, machine_id=machine_id, position_id=position_id,
                    role=row.semantic_role, counter_max=row.counter_max,
-                   max_rate_per_s=row.max_rate_per_s)
+                   max_rate_per_s=row.max_rate_per_s, gateway_revoked=revoked)
 
 
 async def load_topology(db: AsyncSession, tenant_id: str,

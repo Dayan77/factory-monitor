@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import GatewaysPage from "./GatewaysPage";
 import { plantsApi, tagsApi } from "@/services/api";
-import { gatewaysApi, installCommands, type Gateway } from "@/services/gatewaysApi";
+import { EDGE_IMAGE, gatewaysApi, installCommands, type Gateway } from "@/services/gatewaysApi";
 import { useAuthStore } from "@/store/auth";
 import { plantTree } from "@/test/fixtures";
 import { user } from "@/test/maintenanceFixtures";
@@ -70,8 +70,10 @@ describe("Gateways", () => {
     await u.click(screen.getByRole("button", { name: "Criar e gerar código" }));
     await waitFor(() => expect(gatewaysApi.create).toHaveBeenCalledWith({ name: "Novo", plant_id: "plant-1" }));
     expect(await screen.findByTestId("enroll-code")).toHaveTextContent("ABCD-EFGH-JKLM");
-    expect(screen.getByTestId("cmd-enroll")).toHaveTextContent('"code": "ABCD-EFGH-JKLM"');
-    expect(screen.getByTestId("cmd-run")).toHaveTextContent("GATEWAY_ID=gw-9");
+    expect(screen.getByTestId("cmd-run")).toHaveTextContent("ENROLL_CODE=ABCD-EFGH-JKLM");
+    expect(screen.getByTestId("cmd-run")).toHaveTextContent(`SERVER_URL=${window.location.origin}`);
+    expect(screen.getByTestId("cmd-run")).toHaveTextContent(EDGE_IMAGE);
+    expect(screen.getByTestId("cmd-compose")).toHaveTextContent("ENROLL_CODE=ABCD-EFGH-JKLM");
     expect(within(screen.getByTestId("cmd-run")).getByRole("button", { name: "Copiar" })).toBeInTheDocument();
   });
 
@@ -100,9 +102,37 @@ describe("Gateways", () => {
     expect(screen.getByText(/feitos pelo administrador/)).toBeInTheDocument();
   });
 
-  it("install commands never carry a token (it comes from the device's own enrollment)", () => {
-    const c = installCommands({ origin: "https://app", gatewayId: "g", tenantId: "t", code: "C", mqttHost: "app" });
-    expect(c.run).toContain("GATEWAY_TOKEN=<token do passo 1>");
-    expect(c.enroll).toContain("https://app/api/gateways/enroll");
+  it("install command: one step with ENROLL_CODE — no token, no MQTT password, the release image", () => {
+    const c = installCommands({ origin: "https://app.example", code: "ABCD-EFGH-JKLM", mqttHost: "app.example" });
+    expect(c.run).toContain("-e SERVER_URL=https://app.example");
+    expect(c.run).toContain("-e ENROLL_CODE=ABCD-EFGH-JKLM");
+    expect(c.run).toContain("-v fm-gateway-data:/data");
+    expect(c.run).toContain("MQTT_BROKER_PORT=8883 -e MQTT_TLS=true");
+    expect(c.run.trim().endsWith(EDGE_IMAGE)).toBe(true);
+    expect(EDGE_IMAGE).toBe("factoryconnect-edge:0.5.0");
+    for (const secret of ["GATEWAY_TOKEN", "MQTT_PASSWORD", "MQTT_USERNAME", "curl"]) expect(c.run).not.toContain(secret);
+    expect(c.compose).toContain("gateway.env");
+  });
+
+  it("revoked gateway: notice with the broker action, and an enrolled gateway must be revoked before removal", async () => {
+    vi.mocked(gatewaysApi.list).mockResolvedValue(ok([
+      gw(),
+      gw({ id: "gw-3", name: "Gateway Revogado", status: "pending", enrolled: false, token_prefix: null, mqtt_revoked: true,
+        mqtt_action: "Remova a linha do usuário gw-1234 do gateways.conf do broker e recarregue-o." }),
+    ]));
+    renderRoute(<GatewaysPage />, "/settings/gateways?gw=gw-1", "/settings/gateways");
+    expect(await screen.findByTestId("gw-remove-hint")).toHaveTextContent("revogue o gateway antes");
+    expect(screen.queryByRole("button", { name: "Remover gateway" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Revogar gateway" })).toBeInTheDocument();
+  });
+
+  it("revoked gateway detail shows what to do on the broker and can be removed", async () => {
+    vi.mocked(gatewaysApi.list).mockResolvedValue(ok([
+      gw({ id: "gw-3", name: "Gateway Revogado", status: "pending", enrolled: false, token_prefix: null, mqtt_revoked: true,
+        mqtt_action: "Remova a linha do usuário gw-1234 do gateways.conf do broker e recarregue-o." }),
+    ]));
+    renderRoute(<GatewaysPage />, "/settings/gateways?gw=gw-3", "/settings/gateways");
+    expect(await screen.findByTestId("gw-mqtt-revoked")).toHaveTextContent("gateways.conf");
+    expect(screen.getByRole("button", { name: "Remover gateway" })).toBeInTheDocument();
   });
 });

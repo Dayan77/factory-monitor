@@ -332,6 +332,35 @@ virtual (`edge/virtual_plant/`) roda **até a falha**, com seed, e é a régua d
   `condition_features(tenant_id, position_id, feature, i, end_at, x, n, valid, phase)` → detectores → alertas.
   `POST /api/predictive/recompute` (admin) recalcula desde a última linha de base e DEVE reproduzir os mesmos
   alertas (mesmos instantes e evidências); o teste usa o cenário F.
+- **Retomada dos blocos de ciclos** (correção Sprint 5): o cursor é o instante da leitura do contador que fechou o
+  último bloco (+ ciclos que ela ultrapassou, `carry`). Essa leitura pertence ao bloco anterior: na retomada ela é a
+  **referência** (`prev_value`) e não é contada de novo — senão cada bloco retomado fecha um ciclo antes (bloco i
+  tem de ser exatamente os ciclos (i−1)·N+1 … i·N). O valor de referência é a última leitura até o cursor
+  (lookback de 366 dias); um contador **sem nenhuma leitura anterior** usa a sua 1ª leitura como referência (ela
+  não conta ciclo — não há como saber quantos ciclos ela representa).
+- **Custo por tick**: enquanto o bloco está aberto o servidor pergunta ao Influx só agregados (1ª/última leitura,
+  nº de quedas do contador, instante em que o contador atinge o alvo do bloco); as leituras brutas só são lidas
+  quando um bloco fecha. (Antes, cada tick relia e analisava o trecho inteiro desde o cursor — ~80 mil linhas por
+  monitor no F1 — e isso tirava o laço de eventos da ingestão MQTT.)
+- **Dados atrasados** (buffer *store-and-forward* do gateway):
+  * blocos de ciclos: o cursor **nunca pula** trecho vazio; leituras que chegam horas depois (gateway que esteve
+    sem rede) ainda caem no bloco certo. Leituras atrasadas **dentro de um bloco já fechado** não o reabrem
+    (limitação conhecida: o bloco ficou com menos leituras do que teria);
+  * janelas de tempo: o handler MQTT anota a máquina quando grava uma leitura mais velha que
+    `PREDICTIVE_GRACE_S` (`late_from`, como o detector de paradas); a execução seguinte **re-extrai as janelas
+    inválidas** do segmento atual que a leitura toca. A janela que ficar válida ganha o ponto e as horas de
+    operação dela corrigem o `u` das janelas seguintes. Janelas **válidas** não são reescritas (o ponto já
+    alimentou alertas e notificações). As anotações ficam em memória até o próximo tick do motor (≤ 5 min): se o
+    servidor reiniciar nesse intervalo, `POST /api/predictive/recompute` (padrão `reextract_invalid = true`)
+    relê do Influx todas as janelas inválidas do segmento e informa `windows_reextracted`.
+- **Capacidade de ingestão** (medida em `server/tests/test_ingestion_throughput.py`, Postgres + Influx locais, 1
+  processo): rajada de buffer com 8 tags de `stroke_time` + 2 contadores = **~250 leituras/s** (era ~160/s antes da
+  escrita agrupada no Influx e do *throttle* de `last_seen_at`; ~80/s com o motor preditivo relendo blocos abertos).
+  Leituras de **uma mesma tag** são processadas em ordem (uma por vez): um contador de ciclos (contabilização de uso
+  por leitura) fica em ~75–90 leituras/s, uma tag de `stroke_time` em ~150–200/s. Uma linha real com 10 cilindros
+  monitorados a 1–2 s de ciclo publica ~10–20 leituras/s de curso + contadores: folga de ~10×. Abaixo dessa
+  capacidade o broker enfileira; o gauge `fm_mqtt_inflight_messages` e o log `mqtt.backlog` mostram quando o
+  servidor não acompanha (ex.: planta virtual acelerada 150× no F1).
 - **Tudo por tenant** (`tenant_id` em toda tabela e consulta) e teste de isolamento em todo endpoint.
 - **API proposta** (o `backend-engineer` pode ajustar nomes, não semântica):
 
@@ -395,5 +424,9 @@ O cenário F usa estes valores, exceto janela e aquecimento (maiores/menores par
    fundação rígida/flexível); valores típicos citados (1,4 / 2,8 / 4,5 mm/s para máquinas médias em base rígida)
    **precisam ser conferidos na norma** antes de virarem padrão. Até lá: sem padrão, o usuário informa.
 3. **Alvos de P-10** são iniciais; calibrar com a planta virtual e o piloto.
-4. **Weibull com censura** para MTTF (kpis.md §2.4 promete para a Fase 4): fica para o relatório de vida por
+4. **Alerta aberto quando o componente é trocado** (QA Sprint 5): a instalação reinicia a linha de base (P-2), mas
+   o alerta aberto pelo componente substituído continua `open` (é carregado para o novo segmento). P-8 não diz o que
+   fazer com ele — decisão do `reliability-engineer` (ex.: fechar com uma resolução própria, o que exige migration
+   da restrição `ck_predictive_alerts_resolution`). Até lá o planejador fecha à mão.
+5. **Weibull com censura** para MTTF (kpis.md §2.4 promete para a Fase 4): fica para o relatório de vida por
    fabricante/modelo; não é pré-requisito da preditiva.

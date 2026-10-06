@@ -36,6 +36,7 @@ from ...auth import get_current_user, require_roles
 from ...db import get_db
 from ...models import Gateway, Line, Machine, Plant, Tag, Tenant, User, UserRole
 from ...services import gateways as gs
+from ...services.usage.cache import topology_cache
 from ...services.validation import is_uuid
 from ..tenant_refs import ensure_owned
 
@@ -87,6 +88,10 @@ class GatewayOut(BaseModel):
     tag_count: int
     last_heartbeat: Optional[dict]
     mqtt_username: Optional[str]
+    # the gateway was revoked: its MQTT credential no longer exists on the server and the readings of its tags
+    # are discarded; the broker line (gateways.conf) must still be removed by the operator of the broker
+    mqtt_revoked: bool = False
+    mqtt_action: Optional[str] = None
     created_at: datetime
 
 
@@ -146,7 +151,8 @@ async def _out(db: AsyncSession, gw: Gateway, counts: Optional[dict] = None, now
         enroll_pending=gw.enroll_code_hash is not None and gw.enroll_expires_at is not None and gw.enroll_expires_at > now,
         enroll_expires_at=gw.enroll_expires_at, heartbeat_s=gw.heartbeat_s, pulse_poll_ms=gw.pulse_poll_ms,
         devices=list(gw.devices or []), tag_count=counts.get(gw.id, 0), last_heartbeat=gw.last_heartbeat,
-        mqtt_username=gw.mqtt_username, created_at=gw.created_at)
+        mqtt_username=gw.mqtt_username, mqtt_revoked=gs.mqtt_revoked(gw),
+        mqtt_action=gs.mqtt_revoke_action(gw) if gs.mqtt_revoked(gw) else None, created_at=gw.created_at)
 
 
 def _422(msg: str) -> HTTPException:
@@ -216,6 +222,11 @@ async def patch_gateway(gateway_id: str, body: GatewayUpdate, user: CurrentUser,
 @router.delete("/{gateway_id}", status_code=204, dependencies=ADMIN)
 async def delete_gateway(gateway_id: str, user: CurrentUser, db: DB):
     gw = await _get(db, gateway_id, user.tenant_id)
+    if gw.token_hash is not None or gw.mqtt_password_hash is not None:
+        # deleting first would unassign the tags and the device's readings (MQTT credential still valid on the
+        # broker) would be accepted again: revoke first — it tells which broker line to remove
+        raise HTTPException(status_code=409, detail="Revogue o gateway antes de removê-lo (a credencial MQTT "
+                                                    "ainda está ativa).")
     await db.execute(update(Tag).where(Tag.tenant_id == user.tenant_id, Tag.gateway_id == gw.id)
                      .values(gateway_id=None))
     await db.delete(gw)
@@ -241,8 +252,10 @@ async def revoke(gateway_id: str, user: CurrentUser, db: DB):
     gw = await _get(db, gateway_id, user.tenant_id, lock=True)
     gw.token_hash = gw.token_prefix = None
     gw.enroll_code_hash = gw.enroll_expires_at = None
+    gw.mqtt_password_hash = None       # the MQTT credential dies too: readings of its tags are discarded
     gw.status = "pending"
     await db.commit()
+    topology_cache.invalidate()        # the MQTT hot path sees the revocation at the next reading
     await db.refresh(gw)
     return await _out(db, gw)
 
@@ -307,9 +320,12 @@ async def mqtt_credentials(gateway_id: str, user: CurrentUser, db: DB):
     gw = await _get(db, gateway_id, user.tenant_id)
     if not gw.mqtt_username:
         raise HTTPException(status_code=409, detail="Gateway ainda não cadastrado (sem credencial MQTT).")
+    if gs.mqtt_revoked(gw):
+        return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/", "revoked": True,
+                "acl": None, "gateways_conf_line": None, "action": gs.mqtt_revoke_action(gw)}
     return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/",
             "acl": f"topic readwrite factory/{gw.tenant_id}/#",
-            "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}"}
+            "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}", "revoked": False}
 
 
 # ── device ──────────────────────────────────────────────────────────────────
@@ -350,6 +366,7 @@ async def enroll(body: EnrollIn, request: Request, db: DB):
     gw.mqtt_username = gw.mqtt_username or f"gw-{gw.id[:8]}-{gw.id[-4:]}"
     gw.mqtt_password_hash = gs.mosquitto_hash(password)
     await db.commit()
+    topology_cache.invalidate()
     return {"gateway_id": gw.id, "tenant_id": gw.tenant_id, "token": token,
             "config_url": f"/api/gateways/{gw.id}/config", "heartbeat_url": f"/api/gateways/{gw.id}/heartbeat",
             "mqtt": {"username": gw.mqtt_username, "password": password, "topic_prefix": f"factory/{gw.tenant_id}/"}}

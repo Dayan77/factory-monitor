@@ -285,22 +285,26 @@ jobs:
   docker:
     name: docker build · ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40              # arm64 do edge via QEMU
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: server, context: server, target: "" }
-          - { name: edge,   context: edge,   target: "" }
-          - { name: web,    context: web,    target: prod }
-          - { name: site,   context: site,   target: prod }
+          - { name: server, context: server, target: "",   platforms: linux/amd64 }
+          # o gateway roda em IPC x86-64 e em Raspberry Pi 4/5 (infra/gateway): valida a imagem multi-arch
+          - { name: edge,   context: edge,   target: "",   platforms: "linux/amd64,linux/arm64" }
+          - { name: web,    context: web,    target: prod, platforms: linux/amd64 }
+          - { name: site,   context: site,   target: prod, platforms: linux/amd64 }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        if: contains(matrix.platforms, 'arm64')
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ matrix.context }}
           target: ${{ matrix.target }}
+          platforms: ${{ matrix.platforms }}
           push: false
           load: false
           tags: factory-monitor-${{ matrix.name }}:ci

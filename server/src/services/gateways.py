@@ -39,6 +39,30 @@ DEVICE_KEYS = {"id", "protocol", "endpoint", "host", "port", "publishing_interva
 MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
 SIGNAL_ROLES = {"product_code", "starved", "blocked"}
 EDGE_TAG_KEYS = {"source", "key", "unit_id", "register_type", "data_type_plc", "word_order", "signal_role"}
+# Modbus Tag.address as provisioned/seeded (edge/src/provision.py, seed_dev.py) and parsed by the edge
+# (edge/src/plant_map.py): "unit=2;hr=10:uint16" — or a bare register number with the fields in `tags.edge`.
+_MODBUS_ADDR = re.compile(r"^unit=(\d+);(hr|ir|di|co)=(\d+)(?::(\w+))?$")
+_AREA = {"hr": "holding", "ir": "input", "di": "discrete", "co": "coil"}
+
+
+def modbus_address(tag: Tag, edge: dict) -> tuple[int, dict]:
+    """(register number, edge fields) of a Modbus tag. Fields set explicitly in `tags.edge` take precedence over
+    the ones encoded in the address."""
+    raw = str(tag.address or "").strip()
+    m = _MODBUS_ADDR.match(raw)
+    if m:
+        fields = {"unit_id": int(m.group(1)), "register_type": _AREA[m.group(2)]}
+        if m.group(4):
+            fields["data_type_plc"] = m.group(4)
+        return int(m.group(3)), {**fields, **{k: v for k, v in edge.items() if v is not None}}
+    try:
+        n = int(raw)
+    except ValueError:
+        n = -1
+    if n < 0:
+        raise ConfigError(f"tag {tag.name}: endereço Modbus deve ser um registrador inteiro ≥ 0 ou "
+                          f"'unit=U;hr|ir|di|co=N[:tipo]' ({tag.address!r})")
+    return n, dict(edge)
 
 
 def sha256(s: str) -> str:
@@ -78,6 +102,18 @@ def effective_status(gw: Gateway, now: Optional[datetime] = None) -> str:
     if (now - gw.last_seen_at).total_seconds() > limit:
         return "offline"
     return gw.status if gw.status in ("online", "degraded") else "online"
+
+
+def mqtt_revoked(gw: Gateway) -> bool:
+    """Enrolled once (has an MQTT user) and revoked since (no password hash): the subscriber discards the readings
+    of its tags until it is enrolled again."""
+    return gw.mqtt_username is not None and gw.mqtt_password_hash is None
+
+
+def mqtt_revoke_action(gw: Gateway) -> str:
+    return (f"Remova a linha do usuário {gw.mqtt_username} do gateways.conf do broker e recarregue-o "
+            f"(make mqtt-gateway-remove GATEWAY={gw.mqtt_username} && make mqtt-reload). Até lá o broker ainda "
+            f"aceita a conexão, mas o servidor descarta as leituras das tags deste gateway.")
 
 
 def heartbeat_status(buffer_depth: int, errors: list[str]) -> str:
@@ -134,12 +170,9 @@ def validate_tag_edge(tag: Tag, edge: dict, devices: list[dict]) -> dict:
         raise ConfigError(f"tag {tag.name}: dispositivo (source) desconhecido {edge.get('source')!r}")
     if dev_ids[src] != proto:
         raise ConfigError(f"tag {tag.name}: protocolo da tag ({proto}) diferente do dispositivo {src}")
+    stored = edge
     if proto == "modbus":
-        try:
-            if int(str(tag.address)) < 0:
-                raise ValueError
-        except ValueError:
-            raise ConfigError(f"tag {tag.name}: endereço Modbus deve ser inteiro ≥ 0 ({tag.address!r})") from None
+        _, edge = modbus_address(tag, edge)          # checks below see the fields encoded in the address too
         rt = edge.get("register_type", "holding")
         if rt not in MODBUS_REGISTER_TYPES:
             raise ConfigError(f"tag {tag.name}: register_type inválido {rt!r}")
@@ -155,7 +188,8 @@ def validate_tag_edge(tag: Tag, edge: dict, devices: list[dict]) -> dict:
         raise ConfigError(f"tag {tag.name}: signal_role inválido {sr!r}")
     if "unit_id" in edge and not isinstance(edge["unit_id"], int):
         raise ConfigError(f"tag {tag.name}: unit_id deve ser inteiro")
-    return {**{k: v for k, v in edge.items() if v is not None}, "source": src}
+    # stored: only what was set explicitly (the address keeps its own unit/area/type)
+    return {**{k: v for k, v in stored.items() if v is not None}, "source": src}
 
 
 def _slug(s: str) -> str:
@@ -200,13 +234,14 @@ async def build_plant_map(db: AsyncSession, gw: Gateway) -> tuple[dict, list[str
         keys.add(key)
         proto = EDGE_PROTOCOL[t.protocol]
         entry = {"key": key, "tag_id": t.id, "source": edge["source"], "semantic_role": t.semantic_role.value,
-                 "unit": t.unit or "", "address": int(str(t.address)) if proto == "modbus" else str(t.address),
+                 "unit": t.unit or "", "address": str(t.address),
                  "scale": float(t.scale_factor), "offset": float(t.offset), "poll_interval_ms": int(t.poll_interval_ms),
                  # informative (ignored by the edge parser): where the tag sits in the server's asset tree
                  "name": t.name, "machine_id": t.machine_id, "position_id": t.position_id}
         if t.counter_max is not None:
             entry["counter_max"] = int(t.counter_max)
         if proto == "modbus":
+            entry["address"], edge = modbus_address(t, edge)
             entry.update(unit_id=int(edge.get("unit_id", 1)), register_type=edge.get("register_type", "holding"),
                          data_type_plc=edge.get("data_type_plc", "uint16"), word_order=edge.get("word_order", "big"))
         if edge.get("signal_role"):

@@ -29,9 +29,20 @@ class InfluxService:
     app outside a loop — tests, scripts — used to crash).
     """
 
+    # Writes are coalesced: while one HTTP write is in flight, the readings that arrive meanwhile are queued
+    # and sent together as the next request (up to WRITE_BATCH_MAX points). A lone write goes out at once (no
+    # added latency); under load (gateway buffer flush, many tags) one request carries many points instead of
+    # one request per reading, which was the MQTT ingestion bottleneck.
+    WRITE_BATCH_MAX = 5000
+
     def __init__(self) -> None:
         self._client_obj: Optional[InfluxDBClientAsync] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._pending: list = []
+        self._draining = False
+        self._queue_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._drain_task: Optional[asyncio.Task] = None
+        self.write_requests = 0          # HTTP write requests sent (observability / tests)
 
     @property
     def _client(self) -> InfluxDBClientAsync:
@@ -67,8 +78,61 @@ class InfluxService:
             "fields":    {"value": value},
             "time":      (ts or datetime.now(timezone.utc)).isoformat(),
         }
-        writer = self._client.write_api()
-        await writer.write(bucket=settings.influx_bucket, record=record)
+        await self._enqueue(record)
+
+    async def _enqueue(self, record: dict) -> None:
+        loop = asyncio.get_running_loop()
+        if self._queue_loop is not loop:
+            self._pending, self._draining, self._queue_loop = [], False, loop
+        fut = loop.create_future()
+        self._pending.append((record, fut))
+        if not self._draining:
+            self._draining = True
+            self._drain_task = loop.create_task(self._drain(), name="influx_write_drain")
+        await fut
+
+    async def _send(self, records: list) -> None:
+        self.write_requests += 1
+        await self._client.write_api().write(bucket=settings.influx_bucket, record=records)
+
+    async def _drain(self) -> None:
+        live: list = []
+        try:
+            while self._pending:
+                batch = self._pending[:self.WRITE_BATCH_MAX]
+                self._pending = self._pending[self.WRITE_BATCH_MAX:]
+                live = [(r, f) for r, f in batch if not f.done()]     # a caller that gave up (timeout) is skipped
+                if not live:
+                    continue
+                try:
+                    await self._send([r for r, _ in live])
+                    results = [None] * len(live)
+                except Exception as e:  # noqa: BLE001
+                    if len(live) == 1:
+                        results = [e]
+                    else:
+                        # one bad point must not fail its neighbours: retry one by one (idempotent in Influx)
+                        results = []
+                        for r, _ in live:
+                            try:
+                                await self._send([r])
+                                results.append(None)
+                            except Exception as e1:  # noqa: BLE001
+                                results.append(e1)
+                for (_, f), res in zip(live, results):
+                    if f.done():
+                        continue
+                    if res is None:
+                        f.set_result(None)
+                    else:
+                        f.set_exception(res)
+        finally:
+            self._draining = False
+            if asyncio.current_task() is not None and asyncio.current_task().cancelling():
+                for _, f in live + self._pending:     # shutdown: nobody waits forever on a dropped write
+                    if not f.done():
+                        f.cancel()
+                self._pending = []
 
     async def query_history(
         self,

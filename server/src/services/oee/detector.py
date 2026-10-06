@@ -55,6 +55,7 @@ from ..validation import ensure_uuid
 from ..usage.core import counter_step, CounterTrack
 from .calendar import Calendar
 from .detection import (Params, Reading, SignalState, Stop, detect, micro_pieces, restoration, segments,
+                        short_fault_piece, short_offtime_fault,
                         suggested_reason)
 from .engine import MachineInfo, UNJUSTIFIED, load_calendar, machine_infos, product_pri
 
@@ -220,7 +221,8 @@ async def _upsert_events(db: AsyncSession, info: MachineInfo, cal: Calendar, sto
         # Sprint 5 (kpis.md S5-1): an equipment fault that starts during a planned break or off-shift has no
         # DowntimeEvent yet (no production time lost), but the FailureRecord (and so the emergency call) exists
         # right away; the event of the productive part, if any, is linked to it when production time resumes.
-        if sugg and sugg.startswith("EQP-") and stop.fault_since is not None:
+        if (sugg and sugg.startswith("EQP-") and stop.fault_since is not None
+                and not short_offtime_fault(stop, cal, info.threshold_s, now)):   # S5-1b: short → no failure
             fr = await ensure_failure(db, [], failed_at=stop.fault_since, restored_at=restored,
                                       tenant_id=info.tenant_id, machine_id=info.id)
             res.failures_kept.add(fr.id)
@@ -259,7 +261,11 @@ async def _upsert_events(db: AsyncSession, info: MachineInfo, cal: Calendar, sto
             res.messages.append(("event", ev, action))
     await db.flush()
     eff = rows[0].reason_code or sugg
-    if eff and eff.startswith("EQP-"):
+    # S5-1b: a short fault that began and cleared during the break before this stop reached production time is
+    # not a failure (an operator-set EQP reason still is: the operator says the equipment failed)
+    auto_short = rows[0].reason_code in (None, UNJUSTIFIED) and short_offtime_fault(stop, cal, info.threshold_s, now) \
+        and stop.fault_until is not None
+    if eff and eff.startswith("EQP-") and not auto_short:
         fr = await ensure_failure(db, rows, failed_at=stop.fault_since or stop.start, restored_at=restored)
         res.failures_kept.add(fr.id)
     return {e.id for e in rows}
@@ -383,6 +389,17 @@ async def _bump_micro(db: AsyncSession, info: MachineInfo, piece: dict, sign: in
     await db.execute(stmt)
 
 
+async def _add_short_fault(db: AsyncSession, info: MachineInfo, cal: Calendar, stop: Stop) -> list[dict]:
+    p = short_fault_piece(stop, cal)
+    if p is None:
+        return []
+    piece = {"b": _iso(p.bucket_start), "slot": p.shift_slot, "shift_id": p.shift_id,
+             "day": p.productive_day.isoformat() if p.productive_day else None, "ps": _iso(p.bucket_start),
+             "n": 0, "loss": 0.0, "sf": 1}
+    await _bump_micro(db, info, piece, +1)
+    return [piece]
+
+
 async def _undo_micro(db: AsyncSession, info: MachineInfo, pieces: list[dict]) -> None:
     """Removes the provisional micro-stop pieces counted by the previous pass (they are re-detected)."""
     if not pieces:
@@ -392,7 +409,7 @@ async def _undo_micro(db: AsyncSession, info: MachineInfo, pieces: list[dict]) -
     await db.execute(delete(MicroStopBucket).where(
         MicroStopBucket.tenant_id == info.tenant_id, MicroStopBucket.machine_id == info.id,
         MicroStopBucket.bucket_start.in_({_dt(p["b"]) for p in pieces}),
-        MicroStopBucket.count <= 0, MicroStopBucket.loss_s <= 1e-9))
+        MicroStopBucket.count <= 0, MicroStopBucket.loss_s <= 1e-9, MicroStopBucket.short_faults <= 0))
 
 
 async def _add_micro(db: AsyncSession, info: MachineInfo, cal: Calendar, stop: Stop, res: TickResult) -> list[dict]:
@@ -680,7 +697,14 @@ async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now
     await _undo_micro(db, info, pending)
     new_pending: list[dict] = []
     for stop in det.stops:
-        if stop.duration_s >= info.threshold_s or stop.end is None or stop.seen_end <= old_cp:
+        if stop.end is None or stop.seen_end <= old_cp:
+            continue
+        if stop.duration_s >= info.threshold_s:
+            # S5-1b: the short fault of a long (break) stop is counted in short_faults, once, like a micro-stop's
+            if (stop.final or stop.seen_end <= new_cp) and short_offtime_fault(stop, cal, info.threshold_s, now):
+                pieces = await _add_short_fault(db, info, cal, stop)
+                if stop.seen_end > new_cp:
+                    new_pending += pieces
             continue
         if stop.final or stop.seen_end <= new_cp:
             pieces = await _add_micro(db, info, cal, stop, res)

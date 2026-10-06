@@ -404,3 +404,27 @@ async def test_oee_route_shift_name_and_compare_to(client, ai):
     assert o["granularity"] == "shift_name" and o["previous"] is not None and set(o["delta"]) >= {"oee", "availability"}
     labels = [pt["label"] for pt in o["points"]]
     assert len(labels) == len(set(labels)) and set(labels) <= {"Turno A", "Turno B", "Turno C"}
+
+
+async def test_sse_stream_without_provider_still_sends_the_system_reply(client, ai, monkeypatch):
+    """QA (Sprint 5): with no provider configured the stream used to end with an empty body (no done/error)."""
+    from src.config import settings
+    from src.services.ai import providers
+    providers.set_provider_factory(None)
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    events = []
+    async with client.stream("POST", "/api/ai/chat/stream", headers=ai.h("manager"),
+                             json={"message": "OEE?"}) as resp:
+        assert resp.status_code == 200
+        ev = None
+        async for line in resp.aiter_lines():
+            if line.startswith("event: "):
+                ev = line[7:]
+            elif line.startswith("data: "):
+                events.append((ev, json.loads(line[6:])))
+    kinds = [k for k, _ in events]
+    assert kinds[-1] == "done" and "delta" in kinds and "error" not in kinds
+    done = events[-1][1]
+    assert "não está configurado" in done["reply"] and done["answer_source"] == "system" and done["verified"] is False
+    assert "".join(d["text"] for k, d in events if k == "delta") == done["reply"]

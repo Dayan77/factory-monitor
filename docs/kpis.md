@@ -837,9 +837,12 @@ ou de emergência acionada por segundos; sem o limiar, cada um viraria chamado d
 Exemplo (caso `break_short_fault`): pausa 10:00–10:30, `fault_state = 7` de 10:05:00 a 10:05:20 → 20 s < 120 s →
 `short_faults = 1`, nenhuma falha, nenhum chamado; se durasse 10:05:00–10:07:00 (120 s, limiar inclusivo como C22)
 → 1 falha, `restored_at` 10:07, MTTR 2 min.
-**Divergência encontrada** (Sprint 5, verificada contra `server/src/services/oee/detector.py`): hoje a falha de
-20 s dentro da pausa cria `FailureRecord` (o filtro de C22 olha a duração da parada) — corrigir no backend e
-acrescentar o caso a `server/tests/test_break_fault_s5.py`.
+**Divergência encontrada** (Sprint 5, verificada contra `server/src/services/oee/detector.py`): a falha de
+20 s dentro da pausa criava `FailureRecord` (o filtro de C22 olhava a duração da parada). **Corrigido** no fix do
+Sprint 5 (`detection.short_offtime_fault`): sem rascunho nem chamado; a falha curta entra em `short_faults` no bucket
+de micro-paradas da hora/turno da pausa (fora de turno não há bucket: não é contada). Casos em
+`server/tests/test_break_fault_s5.py` (`break_short_fault`: 20 s → `short_faults = 1`, 0 falhas; 120 s → 1 falha,
+MTTR 2 min; falha ainda ativa só vira rascunho ao completar o limiar).
 
 ### S5-1c — Revisão de consistência com ISO 14224 e ISO 22400
 

@@ -17,6 +17,8 @@ from ..services.influx import influx
 from ..services.payload_crypto import PayloadError, decode_payload, key_error
 from ..services.machine_status import broadcast_change, mark_seen
 from ..services.oee.detector import note_late
+from ..services.predictive.engine import late_threshold as predictive_late_threshold
+from ..services.predictive.engine import note_late as predictive_note_late
 from ..services.metrics import MQTT_LAG, MQTT_MESSAGES
 from ..services.validation import InvalidIdentifier, ensure_uuid
 from ..services.usage.broadcaster import usage_broadcaster
@@ -191,19 +193,79 @@ async def _handle_message(topic: str, raw: bytes, received_at: Optional[datetime
     if entry is None:
         entry = _tag_locks[tag_id] = [asyncio.Lock(), 0]
     entry[1] += 1
+    pending: list = []
     try:
         async with entry[0]:
             # Slot taken after the tag lock: readings queued behind their own tag hold no slot.
             async with _processing_slots():
-                await _process_message(topic, tenant_id, tag_id, raw, received_at)
+                await _process_message(topic, tenant_id, tag_id, raw, received_at, pending)
     finally:
         entry[1] -= 1
         if entry[1] == 0:          # nobody waiting: drop it (bounded memory with junk topics)
             _tag_locks.pop(tag_id, None)
+    # The Influx write is awaited outside the tag lock: the next reading of the same tag does not wait for the
+    # HTTP round trip, and the writes queued meanwhile go to Influx together (influx.py coalescing).
+    for fin in pending:
+        await fin
+
+
+async def _finish_write(topic: str, tenant_id: str, tag, ts: datetime, received_at: datetime, write) -> None:
+    try:
+        await asyncio.wait_for(write, timeout=10.0)
+    except asyncio.TimeoutError:
+        log.warning("mqtt.influx.timeout", topic=topic)
+    except Exception as e:
+        log.warning("mqtt.influx.error", topic=topic, error=str(e))
+    else:
+        # a detector signal written well after its own timestamp (gateway buffer flush, replay,
+        # backlog): the downtime detector may already have passed it → rewind (detector.py)
+        if (tag.machine_id and tag.role in USAGE_ROLES
+                and (received_at - ts).total_seconds() > settings.downtime_settle_s):
+            note_late(tenant_id, tag.machine_id, ts)
+        # …and the predictive engine may already have stored its time window as invalid → re-extract it
+        if tag.machine_id and received_at - ts > predictive_late_threshold():
+            predictive_note_late(tenant_id, tag.machine_id, ts)
+
+
+# mark_seen throttle: machine_id -> (monotonic time of the last call, latest seen_at sent). Within
+# SEEN_THROTTLE_S of a call, a reading of the same machine that would not move last_seen_at by the
+# write interval (machine_last_seen_write_interval_s) is a database no-op — skip the round trip.
+SEEN_THROTTLE_S = 1.0
+_seen_cache: dict[str, tuple[float, datetime, bool]] = {}
+
+
+def _is_fresh(seen_at: datetime, received_at: datetime) -> bool:
+    return seen_at >= received_at - timedelta(seconds=settings.machine_offline_timeout_s)
+
+
+def _seen_is_noop(machine_id: Optional[str], seen_at: datetime, received_at: datetime) -> bool:
+    """True when mark_seen would change nothing: same machine called < SEEN_THROTTLE_S ago with a reading
+    at most the write interval older, and (for a live reading) that call was live too — so it already
+    turned a machine without run_state 'running'."""
+    if not machine_id:
+        return False
+    c = _seen_cache.get(machine_id)
+    if c is None:
+        return False
+    called, last, was_fresh = c
+    if _is_fresh(seen_at, received_at) and not was_fresh:
+        return False
+    return (asyncio.get_running_loop().time() - called < SEEN_THROTTLE_S
+            and (seen_at - last).total_seconds() < settings.machine_last_seen_write_interval_s)
+
+
+def _seen_called(machine_id: Optional[str], seen_at: datetime, received_at: datetime) -> None:
+    if not machine_id:
+        return
+    if len(_seen_cache) > 50_000:
+        _seen_cache.clear()
+    prev = _seen_cache.get(machine_id)
+    _seen_cache[machine_id] = (asyncio.get_running_loop().time(), max(seen_at, prev[1]) if prev else seen_at,
+                               _is_fresh(seen_at, received_at))
 
 
 async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
-                           received_at: datetime) -> None:
+                           received_at: datetime, pending: Optional[list] = None) -> None:
     try:
         try:
             data = decode_payload(topic, raw, settings.encryption_key, settings.mqtt_require_encryption)
@@ -238,6 +300,16 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
                 log.debug("mqtt.rejected_unknown_tag", tenant_id=tenant_id[:8], tag_id=tag_id[:8])
             return
 
+        if tag.gateway_revoked:
+            # the gateway that reads this tag was revoked (stolen / decommissioned): its MQTT credential may
+            # still be on the broker until the operator removes it — the server no longer accepts its data
+            MQTT_MESSAGES.labels("rejected").inc()
+            key = f"revoked:{tag_id}"
+            if key not in _rejected_logged and len(_rejected_logged) < 10_000:
+                _rejected_logged.add(key)
+                log.warning("mqtt.rejected_revoked_gateway", tenant_id=tenant_id[:8], tag_id=tag_id[:8])
+            return
+
         log.debug("mqtt.message", tenant_id=tenant_id[:8], tag_id=tag_id[:8], value=value,
                   replayed=replayed)
 
@@ -251,34 +323,28 @@ async def _process_message(topic: str, tenant_id: str, tag_id: str, raw: bytes,
                 "timestamp": ts.isoformat(),
             })
 
-        # 2. Persist to InfluxDB at the source timestamp (timeout so it never blocks forever)
-        try:
-            await asyncio.wait_for(
-                influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit, ts=ts,
-                             machine_id=tag.machine_id),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            log.warning("mqtt.influx.timeout", topic=topic)
-        except Exception as e:
-            log.warning("mqtt.influx.error", topic=topic, error=str(e))
+        # 2. Persist to InfluxDB at the source timestamp (timeout so it never blocks forever). Started now,
+        #    awaited after the tag lock is released (_handle_message) — or here when called directly.
+        write = asyncio.ensure_future(influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit,
+                                                   ts=ts, machine_id=tag.machine_id))
+        fin = _finish_write(topic, tenant_id, tag, ts, received_at, write)
+        if pending is not None:
+            pending.append(fin)
         else:
-            # a detector signal written well after its own timestamp (gateway buffer flush, replay,
-            # backlog): the downtime detector may already have passed it → rewind (detector.py)
-            if (tag.machine_id and tag.role in USAGE_ROLES
-                    and (received_at - ts).total_seconds() > settings.downtime_settle_s):
-                note_late(tenant_id, tag.machine_id, ts)
+            await fin
 
         # 3. Machine status derived from data (last_seen_at + running)
         try:
-            async with AsyncSessionLocal() as db:
-                change = await asyncio.wait_for(
-                    mark_seen(db=db, tenant_id=tenant_id, tag_id=tag_id,
-                              now=received_at, seen_at=ts),
-                    timeout=5.0,
-                )
-            if change is not None:
-                await broadcast_change(change)
+            if not _seen_is_noop(tag.machine_id, ts, received_at):
+                async with AsyncSessionLocal() as db:
+                    change = await asyncio.wait_for(
+                        mark_seen(db=db, tenant_id=tenant_id, tag_id=tag_id,
+                                  now=received_at, seen_at=ts),
+                        timeout=5.0,
+                    )
+                _seen_called(tag.machine_id, ts, received_at)
+                if change is not None:
+                    await broadcast_change(change)
         except asyncio.TimeoutError:
             log.warning("mqtt.machine_status.timeout", topic=topic)
         except Exception as e:

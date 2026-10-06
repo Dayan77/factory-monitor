@@ -49,12 +49,8 @@ function uptimeText(s: number | null | undefined) {
 
 // ── enrollment ───────────────────────────────────────────────────
 
-function EnrollmentInfo({ gw, token }: { gw: Gateway; token: EnrollToken }) {
-  const user = useAuthStore((s) => s.user);
-  const cmds = installCommands({
-    origin: window.location.origin, gatewayId: gw.id, tenantId: user?.tenant_id ?? gw.tenant_id, code: token.code,
-    mqttHost: window.location.hostname,
-  });
+function EnrollmentInfo({ token }: { gw: Gateway; token: EnrollToken }) {
+  const cmds = installCommands({ origin: window.location.origin, code: token.code, mqttHost: window.location.hostname });
   return (
     <div className="space-y-4" data-testid="enroll-info">
       <div className="rounded-xl border-2 border-accent/50 bg-accent/10 p-4 text-center">
@@ -62,9 +58,9 @@ function EnrollmentInfo({ gw, token }: { gw: Gateway; token: EnrollToken }) {
         <p className="font-mono text-display font-bold tracking-widest text-fg" data-testid="enroll-code">{token.code}</p>
         <p className="text-caption text-fg-subtle">Expira em {formatDateTime(token.expires_at)}. Um novo código substitui este.</p>
       </div>
-      <CodeBlock label="1. No computador do gateway: trocar o código pelo token" code={cmds.enroll} testId="cmd-enroll" />
-      <CodeBlock label="2. Subir o gateway com o gateway_id, o token e o usuário MQTT devolvidos" code={cmds.run} testId="cmd-run" />
-      <p className="text-caption text-fg-subtle">O token e a senha MQTT aparecem só uma vez, na resposta do passo 1 — guarde-os no .env do gateway. A configuração (dispositivos e tags) chega sozinha pelo servidor e é recarregada quando muda.</p>
+      <CodeBlock label="No computador do gateway (Docker): sobe o gateway e ele se cadastra sozinho" code={cmds.run} testId="cmd-run" />
+      <CodeBlock label="Ou com o docker compose de infra/gateway" code={cmds.compose} testId="cmd-compose" />
+      <p className="text-caption text-fg-subtle">Na 1ª partida o gateway troca o código pelas credenciais e as guarda no volume (/data, só leitura do próprio gateway) — token e senha MQTT não passam pelo navegador nem pela linha de comando. A configuração (dispositivos e tags) chega sozinha pelo servidor e é recarregada quando muda.</p>
     </div>
   );
 }
@@ -276,7 +272,13 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
             <ul className="list-disc pl-5 text-caption">{hb.errors.map((e) => <li key={e}>{e}</li>)}</ul>
           </div>
         )}
-        {gw.status === "pending" && <p className="text-caption text-fg-subtle">Ainda não cadastrado. Gere um código e rode os comandos no computador do gateway.</p>}
+        {gw.status === "pending" && !gw.mqtt_revoked && <p className="text-caption text-fg-subtle">Ainda não cadastrado. Gere um código e rode o comando no computador do gateway.</p>}
+        {gw.mqtt_revoked && (
+          <div className="rounded-xl bg-warn-solid/10 px-3 py-2 text-body text-warn" data-testid="gw-mqtt-revoked">
+            <p className="font-semibold">Gateway revogado — as leituras das tags dele são descartadas pelo servidor.</p>
+            {gw.mqtt_action && <p className="text-caption">{gw.mqtt_action}</p>}
+          </div>
+        )}
       </section>
 
       {admin && (
@@ -289,7 +291,7 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
           {token ? <EnrollmentInfo gw={gw} token={token} /> : (
             <div className="flex flex-wrap gap-2">
               <Button variant={gw.enrolled ? "secondary" : "primary"} loading={enroll.isPending} onClick={() => { setErr(""); enroll.mutate(); }}>{gw.enrolled ? "Gerar novo código (reinstalação)" : "Gerar código de cadastro"}</Button>
-              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm("Revogar o token? O gateway para de enviar até ser cadastrado de novo.")) revoke.mutate(); }}>Revogar token</Button>}
+              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm("Revogar o gateway? O token e a credencial MQTT deixam de valer e o servidor descarta as leituras dele até um novo cadastro.")) revoke.mutate(); }}>Revogar gateway</Button>}
             </div>
           )}
         </section>
@@ -312,7 +314,9 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
       {err && <p role="alert" className="text-body text-danger">{err}</p>}
       {admin && (
         <div className="border-t border-line pt-4">
-          <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(`Remover o gateway ${gw.name}? As tags perdem a atribuição.`)) remove.mutate(); }}>Remover gateway</Button>
+          {gw.enrolled
+            ? <p className="text-caption text-fg-subtle" data-testid="gw-remove-hint">Para remover, revogue o gateway antes (a credencial MQTT dele ainda está ativa).</p>
+            : <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(`Remover o gateway ${gw.name}? As tags perdem a atribuição.${gw.mqtt_revoked ? " Remova também a linha dele do gateways.conf do broker." : ""}`)) remove.mutate(); }}>Remover gateway</Button>}
         </div>
       )}
     </div>

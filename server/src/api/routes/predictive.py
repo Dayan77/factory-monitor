@@ -165,6 +165,8 @@ class ConvertIn(BaseModel):
 
 class RecomputeIn(BaseModel):
     monitor_id: Optional[str] = None
+    # re-read from Influx the invalid time windows of the segment first (late data from a gateway buffer)
+    reextract_invalid: bool = True
 
 
 class PlanDayIn(BaseModel):
@@ -639,7 +641,7 @@ async def recompute(body: RecomputeIn, user: CurrentUser, db: DB):
     else:
         ms_ = list((await db.execute(select(PredictiveMonitor).where(
             PredictiveMonitor.tenant_id == user.tenant_id))).scalars().all())
-    out = [await pe.recompute(db, m, clock.now()) for m in ms_]
+    out = [await pe.recompute(db, m, clock.now(), reextract_invalid=body.reextract_invalid) for m in ms_]
     await _commit(db)
     return {"monitors": out, "same": all(r["same"] for r in out)}
 

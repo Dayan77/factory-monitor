@@ -211,3 +211,90 @@ async def test_gateway_tenant_isolation(client):
                               json={})).status_code == 401
     ov = await api(client, "GET", "/api/overview", b.headers("operator"), params={"plant_id": pb.plant["id"]})
     assert [g["id"] for g in ov["gateways"]] == [gwb["id"]]
+
+
+async def test_modbus_tags_in_the_provisioned_address_format_are_assigned_and_parsed_by_the_edge(client):
+    """Tag.address as seed_dev.py / edge provision.py store it ('unit=2;hr=10:uint16', 'unit=1;di=1'): the
+    assignment is accepted and the map carries integer register + unit/area/type, valid for the edge parser.
+    Explicit edge fields win over the ones encoded in the address."""
+    t = await _tenant("GWM")
+    p = await build_plant(client, t, "GWM")
+    h = t.headers("admin")
+    mk = lambda name, addr, role, **kw: api(client, "POST", "/api/tags/", h, 201, json={  # noqa: E731
+        "machine_id": p.machine["id"], "name": name, "protocol": "modbus_tcp", "address": addr,
+        "semantic_role": role, **kw})
+    cnt = await mk("ciclos", "unit=2;hr=10:uint32", "cycle_counter", counter_max=2**32 - 1)
+    pulse = await mk("pulso", "unit=1;di=1", "cycle_pulse", data_type="bool")
+    temp = await mk("temp", "unit=3;ir=7:float32", "analog")
+    bare = await mk("run", "4", "run_state", data_type="bool")
+    gw = await api(client, "POST", "/api/gateways/", h, 201, json={
+        "name": "gw m", "plant_id": p.plant["id"], "devices": DEVICES})
+    out = await api(client, "PUT", f"/api/gateways/{gw['id']}/tags", h, json={"tags": [
+        {"tag_id": cnt["id"]}, {"tag_id": pulse["id"]}, {"tag_id": temp["id"], "unit_id": 9},
+        {"tag_id": bare["id"], "register_type": "coil"}]})
+    assert out["assigned"] == 4 and out["warnings"] == []
+    prev = await api(client, "GET", f"/api/gateways/{gw['id']}/config-preview", h)
+    by_id = {x["tag_id"]: x for x in prev["plant_map"]["tags"]}
+    view = lambda x: (x["source"], x["address"], x["unit_id"], x["register_type"], x["data_type_plc"])  # noqa: E731
+    assert view(by_id[cnt["id"]]) == ("modbus-plc", 10, 2, "holding", "uint32")
+    assert view(by_id[pulse["id"]]) == ("modbus-plc", 1, 1, "discrete", "uint16")
+    assert view(by_id[temp["id"]]) == ("modbus-plc", 7, 9, "input", "float32")
+    assert view(by_id[bare["id"]]) == ("modbus-plc", 4, 1, "coil", "uint16")
+    # only the explicit fields are stored on the tag (the address keeps its own unit/area/type)
+    from src.db import AsyncSessionLocal
+    from src.models import Tag
+    async with AsyncSessionLocal() as s:
+        assert (await s.get(Tag, cnt["id"])).edge == {"source": "modbus-plc"}
+        assert (await s.get(Tag, temp["id"])).edge == {"source": "modbus-plc", "unit_id": 9}
+    sys.path.insert(0, str(ROOT))
+    from edge.src.plant_map import parse_plant_map
+    parsed = {tg.tag_id: tg for tg in parse_plant_map(prev["plant_map"], env={}).tags}
+    assert set(parsed) == {cnt["id"], pulse["id"], temp["id"], bare["id"]}
+    assert (parsed[cnt["id"]].address, parsed[cnt["id"]].unit_id, parsed[cnt["id"]].register_type) == (10, 2, "holding")
+    assert parsed[pulse["id"]].register_type == "discrete"
+    # a malformed address is still refused (422) and a pulse on a holding register too
+    bad = await mk("ruim", "unit=1;xx=3", "analog")
+    await api(client, "PUT", f"/api/gateways/{gw['id']}/tags", h, 422, json={"tags": [{"tag_id": bad["id"]}]})
+    hp = await mk("pulso hr", "unit=1;hr=3", "cycle_pulse", data_type="bool")
+    await api(client, "PUT", f"/api/gateways/{gw['id']}/tags", h, 422, json={"tags": [{"tag_id": hp["id"]}]})
+
+
+async def test_revoked_gateway_loses_its_mqtt_credential_and_its_readings_are_discarded(client):
+    import json as _json
+
+    from src.services import mqtt_subscriber
+    from src.services.predictive import features as fx
+    t = await _tenant("GWR")
+    p, pos, gw, tags = await _setup(client, t, "GWR")
+    h = t.headers("admin")
+    await api(client, "PUT", f"/api/gateways/{gw['id']}/tags", h, json={"tags": [{"tag_id": tags["run"]["id"]}]})
+    enr = await _enroll(client, t, gw)
+    assert (await api(client, "GET", f"/api/gateways/{gw['id']}/mqtt", h))["revoked"] is False
+    # an enrolled gateway cannot be deleted before it is revoked (its MQTT credential is still valid)
+    await api(client, "DELETE", f"/api/gateways/{gw['id']}", h, 409)
+    topic = f"factory/{t.id}/sensors/{tags['run']['id']}"
+
+    async def publish(at: datetime) -> None:
+        await mqtt_subscriber._handle_message(topic, _json.dumps(
+            {"value": 1, "ts": at.isoformat().replace("+00:00", "Z")}).encode())
+
+    t1 = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=2)
+    await publish(t1)
+    rv = await api(client, "POST", f"/api/gateways/{gw['id']}/revoke", h)
+    assert rv["enrolled"] is False and rv["mqtt_revoked"] is True
+    assert enr["mqtt"]["username"] in rv["mqtt_action"] and "gateways.conf" in rv["mqtt_action"]
+    mq = await api(client, "GET", f"/api/gateways/{gw['id']}/mqtt", h)
+    assert mq["revoked"] is True and mq["gateways_conf_line"] is None and "mqtt-gateway-remove" in mq["action"]
+    # the device keeps publishing with the old broker credential: the server discards it
+    await publish(t1 + timedelta(seconds=1))
+    pts = await fx.influx_points(t.id, [tags["run"]["id"]], t1 - timedelta(seconds=1), t1 + timedelta(seconds=5))
+    assert [x for x, _ in pts[tags["run"]["id"]]] == [t1]
+    # enrolling again restores it; the gateway can then be revoked and deleted
+    await _enroll(client, t, gw)
+    g = await api(client, "GET", f"/api/gateways/{gw['id']}", h)
+    assert g["mqtt_revoked"] is False and g["mqtt_action"] is None
+    await publish(t1 + timedelta(seconds=2))
+    pts = await fx.influx_points(t.id, [tags["run"]["id"]], t1 - timedelta(seconds=1), t1 + timedelta(seconds=5))
+    assert len(pts[tags["run"]["id"]]) == 2
+    await api(client, "POST", f"/api/gateways/{gw['id']}/revoke", h)
+    await api(client, "DELETE", f"/api/gateways/{gw['id']}", h, 204)

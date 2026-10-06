@@ -46,6 +46,9 @@ export interface Gateway {
   tag_count: number;
   last_heartbeat: GatewayHeartbeat | null;
   mqtt_username: string | null;
+  /** revoked: the MQTT credential is gone on the server and its readings are discarded; the broker line must go */
+  mqtt_revoked?: boolean;
+  mqtt_action?: string | null;
   created_at: string;
 }
 
@@ -96,8 +99,10 @@ export interface ConfigPreview {
 export interface MqttInfo {
   username: string;
   topic_prefix: string;
-  acl: string;
-  gateways_conf_line: string;
+  acl: string | null;
+  gateways_conf_line: string | null;
+  revoked?: boolean;
+  action?: string;
 }
 
 export const gatewaysApi = {
@@ -114,27 +119,38 @@ export const gatewaysApi = {
 };
 
 /**
- * Install commands shown with the enrollment code. Two steps because the code is exchanged for the device token
- * on the gateway itself (the token never passes through the browser): 1) enroll with curl, 2) run the edge image
- * with the returned gateway_id/token/MQTT credentials. Placeholders in <…> are filled from the step-1 response.
+ * Edge image of this release — the same name as infra/gateway/docker-compose.yml (`image:`) and edge/README.md.
+ * Change the three together when the edge version changes.
  */
-export function installCommands(o: { origin: string; gatewayId: string; tenantId: string; code: string; mqttHost: string }): { enroll: string; run: string } {
-  const enroll = `curl -fsS -X POST ${o.origin}/api/gateways/enroll \\\n  -H 'Content-Type: application/json' \\\n  -d '{"code": "${o.code}"}'`;
+export const EDGE_IMAGE = "factoryconnect-edge:0.5.0";
+
+/**
+ * Install commands shown with the enrollment code. One step: the edge enrolls by itself on the first start
+ * (ENROLL_CODE + SERVER_URL → POST /api/gateways/enroll) and keeps the device token and the MQTT password in
+ * /data/gateway_credentials.json (0600) on its volume — they never go through the browser, the shell history or
+ * `docker inspect`. The code is single use (24 h); afterwards it may be removed from the environment.
+ */
+export function installCommands(o: { origin: string; code: string; mqttHost: string }): { run: string; compose: string } {
+  const tls = o.origin.startsWith("https://");
   const run = [
-    "docker run -d --name fm-gateway --restart unless-stopped \\",
+    "docker run -d --name fc-gateway --restart unless-stopped \\",
     "  -v fm-gateway-data:/data \\",
-    `  -e GATEWAY_CONFIG_URL=${o.origin} \\`,
-    `  -e GATEWAY_ID=${o.gatewayId} \\`,
-    "  -e GATEWAY_TOKEN=<token do passo 1> \\",
-    `  -e TENANT_ID=${o.tenantId} \\`,
-    `  -e MQTT_BROKER_HOST=${o.mqttHost} \\`,
-    "  -e MQTT_USERNAME=<mqtt.username do passo 1> \\",
-    "  -e MQTT_PASSWORD=<mqtt.password do passo 1> \\",
-    "  -e GATEWAY_CONFIG_CACHE=/data/gateway_config.json \\",
-    "  -e BUFFER_DB_PATH=/data/edge_buffer.db -e COUNTER_DB_PATH=/data/edge_counters.db \\",
-    "  factory-monitor-edge:latest",
+    `  -e SERVER_URL=${o.origin} \\`,
+    `  -e ENROLL_CODE=${o.code} \\`,
+    `  -e MQTT_BROKER_HOST=${o.mqttHost} -e MQTT_BROKER_PORT=${tls ? 8883 : 1883} -e MQTT_TLS=${tls ? "true" : "false"} \\`,
+    `  ${EDGE_IMAGE}`,
   ].join("\n");
-  return { enroll, run };
+  const compose = [
+    "# no host do gateway, com o repositório (infra/gateway):",
+    "cp gateway.env.example gateway.env",
+    "# edite gateway.env:",
+    `#   SERVER_URL=${o.origin}`,
+    `#   ENROLL_CODE=${o.code}`,
+    `#   MQTT_BROKER_HOST=${o.mqttHost}`,
+    "docker compose up -d",
+    "docker compose logs -f gateway   # procure \"enrollment.done\"",
+  ].join("\n");
+  return { run, compose };
 }
 
 export const GATEWAY_STATUS_LABEL: Record<GatewayStatus, string> = {

@@ -16,7 +16,7 @@ só existem em claro na resposta que os entrega (uma vez); no banco ficam hashes
 
 | Estado | Regra |
 |---|---|
-| `pending` | nunca cadastrado (ou token revogado) |
+| `pending` | nunca cadastrado (ou revogado: `mqtt_revoked = true`) |
 | `offline` | sem contato (config ou heartbeat) há mais de `max(3 × heartbeat_s, GATEWAY_OFFLINE_AFTER_S = 90 s)` |
 | `degraded` | último heartbeat com `errors` ou `buffer_depth > GATEWAY_DEGRADED_BUFFER` (1000) |
 | `online` | caso contrário |
@@ -32,12 +32,12 @@ Administração (JWT; tudo filtrado por `tenant_id`, gateway de outro tenant →
 |---|---|---|
 | `GET /api/gateways/?plant_id=` | manager+ | frota com estado efetivo, versão, nº de tags |
 | `POST /api/gateways/` `{name, plant_id, devices[], heartbeat_s, pulse_poll_ms}` | admin | cria (`pending`) |
-| `GET/PATCH/DELETE /api/gateways/{id}` | manager+/admin/admin | detalhe, edição, remoção (as tags perdem a atribuição) |
+| `GET/PATCH/DELETE /api/gateways/{id}` | manager+/admin/admin | detalhe, edição, remoção (as tags perdem a atribuição); gateway cadastrado → **409**: revogue antes |
 | `POST /api/gateways/{id}/enroll-token` | admin | código de cadastro `XXXX-XXXX-XXXX`, uso único, 24 h |
-| `POST /api/gateways/{id}/revoke` | admin | invalida o token do dispositivo |
+| `POST /api/gateways/{id}/revoke` | admin | invalida o token **e a credencial MQTT** (`mqtt_password_hash` apagado); o servidor passa a **descartar as leituras das tags do gateway** (log `mqtt.rejected_revoked_gateway`). A resposta traz `mqtt_action`: remover a linha do usuário do `gateways.conf` e recarregar o broker (`make mqtt-gateway-remove GATEWAY=<usuário> && make mqtt-reload`) — até isso o broker ainda aceita a conexão. Um novo cadastro reativa |
 | `PUT /api/gateways/{id}/tags` `{tags:[{tag_id, source?, key?, unit_id?, register_type?, data_type_plc?, word_order?, signal_role?}]}` | admin | substitui o conjunto de tags do gateway (só tags de máquinas da planta do gateway) |
 | `GET /api/gateways/{id}/config-preview` | admin | o mapa que o dispositivo receberia + avisos |
-| `GET /api/gateways/{id}/mqtt` | admin | usuário MQTT e a linha do `gateways.conf` do broker |
+| `GET /api/gateways/{id}/mqtt` | admin | usuário MQTT e a linha do `gateways.conf` do broker (revogado: `revoked: true`, sem linha, com a ação a fazer no broker) |
 
 Dispositivo (sem JWT):
 
@@ -64,6 +64,10 @@ Dispositivo (sem JWT):
   `GATEWAY_CONFIG_URL = https://app.factoryconnect.tech`.
 - `config_version` sobe sempre que o mapa efetivo muda (hash do conteúdo: tags, posições, dispositivos), seja quem for
   que mudou; o `ETag` é `"<config_version>-<hash>"`.
+- Endereço Modbus: o `Tag.address` pode vir no formato gravado pelo provisionamento/seed (`unit=2;hr=10:uint16`,
+  `unit=1;di=1` — `hr|ir|di|co` → `holding|input|discrete|coil`, tipo opcional) ou como registrador inteiro (`10`);
+  o mapa sempre leva `address` inteiro + `unit_id`/`register_type`/`data_type_plc`. Campos informados na atribuição
+  (`tags.edge`) têm precedência sobre os do endereço; só eles ficam gravados em `tags.edge`.
 - Dispositivos: só `opcua` (endpoint `opc.tcp://…`, sem credencial na URL — use `${VAR}` expandido no gateway) e
   `modbus` (`host`, `timestamps` = `gateway`). Tags `mqtt`/`http` não são lidas por gateway (ficam fora, com aviso).
 
@@ -74,4 +78,7 @@ formato do `mosquitto_passwd` (`$7$101$<sal>$<hash>`, PBKDF2-SHA512) e `GET /api
 pronta para o `gateways.conf` do broker de produção (`infra/mosquitto/prod`, formato `<usuário> <tenant_uuid> <hash>`),
 cujo ACL gerado é `topic readwrite factory/<tenant_uuid>/#` — o mesmo prefixo `topic_prefix` devolvido ao gateway.
 Verificado com o Mosquitto 2.0.22: a senha do cadastro conecta e publica; senha errada → *Not authorized*.
-A inclusão da linha no broker continua sendo um passo do operador (devops) — o servidor não escreve no broker.
+A inclusão da linha no broker continua sendo um passo do operador (devops) — o servidor não escreve no broker. Pelo
+mesmo motivo, ao **revogar** a remoção da linha também é manual (a resposta de `revoke` e a tela dizem qual); enquanto
+isso o servidor descarta as leituras das tags do gateway revogado. Limitação: depois de **remover** o gateway as tags
+perdem a atribuição e esse filtro deixa de valer — por isso a remoção exige revogar antes.

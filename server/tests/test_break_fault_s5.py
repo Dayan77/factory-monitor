@@ -158,3 +158,57 @@ async def test_stale_breaktime_failure_removed_when_late_data_erases_the_fault(c
         await _drop_stale_failures(s, info, L(DAY, "09:00"), set())
         await s.commit()
     assert await _failures(t.id, mid) == []
+
+
+async def test_break_short_fault_is_only_a_short_fault(client):
+    """kpis.md S5-1b (case `break_short_fault`): the C22 threshold applies to the fault's own length when it starts
+    and clears outside production time. 20 s inside the break → short_faults = 1, no failure, no emergency call;
+    120 s (threshold inclusive) → one failure restored when it clears, MTTR 2 min. A fault still active waits for
+    the threshold before the draft (and the call) exist."""
+    t = await _tenant("BSF")
+    p, run, fault = await _plant_with_tags(client, t, "BSF")
+    await add_shift(client, t, p.plant["id"], "Turno A", "06:00", "14:00",
+                    breaks=[{"start_local": "10:00", "end_local": "10:30", "reason_code": "PLN-01"}])
+    mid, op = p.machine["id"], t.headers("operator")
+    pts = [(L(DAY, "09:00"), 1, 0), (L(DAY, "10:00"), 0, 0), (L(DAY, "10:05"), 0, 7), (L(DAY, "10:05:20"), 0, 0),
+           (L(DAY, "10:30"), 1, 0)]
+    rows = signal(run["id"], fault["id"], pts, L(DAY, "11:00"), hb=5)
+    await set_checkpoint(mid, t.id, L(DAY, "09:00") - timedelta(seconds=1))
+    # 10:05:10 — the fault is active but below the threshold: nothing yet
+    await detect_with(mid, t.id, [r for r in rows if r[1] <= L(DAY, "10:05:10")], L(DAY, "10:05:10"))
+    assert await _failures(t.id, mid) == []
+    await detect_with(mid, t.id, rows, L(DAY, "11:00"))
+    assert await _failures(t.id, mid) == []
+    assert await _emergency(t.id, L(DAY, "11:00")) == 0
+    rel = await api(client, "GET", "/api/reliability", op, params={
+        "scope": "machine", "id": mid, "start": L(DAY, "06:00").isoformat(), "stop": L(DAY, "14:00").isoformat()})
+    assert rel["failures"] == 0 and rel["short_faults"] == 1
+    await detect_with(mid, t.id, rows, L(DAY, "11:10"))                      # idempotent: counted once
+    rel = await api(client, "GET", "/api/reliability", op, params={
+        "scope": "machine", "id": mid, "start": L(DAY, "06:00").isoformat(), "stop": L(DAY, "14:00").isoformat()})
+    assert rel["short_faults"] == 1
+    o = await api(client, "GET", "/api/oee", op, params={"scope": "machine", "id": mid,
+                                                         "start": L(DAY, "06:00").isoformat(),
+                                                         "stop": L(DAY, "14:00").isoformat()})
+    assert o["pdot_s"] == 1800 and o["adot_s"] == 0
+
+
+async def test_break_fault_at_the_threshold_is_a_failure(client):
+    t = await _tenant("BSL")
+    p, run, fault = await _plant_with_tags(client, t, "BSL")
+    await add_shift(client, t, p.plant["id"], "Turno A", "06:00", "14:00",
+                    breaks=[{"start_local": "10:00", "end_local": "10:30", "reason_code": "PLN-01"}])
+    mid, op = p.machine["id"], t.headers("operator")
+    pts = [(L(DAY, "09:00"), 1, 0), (L(DAY, "10:00"), 0, 0), (L(DAY, "10:05"), 0, 7), (L(DAY, "10:07"), 0, 0),
+           (L(DAY, "10:30"), 1, 0)]
+    rows = signal(run["id"], fault["id"], pts, L(DAY, "11:00"), hb=5)
+    await set_checkpoint(mid, t.id, L(DAY, "09:00") - timedelta(seconds=1))
+    # still active at 10:06:59 (119 s): no draft yet; at 10:07 it completes the threshold
+    await detect_with(mid, t.id, [r for r in rows if r[1] <= L(DAY, "10:06:55")], L(DAY, "10:06:59"))
+    assert await _failures(t.id, mid) == []
+    await detect_with(mid, t.id, rows, L(DAY, "11:00"))
+    frs = await _failures(t.id, mid)
+    assert [(f.failed_at, f.restored_at) for f in frs] == [(L(DAY, "10:05"), L(DAY, "10:07"))]
+    rel = await api(client, "GET", "/api/reliability", op, params={
+        "scope": "machine", "id": mid, "start": L(DAY, "06:00").isoformat(), "stop": L(DAY, "14:00").isoformat()})
+    assert rel["failures"] == 1 and rel["mttr_s"] == 120 and rel["short_faults"] == 0

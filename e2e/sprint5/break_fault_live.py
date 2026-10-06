@@ -85,7 +85,7 @@ r = ctl.post("/force-failure", json={"machine": key[args.machine]})
 t_fault = now()
 check(r.status_code == 200, f"control API: robot fault forced at {t_fault:%H:%M:%S}Z (inside the break)", r.text)
 fr = None
-for _ in range(45):
+for _ in range(120):   # up to 240 s: detector settle + tick + maintenance tick, under load
     new = [f for f in failures(robot["id"]) if f["id"] not in f_before]
     if new:
         fr = new[0]
@@ -98,7 +98,7 @@ if fr:
           f"failed_at = fault start inside the break ({fr['failed_at']})", fr)
     check(fr.get("downtime_event_id") is None and fr.get("open") is True, "failure open, no DowntimeEvent yet", fr)
 call = None
-for _ in range(45):
+for _ in range(120):   # up to 240 s: detector settle + tick + maintenance tick, under load
     items = tech.get("/api/notifications/").json().get("items", [])
     call = next((n for n in items if n["id"] not in n_before and n.get("kind") == "emergency_call"
                  and (n.get("data") or {}).get("failure_id") == (fr or {}).get("id")), None)
@@ -116,11 +116,13 @@ check(not dts_break, "no unplanned DowntimeEvent inside the break", dts_break)
 
 # 2. S5-1b probe: 20 s fault entirely inside the break on another machine
 wait_until(BS + timedelta(seconds=180))
+# snapshot right before the probe: the live plant has its own random/wear faults outside the break
+fs_before = {f["id"] for f in failures(short["id"])}
 r = ctl.post("/force-failure", json={"machine": key[args.short_machine], "duration_s": 20})
 t_short = now()
 check(r.status_code == 200, f"control API: 20 s fault on {args.short_machine} inside the break", r.text)
 time.sleep(75)
-new_short = [f for f in failures(short["id"]) if f["id"] not in fs_before]
+new_short = [f for f in failures(short["id"]) if f["id"] not in fs_before and BS <= ts(f["failed_at"]) < BE]
 check(not new_short, "kpis S5-1b: a 20 s fault inside the break creates NO FailureRecord (short fault)",
       [(f["failed_at"], f.get("restored_at"), f.get("severity")) for f in new_short])
 
@@ -165,7 +167,9 @@ dts = downtimes(robot["id"], o_start, o_stop)
 unpl = sum(min(ts(d["end"] or o_stop.isoformat()), o_stop).timestamp() - max(ts(d["start"]), o_start).timestamp()
            for d in dts if not d["planned"])
 check(abs(o["pdot_s"] - br) < 2, f"OEE: PDOT = whole break ({o['pdot_s']} s vs {br} s)", o)
-check(abs(o["adot_s"] - unpl) < 5 and o["adot_s"] < br,
+# ADOT = the unplanned stops clipped to the window (none inside the break, checked above); other stops of the live
+# plant before the break may add to it, so it is not compared with the break length
+check(abs(o["adot_s"] - unpl) < 5,
       f"OEE: unplanned downtime = stops in productive time only ({o['adot_s']:.0f} s; fault part "
       f"{(t_rep - BE).total_seconds():.0f} s)", {k: o.get(k) for k in ("pot_s", "pdot_s", "pbt_s", "adot_s", "apt_s", "availability")})
 print(json.dumps({k: o.get(k) for k in ("pot_s", "pdot_s", "pbt_s", "adot_s", "apt_s", "nodata_s", "availability", "oee")}))

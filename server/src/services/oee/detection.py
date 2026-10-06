@@ -411,6 +411,32 @@ def productive_at(cal: Calendar, ts: datetime) -> bool:
     return inst is not None and not any(a <= ts < b for a, b in inst.break_intervals())
 
 
+def short_offtime_fault(stop: Stop, cal: Calendar, threshold_s: float, now: datetime) -> bool:
+    """kpis.md S5-1b: a fault that starts outside production time (planned break / off-shift) and is shorter than
+    the C22 threshold — measured on the fault itself, not on the stop (which in a break is long by definition) —
+    is only a short fault: no FailureRecord, no emergency call. A fault still active counts its length up to
+    `now` (it becomes a failure when it completes the threshold, inclusive like C22); one that clears in
+    production time is an ordinary production fault."""
+    if stop.fault_since is None or productive_at(cal, stop.fault_since):
+        return False
+    end = stop.fault_until
+    if end is not None and productive_at(cal, end):
+        return False
+    return ((end or now) - stop.fault_since).total_seconds() < threshold_s
+
+
+def short_fault_piece(stop: Stop, cal: Calendar) -> Optional[MicroPiece]:
+    """The micro-stop bucket that records an S5-1b short fault (`short_faults` only: no count, no loss), in the
+    shift instance whose break holds it. Off-shift (no instance) there is no bucket to put it in: None."""
+    inst = cal.instance_at(stop.fault_since) if stop.fault_since is not None else None
+    if inst is None:
+        return None
+    bucket = stop.fault_since.replace(minute=0, second=0, microsecond=0)
+    p = MicroPiece(bucket, inst.slot, inst.shift_id, inst.productive_day, 0.0)
+    p.short_faults = 1
+    return p
+
+
 def restoration(stop: Stop, cal: Calendar) -> Optional[datetime]:
     """restored_at of the failure of an EQP stop. D1: end of the stop (back to running). S5-1: a fault that clears
     while there is no production time (planned break / off-shift) is restored when it clears — nobody restarts
