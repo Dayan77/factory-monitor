@@ -1,5 +1,6 @@
 """MQTT ingestion capacity (Sprint 5 review): a gateway flushing per-cycle stroke_time readings of several
-cylinders plus their cycle counters, delivered the way the subscriber does it (one task per message, all at once).
+cylinders plus their cycle counters, delivered the way the subscriber does it (Sprint 5b: the bounded pipeline —
+per-tag ordered queues, fixed worker pool, batched Influx writes).
 
 Checks that every reading reaches Influx (counters in order) and prints the measured rate and the number of Influx
 write requests (recorded in docs/predictive.md, "Capacidade de ingestão"). Timing-based floors are left out on
@@ -59,13 +60,17 @@ async def test_stroke_and_counter_burst_is_ingested_with_batched_influx_writes()
         msgs += [(tag, 200.0 + c % 7, at) for tag in strokes]
         msgs += [(tag, float(c), at + timedelta(milliseconds=1)) for tag in counters]
     req0 = influx.write_requests
+    from src.services.ingest.pipeline import Item, OrderedPipeline
+    pl = OrderedPipeline(mqtt_subscriber._process_item, capacity=2000, workers=12,
+                         process_batch=mqtt_subscriber._process_items)
+    pl.start()
     started = time.perf_counter()
-    tasks = []
     for tag, v, at in msgs:
         payload = json.dumps({"value": v, "unit": "", "ts": at.isoformat().replace("+00:00", "Z")}).encode()
-        tasks.append(asyncio.create_task(mqtt_subscriber._tracked(mqtt_subscriber._handle_message(
-            f"factory/{ctx.id}/sensors/{tag}", payload, received_at=now))))
-    await asyncio.gather(*tasks)
+        topic = f"factory/{ctx.id}/sensors/{tag}"
+        await pl.put(Item(key=mqtt_subscriber._shard_key(topic), topic=topic, payload=payload, received_at=now))
+    assert await pl.drain(timeout=300)
+    await pl.stop()
     elapsed = time.perf_counter() - started
     rate = len(msgs) / elapsed
     requests = influx.write_requests - req0

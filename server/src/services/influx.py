@@ -95,7 +95,19 @@ class InfluxService:
         self.write_requests += 1
         await self._client.write_api().write(bucket=settings.influx_bucket, record=records)
 
+    async def _send_retrying(self, records: list) -> None:
+        """One batch; a transient failure (Influx restarting, network, 5xx/429) is retried with backoff for up to
+        settings.mqtt_transient_retry_s — the whole batch, as one request (no per-reading retry storm). Callers
+        wait meanwhile, so an Influx outage turns into backpressure (the MQTT pipeline stops acknowledging)."""
+        from .ingest.transient import retry_transient
+        from .metrics import INFLUX_WRITE_RETRIES
+
+        await retry_transient("influx.write", lambda: self._send(records), settings.mqtt_transient_retry_s,
+                              on_retry=lambda n, e: INFLUX_WRITE_RETRIES.inc(), points=len(records))
+
     async def _drain(self) -> None:
+        from .ingest.transient import is_transient
+        from .metrics import INFLUX_WRITE_BATCH
         live: list = []
         try:
             while self._pending:
@@ -104,18 +116,19 @@ class InfluxService:
                 live = [(r, f) for r, f in batch if not f.done()]     # a caller that gave up (timeout) is skipped
                 if not live:
                     continue
+                INFLUX_WRITE_BATCH.observe(len(live))
                 try:
-                    await self._send([r for r, _ in live])
+                    await self._send_retrying([r for r, _ in live])
                     results = [None] * len(live)
                 except Exception as e:  # noqa: BLE001
-                    if len(live) == 1:
-                        results = [e]
+                    if len(live) == 1 or is_transient(e):
+                        results = [e] * len(live)          # retry budget exhausted: every caller learns it
                     else:
                         # one bad point must not fail its neighbours: retry one by one (idempotent in Influx)
                         results = []
                         for r, _ in live:
                             try:
-                                await self._send([r])
+                                await self._send_retrying([r])
                                 results.append(None)
                             except Exception as e1:  # noqa: BLE001
                                 results.append(e1)
@@ -126,6 +139,7 @@ class InfluxService:
                         f.set_result(None)
                     else:
                         f.set_exception(res)
+                live = []
         finally:
             self._draining = False
             if asyncio.current_task() is not None and asyncio.current_task().cancelling():

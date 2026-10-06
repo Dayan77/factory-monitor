@@ -39,6 +39,9 @@ os.environ.setdefault("INFLUX_TOKEN", "dev-token-change-me")      # docker dev d
 os.environ.setdefault("INFLUX_ORG", "factory-monitor")
 os.environ.setdefault("INFLUX_BUCKET", "sensors")
 os.environ["APP_ENV"] = "test"
+# No persistent MQTT session from test servers on the shared dev broker (the broker would keep queueing every
+# reading for a client id that never comes back); tests of the persistent session use their own ids and clean up.
+os.environ.setdefault("MQTT_PERSISTENT_SESSION", "false")
 os.environ["APP_SECRET_KEY"] = "test-secret-key-not-used-anywhere-else"
 os.environ["SENDGRID_API_KEY"] = ""
 os.environ["TELEGRAM_BOT_TOKEN"] = ""

@@ -77,6 +77,7 @@ class ExtEvent:
     alert_key: str
     action: str                          # acknowledge | convert | unconvert | close
     resolution: Optional[str] = None
+    source: Optional[str] = None         # user | work_order | failure | plan (who closed: compared by recompute)
 
 
 @dataclass
@@ -298,7 +299,7 @@ def fold_segment(cfg: MonitorCfg, windows: list[WindowIn], *, warmup: bool, tz: 
                             state=carry.state, triggers_seen=dict(carry.triggers_seen),
                             evidence={k_: dict(v) for k_, v in carry.evidence.items()},
                             acknowledged=carry.acknowledged, quiet=0, carried=True, auto=[], rul=None,
-                            point=None, closed_at=None, resolution=None)
+                            point=None, closed_at=None, resolution=None, closed_by=None)
         alerts.append(open_alert)
         by_key[carry.key] = open_alert
 
@@ -317,6 +318,7 @@ def fold_segment(cfg: MonitorCfg, windows: list[WindowIn], *, warmup: bool, tz: 
             a["state"] = "acknowledged"
         elif ev.action == "close":
             a["state"], a["resolution"], a["closed_at"] = "closed", ev.resolution, _iso(ev.at)
+            a["closed_by"] = ev.source
             if ev.resolution == "false_alarm":
                 snooze_until, snooze_rank = ev.at + timedelta(days=snooze_days), SEV_RANK[a["severity"]]
             if open_alert is a:
@@ -454,7 +456,7 @@ def fold_segment(cfg: MonitorCfg, windows: list[WindowIn], *, warmup: bool, tz: 
                                         escalation_windows={sev: w.i}, state="open", triggers_seen={},
                                         evidence={}, acknowledged=False, quiet=0, carried=False,
                                         auto=[{"at": _iso(w.end), "i": w.i, "kind": "open", "severity": sev}],
-                                        rul=None, point=None, closed_at=None, resolution=None)
+                                        rul=None, point=None, closed_at=None, resolution=None, closed_by=None)
                     alerts.append(open_alert)
                     by_key[open_alert["key"]] = open_alert
                 else:
@@ -476,6 +478,7 @@ def fold_segment(cfg: MonitorCfg, windows: list[WindowIn], *, warmup: bool, tz: 
             open_alert["quiet"] += 1
             if open_alert["state"] == "open" and not open_alert["acknowledged"] and open_alert["quiet"] >= auto_close:
                 open_alert["state"], open_alert["resolution"] = "closed", "auto_cleared"
+                open_alert["closed_by"] = "engine"
                 open_alert["closed_at"] = _iso(w.end)
                 open_alert["auto"].append({"at": _iso(w.end), "i": w.i, "kind": "auto_cleared"})
                 open_alert = None

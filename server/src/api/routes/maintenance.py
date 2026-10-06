@@ -75,8 +75,9 @@ async def _get(db: AsyncSession, model, obj_id: str, tenant_id: str, what: str, 
 
 
 async def _commit(db: AsyncSession) -> None:
+    from ...services.predictive import service as predictive_service
     await db.commit()
-    await notif.deliver_pending(db)
+    await predictive_service.deliver(db)      # predictive WebSocket messages (P-8) + notifications
 
 
 # ══ plans ════════════════════════════════════════════════════════════════════
@@ -749,6 +750,9 @@ async def create_failure(body: FailureCreate, user: CurrentUser, db: DB):
                        f"Falha registrada ({f.severity})", link=f"/maintenance/failures/{f.id}",
                        data={"failure_id": f.id}, group_key="failure_new", line_id=line_id,
                        grouped_title="{count} falhas novas registradas")
+    # predictive.md P-8: a failure at a monitored position closes its open predictive alert now
+    from ...services.predictive.engine import on_failure_changed
+    await on_failure_changed(db, tid, [f.position_id])
     out = await _failure_out(db, f)
     await webhooks.enqueue(db, tid, "failure.created", out)
     await _commit(db)
@@ -760,6 +764,7 @@ async def patch_failure(failure_id: str, body: FailurePatch, user: CurrentUser, 
     """Complete ISO 14224 data (mode, mechanism, cause, detection), link to position/component/WO,
     confirm restoration (supervisor, machine without run_state)."""
     f = await _get(db, FailureRecord, failure_id, user.tenant_id, "Falha", lock=True)
+    old_position = f.position_id
     sent = body.model_fields_set
     data = body.model_dump(exclude_unset=True)
     if "failure_mechanism" in sent:
@@ -787,6 +792,10 @@ async def patch_failure(failure_id: str, body: FailurePatch, user: CurrentUser, 
     f.status = _failure_status(f)
     await db.flush()
     await db.refresh(f)
+    # predictive.md P-8: closures by failure follow the current record (failed_at moved, severity or position
+    # changed) — re-evaluated now for the old and the new position
+    from ...services.predictive.engine import on_failure_changed
+    await on_failure_changed(db, user.tenant_id, [old_position, f.position_id])
     out = await _failure_out(db, f)
     await webhooks.enqueue(db, user.tenant_id, "failure.updated", out)
     await _commit(db)

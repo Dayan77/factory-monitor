@@ -116,18 +116,26 @@ async def test_shutdown_is_bounded_even_with_stubborn_tasks():
             except asyncio.CancelledError:
                 continue                       # swallows cancellation (e.g. a hung client close)
 
-    async def reading():
+    from src.services.ingest.pipeline import Item, OrderedPipeline
+
+    async def reading(item):
         await asyncio.sleep(3600)
 
+    pl = OrderedPipeline(reading, capacity=4, workers=1)
+    pl.start()
+    await pl.put(Item(key="k", topic="factory/x/sensors/y", payload=b"{}", received_at=None))
+    await asyncio.sleep(0.05)
+    old, ms._pipeline = ms._pipeline, pl
     bg = asyncio.create_task(stubborn())
-    rd = asyncio.create_task(reading())
-    ms._inflight.add(rd)
     t0 = asyncio.get_running_loop().time()
-    await main.shutdown_tasks([bg], timeout_s=0.5)
+    try:
+        await main.shutdown_tasks([bg], timeout_s=0.5)
+    finally:
+        ms._pipeline = old
     assert asyncio.get_running_loop().time() - t0 < 3
-    assert rd.cancelled()
+    assert all(t.done() for t in pl._workers)          # the reading being processed was cancelled
+    assert pl.inflight == 1                            # …and not acknowledged (the broker redelivers it)
     bg.cancel()
-    ms._inflight.discard(rd)
 
 
 async def test_uvicorn_exits_on_sigterm_with_pending_readings(tmp_path):

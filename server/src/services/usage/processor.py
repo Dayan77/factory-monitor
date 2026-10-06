@@ -134,10 +134,18 @@ def _updates(tenant_id: str, topo: Topology, applied: dict) -> list[UsageUpdate]
 async def process_reading(db: AsyncSession, tag: TagInfo, value: float, ts: datetime,
                           fresh: bool = True, topo: Optional[Topology] = None) -> ProcessOutcome:
     """Processes one reading of a tag already verified to belong to tag.tenant_id. Commits."""
+    return (await process_readings(db, tag, [(value, ts, fresh)], topo))[0]
+
+
+async def process_readings(db: AsyncSession, tag: TagInfo, readings: list[tuple[float, datetime, bool]],
+                           topo: Optional[Topology] = None) -> list[ProcessOutcome]:
+    """Processes consecutive readings of ONE tag (arrival order) in one transaction: the same result as calling
+    process_reading for each, with one state lock, one upsert of the summed contributions and one commit
+    (Sprint 5b: the per-tag ordered MQTT pipeline hands over what queued up for the tag — a gateway buffer flush
+    is no longer one transaction per reading). The machine status is derived once, after the last reading. Commits."""
     role = tag.role
     if role not in COUNTER_ROLES and role not in (SemanticRole.run_state, SemanticRole.fault_state):
-        return ProcessOutcome(ignored="not_semantic")
-    outcome = ProcessOutcome()
+        return [ProcessOutcome(ignored="not_semantic") for _ in readings]
     if topo is None:
         topo = await topology_cache.topology(db, tag.tenant_id, [tag.machine_id] if tag.machine_id else [])
 
@@ -145,59 +153,72 @@ async def process_reading(db: AsyncSession, tag: TagInfo, value: float, ts: date
     await lock_tenant_usage_shared(db, tag.tenant_id)
     state = await _lock_state(db, tag.id)
     contribs: list[Contribution] = []
+    outcomes: list[ProcessOutcome] = []
+    derive_at: Optional[ProcessOutcome] = None
+    max_rate = topo.max_rate(tag, settings.usage_default_max_rate_per_s) if role in COUNTER_ROLES else None
 
-    if role in COUNTER_ROLES:
-        track = None if state is None else CounterTrack(
-            int(round(state.last_value)), state.last_ts,
-            None if state.pending_value is None else int(round(state.pending_value)), state.pending_ts)
-        res = counter_step(track, value, ts, tag.counter_max,
-                           topo.max_rate(tag, settings.usage_default_max_rate_per_s))
-        outcome.ignored, outcome.event, outcome.delta = res.ignored, res.event, res.delta
-        if state is None:
-            if res.ignored == "invalid" or not await _insert_state(db, tag, res.track.last_value, ts):
-                await db.commit()
-                return outcome
-        elif not res.ignored:
-            state.last_value, state.last_ts = res.track.last_value, res.track.last_ts
-            state.pending_value, state.pending_ts = res.track.pending_value, res.track.pending_ts
-        if res.event:
-            db.add(UsageEvent(tenant_id=tag.tenant_id, tag_id=tag.id, event=_event_name(res.event),
-                              ts=ts, prev_value=res.prev_value, value=value, delta=res.delta))
-        contribs = topo.counter_contributions(tag, res.delta, ts)
+    for value, ts, fresh in readings:
+        outcome = ProcessOutcome()
+        outcomes.append(outcome)
+        if role in COUNTER_ROLES:
+            track = None if state is None else CounterTrack(
+                int(round(state.last_value)), state.last_ts,
+                None if state.pending_value is None else int(round(state.pending_value)), state.pending_ts)
+            res = counter_step(track, value, ts, tag.counter_max, max_rate)
+            outcome.ignored, outcome.event, outcome.delta = res.ignored, res.event, res.delta
+            if state is None:
+                if res.ignored == "invalid":
+                    continue
+                created = await _insert_state(db, tag, res.track.last_value, ts)
+                state = await _lock_state(db, tag.id)
+                if not created:
+                    continue                 # another transaction created the baseline first
+            elif not res.ignored:
+                state.last_value, state.last_ts = res.track.last_value, res.track.last_ts
+                state.pending_value, state.pending_ts = res.track.pending_value, res.track.pending_ts
+            if res.event:
+                db.add(UsageEvent(tenant_id=tag.tenant_id, tag_id=tag.id, event=_event_name(res.event),
+                                  ts=ts, prev_value=res.prev_value, value=value, delta=res.delta))
+            contribs += topo.counter_contributions(tag, res.delta, ts)
 
-    elif role == SemanticRole.run_state:
-        track = None if state is None else RunTrack(bool(state.last_value), state.last_ts, state.off_since)
-        res = run_step(track, value, ts, settings.machine_offline_timeout_s, settings.run_state_debounce_s)
-        outcome.ignored = res.ignored
-        if state is None:
-            if not await _insert_state(db, tag, 1.0 if res.track.state else 0.0, ts, res.track.off_since):
-                await db.commit()
-                return outcome
-        elif not res.ignored:
-            state.last_value = 1.0 if res.track.state else 0.0
-            state.last_ts, state.off_since = res.track.last_ts, res.track.off_since
-        contribs = topo.run_contributions(tag, res.intervals, res.starts, ts)
-        outcome.delta = res.starts
+        elif role == SemanticRole.run_state:
+            track = None if state is None else RunTrack(bool(state.last_value), state.last_ts, state.off_since)
+            res = run_step(track, value, ts, settings.machine_offline_timeout_s, settings.run_state_debounce_s)
+            outcome.ignored = res.ignored
+            if state is None:
+                created = await _insert_state(db, tag, 1.0 if res.track.state else 0.0, ts, res.track.off_since)
+                state = await _lock_state(db, tag.id)
+                if not created:
+                    continue
+            elif not res.ignored:
+                state.last_value = 1.0 if res.track.state else 0.0
+                state.last_ts, state.off_since = res.track.last_ts, res.track.off_since
+            contribs += topo.run_contributions(tag, res.intervals, res.starts, ts)
+            outcome.delta = res.starts
 
-    else:  # fault_state: keep the latest value
-        if state is None:
-            if not await _insert_state(db, tag, float(value), ts):
-                await db.commit()
-                return outcome
-        elif ts >= state.last_ts:
-            state.last_value, state.last_ts = float(value), ts
-        else:
-            outcome.ignored = "out_of_order"
+        else:  # fault_state: keep the latest value
+            if state is None:
+                created = await _insert_state(db, tag, float(value), ts)
+                state = await _lock_state(db, tag.id)
+                if not created:
+                    continue
+            elif ts >= state.last_ts:
+                state.last_value, state.last_ts = float(value), ts
+            else:
+                outcome.ignored = "out_of_order"
+
+        if (fresh and not outcome.ignored and tag.machine_id and
+                (role == SemanticRole.fault_state or (role == SemanticRole.run_state and not tag.position_id))):
+            derive_at = outcome
 
     await db.flush()   # state row must be visible to the raw SQL below
     applied = await apply_contributions(db, tag.tenant_id, contribs)
-    outcome.updates = _updates(tag.tenant_id, topo, applied)
-
-    if (fresh and not outcome.ignored and tag.machine_id and
-            (role == SemanticRole.fault_state or (role == SemanticRole.run_state and not tag.position_id))):
-        outcome.status_change = await derive_machine_status(db, tag.tenant_id, tag.machine_id)
+    if outcomes:
+        outcomes[-1].updates = _updates(tag.tenant_id, topo, applied)
+    if derive_at is not None:
+        derive_at.status_change = await derive_machine_status(db, tag.tenant_id, tag.machine_id)
     await db.commit()
-    return outcome
+    return outcomes
 
 
 def _event_name(ev: str) -> str:

@@ -147,7 +147,23 @@ class ConditionFeature(Base):
     triggers:    Mapped[list]               = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     severity:    Mapped[Optional[str]]      = mapped_column(String(16), nullable=True)
     rul:         Mapped[Optional[dict]]     = mapped_column(JSONB, nullable=True)
+    # blocos de ciclos: ciclos que a leitura do contador que fechou o bloco ultrapassou (cursor de retomada,
+    # P-12). Permite recalcular a partir de qualquer bloco quando chegam dados atrasados.
+    carry:       Mapped[Optional[float]]    = mapped_column(Float(precision=53), nullable=True)
     created_at:  Mapped[datetime]           = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
+class PredictiveDirty(Base):
+    """Intervalo de dados que chegou atrasado (marcas d'água da ingestão) e ainda não foi reprocessado por um
+    monitor: as janelas já extraídas que ele toca são reextraídas e os detectores redobrados (P-12)."""
+    __tablename__ = "predictive_dirty"
+
+    id:         Mapped[str]      = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id:  Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    monitor_id: Mapped[str]      = mapped_column(UUID(as_uuid=False), ForeignKey("predictive_monitors.id", ondelete="CASCADE"), nullable=False, index=True)
+    lo:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    hi:         Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 
 class PredictiveAlert(Base, TimestampMixin):

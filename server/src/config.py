@@ -99,6 +99,17 @@ class ServerSettings(BaseSettings):
     # A transient failure (timeout, database/Influx unavailable) on the tag check or the Influx write is
     # retried with backoff for up to this long before the reading is given up (and logged as lost).
     mqtt_transient_retry_s: float = 600.0
+    # Persistent MQTT session (clean_session=False) under a stable client id: while the server is down or slow the
+    # broker keeps the QoS 1 backlog for it (max_queued_messages) and redelivers what was not acknowledged.
+    # Empty = "fm-server-<POSTGRES_DB>" (stable across restarts, distinct per deployment database). Two processes
+    # must never share it (the broker disconnects the older one).
+    mqtt_client_id: str = ""
+    mqtt_persistent_session: bool = True
+    # Valid readings that still fail after the retries go to the table ingest_dead_letters; if even the database
+    # is unavailable, to this JSON-lines file (relative to the working directory).
+    ingest_dead_letter_file: str = "data/ingest_dead_letters.jsonl"
+    # Per-tag watermarks / late-data marks are written to Postgres at this interval (services/ingest/watermarks.py).
+    ingest_watermark_flush_s: float = 1.0
     # Payload ts older than this vs. receive time is not sane (PLC/gateway clock unset):
     # the reading is stamped with the receive time instead.
     source_ts_max_age_s: int = 30 * 24 * 3600
@@ -163,6 +174,11 @@ class ServerSettings(BaseSettings):
     predictive_tick_s: float = 300.0
     predictive_grace_s: float = 120.0          # a window is extracted this long after it closes (late readings)
     predictive_enabled: bool = True
+    # Where the predictive engine runs (its Influx extraction must not share the event loop with MQTT ingestion):
+    # process  = a child process started and supervised by the app (python -m src.worker) — default;
+    # external = not started by the app (run `python -m src.worker` as its own service, e.g. compose `worker`);
+    # inline   = background task in the app's event loop (old behaviour; tests/debug only).
+    predictive_worker: str = "process"
     webhook_timeout_s: float = 10.0
     # Outbound webhooks to private/loopback addresses are refused (SSRF) unless this is true.
     webhook_allow_private_hosts: bool = False
@@ -187,6 +203,10 @@ class ServerSettings(BaseSettings):
             if o not in origins:
                 origins.append(o)
         return origins
+
+    @property
+    def mqtt_client_identifier(self) -> str:
+        return self.mqtt_client_id or f"fm-server-{self.postgres_db}"
 
     @property
     def database_url(self) -> str:

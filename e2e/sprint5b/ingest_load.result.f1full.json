@@ -1,0 +1,28 @@
+{
+ "ids": {
+  "tenant": "effc7f78-8517-4486-9ab2-a8fde0d2f63a",
+  "machine": "9837ffdb-d535-4a8b-b16d-e2542e88151b",
+  "motor_machine": "619b5066-04e5-46ea-9a6d-325be642ce4f",
+  "fast": {
+   "pos": "8f2a5c73-0fd4-44c0-8b77-820435854a53",
+   "st": "44f78b28-cc66-409c-9a16-3985fb732d3a",
+   "ct": "233868ec-9af1-44d8-a1f1-6f314131694f",
+   "mon": "34c20dfe-5a9d-4365-b5cd-df21a506fe46"
+  },
+  "slow": {
+   "pos": "aada4288-4a0a-418e-ae6d-b880683fe1e7",
+   "st": "93498588-af2b-49aa-9f74-3386f60d4140",
+   "ct": "05f51acd-0174-45c7-b3c0-8528cdd3213a",
+   "mon": "9f23b0fd-e9e1-4a9f-81c8-c2264950d913"
+  },
+  "live": "8ce172ff-56e6-49d6-897f-cc73f42ee141"
+ },
+ "fast": {
+  "published": 1400001,
+  "acked_by_broker": 1400001,
+  "enqueue_s": 442.72,
+  "broker_ack_s": 443.78,
+  "publish_rate": 3155,
+  "drain_s_after_publish": 2761.5
+ }
+}

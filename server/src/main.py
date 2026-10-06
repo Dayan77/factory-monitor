@@ -4,7 +4,11 @@ Factory Monitor — FastAPI application entry point.
 
 import asyncio
 import logging
+import os
+import signal
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
@@ -24,6 +28,7 @@ from .services.influx import influx
 from .services.usage.broadcaster import usage_broadcaster
 from .services.maintenance.engine import run_maintenance_engine, run_webhook_worker
 from .services.predictive.engine import run_predictive_engine
+from .websocket.relay import run_listener as ws_relay_listener
 
 # LOG_LEVEL (default INFO): structlog printed every level, i.e. one DEBUG line per MQTT reading.
 _level = logging.getLevelName(settings.log_level.upper())
@@ -31,6 +36,34 @@ structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(
     _level if isinstance(_level, int) else logging.INFO))
 
 log = structlog.get_logger()
+
+SERVER_DIR = Path(__file__).resolve().parent.parent
+
+
+async def supervise_worker() -> None:
+    """PREDICTIVE_WORKER=process: runs `python -m src.worker` (predictive engine) as a child process, restarts it
+    if it dies, and stops it with the app (SIGTERM, then SIGKILL after 5 s)."""
+    proc = None
+    try:
+        while True:
+            proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "src.worker", cwd=str(SERVER_DIR),
+                                                        env=dict(os.environ))
+            log.info("worker.spawned", pid=proc.pid)
+            rc = await proc.wait()
+            log.error("worker.exited", returncode=rc, restart_in_s=5)
+            proc = None
+            await asyncio.sleep(5)
+    finally:
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+            except (ProcessLookupError, asyncio.TimeoutError, asyncio.CancelledError):
+                pass
 
 
 async def shutdown_tasks(tasks: list[asyncio.Task], timeout_s: float) -> None:
@@ -68,7 +101,14 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
     ]
     if settings.predictive_enabled:
-        tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
+        mode = (settings.predictive_worker or "process").lower()
+        if mode == "inline":
+            tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
+        else:
+            if mode == "process":
+                tasks.append(asyncio.create_task(supervise_worker(), name="predictive_worker"))
+            # the worker (child or external service) sends WebSocket messages through Postgres NOTIFY
+            tasks.append(asyncio.create_task(ws_relay_listener(), name="ws_relay_listener"))
 
     yield
 

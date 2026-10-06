@@ -74,22 +74,29 @@ async def test_time_windows_stored_invalid_are_reextracted_when_the_gateway_buff
     assert r["windows_added"] == 3
     assert [(p["i"], p["valid"]) for p in await _features(client, ctx, pos)] == [(1, False), (2, False), (3, False)]
     # the gateway reconnects and flushes its buffer through MQTT (source timestamps of yesterday)
-    pe._late.clear()
+    from src.services.ingest import watermarks
     for tag, v, at, unit in [(run_id, 1.0, T, ""), (cur_id, 10.0, T, "A"), (cur_id, 11.0, T + timedelta(hours=8), "A"),
                              (cur_id, 12.0, T + timedelta(hours=16), "A")]:
         await mqtt_subscriber._handle_message(f"factory/{ctx.id}/sensors/{tag}", _payload(v, at, unit),
                                               received_at=clk.at)
-    assert pe._late.get((ctx.id, mach)) == T
+    # the ingestion noted the late range per tag (written to ingest_watermarks before the engine looks)
+    assert min(e[2] for k, e in watermarks._pending.items() if k[0] == ctx.id) == T
     clk.at = T + timedelta(hours=25, minutes=5)
     await api(client, "POST", f"/api/predictive/monitors/{m['id']}/process", ctx.h("maintenance_planner"))
     pts = await _features(client, ctx, pos)
     assert [(p["i"], p["valid"], p["x"]) for p in pts] == [(1, True, 10.0), (2, True, 11.0), (3, True, 12.0)]
     assert [p["u"] for p in pts] == pytest.approx([8.0, 16.0, 24.0])
-    mon = await api(client, "GET", f"/api/predictive/monitors/{m['id']}", ctx.h("maintenance_planner"))
-    assert "late_from" not in (mon.get("status") or {})
-    # the background run persists the notes of the other monitors too and then forgets them
-    await pe.run_once(clk.at)
-    assert (ctx.id, mach) not in pe._late
+    from sqlalchemy import select
+    from src.db import AsyncSessionLocal
+    from src.models import IngestWatermark, PredictiveDirty
+    async with AsyncSessionLocal() as s:
+        assert (await s.execute(select(PredictiveDirty).where(PredictiveDirty.monitor_id == m["id"]))).first() is None
+        wms = (await s.execute(select(IngestWatermark).where(IngestWatermark.tenant_id == ctx.id))).scalars().all()
+    assert {w.tag_id for w in wms} == {run_id, cur_id} and all(w.late_min_ts is None for w in wms)
+    assert max(w.max_ts for w in wms) == T + timedelta(hours=16)
+    await pe.run_once(clk.at)                     # nothing left to redo
+    pts2 = await _features(client, ctx, pos)
+    assert [(p["i"], p["valid"], p["x"]) for p in pts2] == [(1, True, 10.0), (2, True, 11.0), (3, True, 12.0)]
 
 
 async def test_recompute_reextracts_invalid_windows_from_influx(client, clk):
@@ -104,7 +111,6 @@ async def test_recompute_reextracts_invalid_windows_from_influx(client, clk):
     # readings written late without passing through the MQTT handler (no note): only /recompute finds them
     await influx.write(ctx.id, run_id, 1.0, machine_id=mach, ts=T)
     await influx.write(ctx.id, cur_id, 9.5, machine_id=mach, unit="A", ts=T)
-    pe._late.clear()
     rc = await api(client, "POST", "/api/predictive/recompute", ctx.h("admin"), json={"monitor_id": m["id"]})
     assert rc["monitors"][0]["windows_reextracted"] == 2
     assert [(p["valid"], p["x"]) for p in await _features(client, ctx, pos)] == [(True, 9.5), (True, 9.5)]
@@ -176,7 +182,8 @@ async def test_open_block_reads_no_raw_rows_and_closes_exactly(client, clk, monk
     await cycles(N, 2 * N)
     clk.at = T + timedelta(minutes=2 * N + 5)
     r = await api(client, "POST", f"/api/predictive/monitors/{m['id']}/process", ctx.h("maintenance_planner"))
-    assert r["windows_added"] == 2 and len(raw_reads) == 1
+    # Sprint 5b: the closed blocks' count and median are computed inside Influx too — no raw rows at all
+    assert r["windows_added"] == 2 and raw_reads == []
     pts = await _features(client, ctx, pos)
     assert [(p["i"], p["n"]) for p in pts] == [(1, N), (2, N)]
     assert [datetime.fromisoformat(p["end_at"].replace("Z", "+00:00")) for p in pts] == \
@@ -213,3 +220,50 @@ async def test_stroke_blocks_without_counter_resume_exactly(client, clk):
         await api(client, "POST", f"/api/predictive/monitors/{m['id']}/process", ctx.h("maintenance_planner"))
     pts = await _features(client, ctx, pos)
     assert [(p["i"], p["n"], p["x"]) for p in pts] == [(1, N, 200.0), (2, N, 201.0), (3, N, 202.0)]
+
+
+async def test_late_readings_rewrite_a_valid_window_and_stay_in_their_tenant(client, clk):
+    """Sprint 5b: late data that changes an already VALID window re-extracts it (before: valid windows were never
+    rewritten, the late readings were ignored). The late mark of tenant A never dirties tenant B's monitors."""
+    from sqlalchemy import select
+    from src.db import AsyncSessionLocal
+    from src.models import PredictiveDirty
+    from src.services import mqtt_subscriber
+    from src.services.influx import influx
+    from src.services.predictive import engine as pe
+    ctx = await make_maint_tenant("LT6")
+    ctx_b = await make_maint_tenant("LT6B")
+    mach, pos, run_id, cur_id = await _motor(ctx)
+    mach_b, pos_b, run_b, cur_b = await _motor(ctx_b)
+    m = await _current_monitor(client, ctx, pos, cur_id)
+    m_b = await _current_monitor(client, ctx_b, pos_b, cur_b)
+    for c, mid, r, t in ((ctx, mach, run_id, cur_id), (ctx_b, mach_b, run_b, cur_b)):
+        await influx.write(c.id, r, 1.0, machine_id=mid, ts=T)
+        for h in range(0, 24):
+            await influx.write(c.id, t, 10.0, machine_id=mid, unit="A", ts=T + timedelta(hours=h))
+    clk.at = T + timedelta(hours=25)
+    await api(client, "POST", f"/api/predictive/monitors/{m['id']}/process", ctx.h("maintenance_planner"))
+    await api(client, "POST", f"/api/predictive/monitors/{m_b['id']}/process", ctx_b.h("maintenance_planner"))
+    assert [(p["valid"], p["x"]) for p in await _features(client, ctx, pos)] == [(True, 10.0)] * 3
+    # the gateway flushes a buffered reading of 4 h ago in window 1 (value 22 A held for 30 min)
+    for v, at in ((22.0, T + timedelta(hours=3, minutes=30)), (10.0, T + timedelta(hours=4))):
+        await mqtt_subscriber._handle_message(f"factory/{ctx.id}/sensors/{cur_id}", _payload(v, at, "A"),
+                                              received_at=clk.at)
+    await pe._flush_ingest_marks()
+    async with AsyncSessionLocal() as s:
+        await pe.transfer_late(s)
+        await s.commit()
+        dirty = (await s.execute(select(PredictiveDirty.monitor_id))).scalars().all()
+    assert m["id"] in dirty and m_b["id"] not in dirty
+    clk.at += timedelta(minutes=5)
+    r = await api(client, "POST", f"/api/predictive/monitors/{m['id']}/process", ctx.h("maintenance_planner"))
+    assert r["late_windows"] == 1
+    pts = await _features(client, ctx, pos)
+    assert pts[0]["valid"] and pts[0]["x"] == pytest.approx((7.5 * 10.0 + 0.5 * 22.0) / 8.0)
+    assert [(p["valid"], p["x"]) for p in pts[1:]] == [(True, 10.0), (True, 10.0)]
+    # tenant B untouched
+    assert [(p["valid"], p["x"]) for p in await _features(client, ctx_b, pos_b)] == [(True, 10.0)] * 3
+    # deterministic: a full re-extraction from Influx gives the same series
+    rc = await api(client, "POST", "/api/predictive/recompute", ctx.h("admin"),
+                   json={"monitor_id": m["id"], "reextract_all": True})
+    assert rc["monitors"][0]["windows_reextracted"] == 0 and rc["same"] is True

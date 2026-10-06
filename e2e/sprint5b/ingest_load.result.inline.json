@@ -1,0 +1,32 @@
+{
+ "ids": {
+  "tenant": "e65ab619-0274-450d-962a-0d459a305d77",
+  "machine": "9e117e31-abab-4bd0-964f-ba62e39d815e",
+  "motor_machine": "26a9bf61-e079-4d7b-9b18-397158e94a86",
+  "fast": {
+   "pos": "0fc7c723-a9b2-490e-93f6-433393a17739",
+   "st": "e70a0aca-9d8f-4be9-b4b2-2dcee4c3bc6c",
+   "ct": "7d022ea4-8344-4442-b599-797b14f9e6eb",
+   "mon": "703501a0-7577-4725-8605-4063d8ddf1cd"
+  },
+  "slow": {
+   "pos": "a2a943bc-3a89-427b-a6e5-f6b36b63eed1",
+   "st": "c3386ebb-6138-49a0-afee-45d69d081385",
+   "ct": "008bdab0-99fc-485b-990a-fc8fc5cb26d3",
+   "mon": "fbc5487a-74ff-4562-9271-34f7d964aff4"
+  },
+  "live": "93424ba2-3108-47d2-b519-aa3cfbebc614"
+ },
+ "latency": {
+  "mode": "inline",
+  "live_published": 1200,
+  "live_received_ws": 1200,
+  "late_readings": 20,
+  "ws_latency_p50_s": 0.003789,
+  "ws_latency_p95_s": 0.038542,
+  "ws_latency_max_s": 0.238784,
+  "ingest_latency_p95_le_s": 0.1,
+  "engine_windows_extracted": 16,
+  "monitor": "0d07e332-767c-40f1-94a3-dd3075cba95c"
+ }
+}

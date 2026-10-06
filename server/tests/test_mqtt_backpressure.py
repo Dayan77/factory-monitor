@@ -12,7 +12,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -102,17 +102,29 @@ async def test_lookup_gives_up_after_the_retry_budget(fast_retry, monkeypatch):
 
 
 async def test_influx_write_failure_is_resent(client, tenants, fast_retry, monkeypatch):
+    """A transient Influx failure retries the whole batch (influx.py), the reading is stored once."""
     ms = fast_retry
+    from src.services import ingest
+    from src.services.ingest import transient
+    from src.services.influx import influx
+    from src.services.predictive import features as fx
+    monkeypatch.setattr(transient, "RETRY_FIRST_S", 0.01)
     a = await create_assets(client, tenants.a)
     attempts: list = []
+    real = influx._send
 
-    async def flaky_write(**kw):
-        attempts.append(kw["value"])
+    async def flaky_send(records):
+        attempts.append(len(records))
         if len(attempts) == 1:
             raise ConnectionResetError()
-    monkeypatch.setattr(ms.influx, "write", flaky_write)
-    await ms._handle_message(f"factory/{tenants.a.id}/sensors/{a.tag['id']}", _payload(7.0))
-    assert attempts == [7.0, 7.0]
+        await real(records)
+    monkeypatch.setattr(influx, "_send", flaky_send)
+    at = datetime.now(timezone.utc).replace(microsecond=0)
+    payload = json.dumps({"value": 7.0, "unit": "", "ts": at.isoformat()}).encode()
+    await ms._handle_message(f"factory/{tenants.a.id}/sensors/{a.tag['id']}", payload)
+    assert attempts == [1, 1]
+    pts = await fx.influx_points(tenants.a.id, [a.tag["id"]], at, at + timedelta(seconds=1))
+    assert [v for _, v in pts[a.tag["id"]]] == [7.0]
 
 
 def _broker_up() -> bool:
@@ -126,31 +138,37 @@ def _broker_up() -> bool:
 
 
 async def test_subscriber_is_bounded_and_loses_nothing_through_the_real_broker(monkeypatch):
-    """F1-style backlog: the publisher is far faster than the handler. In-process readings never exceed the
-    bound, and every QoS 1 reading is processed exactly once, in publish order."""
+    """F1-style backlog: the publisher is far faster than the handler. Readings inside the pipeline never exceed
+    the bound, every QoS 1 reading is processed exactly once, in publish order per tag, and the broker is held at
+    its in-flight window (deliveries are acknowledged only when finished)."""
     if not _broker_up():
         pytest.fail("MQTT broker not reachable (CI starts mosquitto with infra/mosquitto/mosquitto.conf)")
     import aiomqtt
     from src.services import mqtt_subscriber as ms
 
-    tenant, tag = str(uuid.uuid4()), str(uuid.uuid4())
-    topic = f"factory/{tenant}/sensors/{tag}"
-    bound, total = 8, 600
-    got: list[int] = []
+    tenant = str(uuid.uuid4())
+    tags = [str(uuid.uuid4()) for _ in range(3)]
+    bound, per_tag = 8, 200
+    got: dict[str, list[int]] = {t: [] for t in tags}
     active = {"n": 0, "max": 0}
 
-    async def slow_handle(t, raw, received_at=None):
-        if t != topic:
-            return                          # other publishers on a shared dev broker
+    async def slow_process(t, raw, received_at):
+        parts = t.split("/")
+        if parts[1] != tenant:
+            return None                     # other publishers on a shared dev broker
         active["n"] += 1
         active["max"] = max(active["max"], active["n"])
         try:
-            await asyncio.sleep(0.02)
-            got.append(json.loads(raw)["i"])
+            await asyncio.sleep(0.005)
+            got[parts[3]].append(json.loads(raw)["i"])
         finally:
             active["n"] -= 1
 
-    queued = {"max": 0}
+        async def write():                   # the (pending) Influx write: finishes later
+            await asyncio.sleep(0.01)
+        return write()
+
+    queued = {"max": 0, "inflight": 0}
     clients: list = []
 
     class Spy(aiomqtt.Client):                 # the subscriber's client: sample its receive queue
@@ -159,33 +177,38 @@ async def test_subscriber_is_bounded_and_loses_nothing_through_the_real_broker(m
             clients.append(self)
 
     monkeypatch.setattr(ms.aiomqtt, "Client", Spy)
-    monkeypatch.setattr(ms, "_handle_message", slow_handle)
+    async def _items(items):
+        return [await slow_process(it.topic, it.payload, it.received_at) for it in items]
+    monkeypatch.setattr(ms, "_process_items", _items)
     monkeypatch.setattr(ms.settings, "mqtt_max_inflight", bound)
-    monkeypatch.setattr(ms, "_capacity", None)
+    monkeypatch.setattr(ms.settings, "mqtt_max_concurrency", 4)
+    monkeypatch.setattr(ms.settings, "mqtt_client_id", f"fm-test-bounded-{uuid.uuid4().hex[:8]}")
     sub = asyncio.create_task(ms.run_subscriber())
     try:
         await asyncio.sleep(1.0)                                   # connected + subscribed
+
         async def sample():
             while True:
                 queued["max"] = max(queued["max"], clients[0]._queue.qsize())
+                queued["inflight"] = max(queued["inflight"], ms.pipeline().inflight)
                 await asyncio.sleep(0.005)
         sampler = asyncio.create_task(sample())
         async with aiomqtt.Client(hostname=ms.settings.mqtt_broker_host, port=ms.settings.mqtt_broker_port) as pub:
-            for i in range(total):
-                await pub.publish(topic, json.dumps({"i": i, "value": 1}).encode(), qos=1)
-        for _ in range(300):
-            if len(got) >= total:
+            for i in range(per_tag):
+                for t in tags:
+                    await pub.publish(f"factory/{tenant}/sensors/{t}", json.dumps({"i": i, "value": 1}).encode(),
+                                      qos=1)
+        for _ in range(600):
+            if all(len(v) >= per_tag for v in got.values()) and ms.pipeline().inflight == 0:
                 break
             await asyncio.sleep(0.1)
-            assert len(ms._inflight) <= bound
         sampler.cancel()
     finally:
         sub.cancel()
         await asyncio.gather(sub, return_exceptions=True)
-        await asyncio.gather(*ms.cancel_inflight(), return_exceptions=True)
-        monkeypatch.setattr(ms, "_capacity", None)
-    assert sorted(got) == list(range(total))                 # nothing lost, nothing twice
-    assert active["max"] <= bound
-    # acknowledged only when accepted → the broker stops at its in-flight window (100) instead of pushing the
+    assert all(v == list(range(per_tag)) for v in got.values()), {t: v[:5] for t, v in got.items()}
+    assert active["max"] <= 4                                  # fixed worker pool
+    assert queued["inflight"] <= bound
+    # acknowledged only when finished → the broker stops at its in-flight window (100) instead of pushing the
     # whole backlog into the client's unbounded receive queue
     assert queued["max"] <= 110, queued

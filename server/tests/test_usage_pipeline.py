@@ -87,8 +87,9 @@ async def test_reading_for_tag_of_other_tenant_is_rejected(client, tenants, db):
     assert await totals_of(db, "position", pos["id"]) == {}
     m = await db.get(Machine, p.machine["id"])
     assert m.last_seen_at is None
-    from src.services.mqtt_subscriber import _tag_locks
-    assert tag["id"] not in _tag_locks          # per-tag locks do not accumulate
+    from src.services.mqtt_subscriber import pipeline
+    pl = pipeline()                             # per-tag queues do not accumulate (Sprint 5b pipeline)
+    assert pl is None or (tenants.b.id, tag["id"]) not in pl._queues
 
 
 async def test_component_swap_position_keeps_counting(client, tenants, db):

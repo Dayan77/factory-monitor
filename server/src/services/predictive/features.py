@@ -191,13 +191,52 @@ def cycle_blocks(strokes: list[tuple[datetime, float]], block: int, start_after:
 
 # ── Influx ────────────────────────────────────────────────────────────────────
 
+def _parse_time(v: str) -> datetime:
+    v = v.strip()
+    if v.endswith("Z"):
+        v = v[:-1] + "+00:00"
+    if "." in v:                                   # RFC3339Nano → at most microseconds for datetime
+        head, rest = v.split(".", 1)
+        frac, tz = rest[:-6], rest[-6:]
+        v = f"{head}.{(frac + '000000')[:6]}{tz}"
+    return datetime.fromisoformat(v)
+
+
+def parse_points_csv(raw: str, ids: list[str]) -> dict[str, list[tuple[datetime, float]]]:
+    """Flux CSV (no annotations) of `_time`, `_value`, `tag_id` → points per tag, sorted. Pure (runs in a
+    worker thread: a slice of tens of thousands of rows must not block the event loop)."""
+    import csv
+    import io
+    out: dict[str, list[tuple[datetime, float]]] = {t: [] for t in ids}
+    it_t = it_v = it_g = None
+    for row in csv.reader(io.StringIO(raw)):
+        if not row or (len(row) == 1 and not row[0]):
+            continue
+        if "_time" in row and "_value" in row:
+            it_t, it_v, it_g = row.index("_time"), row.index("_value"), row.index("tag_id") if "tag_id" in row else None
+            continue
+        if it_t is None or it_g is None or len(row) <= max(it_t, it_v, it_g):
+            continue
+        tid, v = row[it_g], row[it_v]
+        if tid in out and v != "":
+            try:
+                out[tid].append((_parse_time(row[it_t]), float(v)))
+            except ValueError:
+                continue
+    for v in out.values():
+        v.sort(key=lambda p: p[0])
+    return out
+
+
 async def influx_points(tenant_id: str, tag_ids: list[str], start: datetime, stop: datetime
                         ) -> dict[str, list[tuple[datetime, float]]]:
+    """Raw readings of the tags in [start, stop). The CSV is fetched as text and parsed in a worker thread
+    (Sprint 5b: parsing ~80k rows in the event loop starved MQTT ingestion — py-spy, QA)."""
+    import asyncio
     tenant_id = ensure_uuid(tenant_id, "tenant_id")
     ids = [ensure_uuid(t, "tag_id") for t in tag_ids if t]
-    out: dict[str, list[tuple[datetime, float]]] = {t: [] for t in ids}
     if not ids:
-        return out
+        return {t: [] for t in ids}
     flt = " or ".join(f'r["tag_id"] == "{t}"' for t in ids)
     flux = f"""
     from(bucket: "{settings.influx_bucket}")
@@ -208,16 +247,14 @@ async def influx_points(tenant_id: str, tag_ids: list[str], start: datetime, sto
       |> filter(fn: (r) => r["_field"] == "value")
       |> keep(columns: ["_time", "_value", "tag_id"])
     """
-    tables = await influx._client.query_api().query(flux, org=settings.influx_org)
-    for table in tables:
-        for rec in table.records:
-            tid = rec.values.get("tag_id")
-            v = rec.get_value()
-            if tid in out and v is not None:
-                out[tid].append((rec.get_time(), float(v)))
-    for v in out.values():
-        v.sort(key=lambda p: p[0])
-    return out
+    raw = await influx._client.query_api().query_raw(
+        flux, org=settings.influx_org,
+        dialect={"annotations": [], "header": True, "delimiter": ",", "date_time_format": "RFC3339Nano"})
+    if not isinstance(raw, str):
+        raw = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+    if len(raw) < 50_000:
+        return parse_points_csv(raw, ids)
+    return await asyncio.to_thread(parse_points_csv, raw, ids)
 
 
 async def last_before(tenant_id: str, tag_ids: list[str], before: datetime, lookback: timedelta
@@ -288,8 +325,8 @@ async def tag_probe(tenant_id: str, tag_id: str, after: datetime, stop: datetime
 
 
 async def first_reaching(tenant_id: str, tag_id: str, after: datetime, stop: datetime, target: float
-                         ) -> Optional[datetime]:
-    """Instant of the first reading in (after, stop) with value ≥ target (monotonic counter, no drops)."""
+                         ) -> Optional[tuple[datetime, float]]:
+    """First reading in (after, stop) with value ≥ target (monotonic counter, no drops): (instant, value)."""
     tenant_id = ensure_uuid(tenant_id, "tenant_id")
     tag_id = ensure_uuid(tag_id, "tag_id")
     flux = f"""
@@ -299,8 +336,51 @@ async def first_reaching(tenant_id: str, tag_id: str, after: datetime, stop: dat
       |> filter(fn: (r) => r["_value"] >= {float(target)!r})
       |> first()
     """
-    ts = [rec.get_time() for table in await _query(flux) for rec in table.records]
-    return min(ts) if ts else None
+    pts = [(rec.get_time(), float(rec.get_value())) for table in await _query(flux) for rec in table.records
+           if rec.get_value() is not None]
+    return min(pts, key=lambda p: p[0]) if pts else None
+
+
+async def block_stats(tenant_id: str, tag_id: str, after: datetime, until: datetime) -> tuple[int, Optional[float]]:
+    """Number of readings and their exact median in (after, until] — computed inside Influx (P-1 block feature;
+    `quantile(method: "exact_mean")` = statistics.median: middle value, or the mean of the two middle ones).
+    No raw rows are transferred: the engine never parses a block's readings in the event loop."""
+    tenant_id = ensure_uuid(tenant_id, "tenant_id")
+    tag_id = ensure_uuid(tag_id, "tag_id")
+    if until <= after:
+        return 0, None
+    flux = f"""
+    base = from(bucket: "{settings.influx_bucket}")
+      |> range(start: {_rfc(after + timedelta(microseconds=1))}, stop: {_rfc(until + timedelta(microseconds=1))})
+      {_flt(tenant_id, tag_id)}
+      |> group()
+    base |> count() |> yield(name: "count")
+    base |> quantile(q: 0.5, method: "exact_mean") |> yield(name: "median")
+    """
+    n, med = 0, None
+    for table in await _query(flux):
+        for rec in table.records:
+            v = rec.get_value()
+            if v is None:
+                continue
+            if rec.values.get("result") == "count":
+                n += int(v)
+            elif rec.values.get("result") == "median":
+                med = float(v)
+    return n, (med if n else None)
+
+
+async def counter_points(tenant_id: str, tag_id: str, after: datetime, stop: datetime, slice_: timedelta
+                         ):
+    """Raw readings of one tag in (after, stop), oldest first, read in slices of `slice_` (bounded rows per query:
+    only used to walk a counter across a reset/rollover)."""
+    a = after + timedelta(microseconds=1)            # range: start inclusive, stop exclusive
+    tag_id = ensure_uuid(tag_id, "tag_id")
+    while a < stop:
+        b = min(stop, a + slice_)
+        for p in (await influx_points(tenant_id, [tag_id], a, b)).get(tag_id, []):
+            yield p
+        a = b
 
 
 async def nth_reading_time(tenant_id: str, tag_id: str, after: datetime, stop: datetime, n: int

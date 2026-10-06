@@ -38,6 +38,9 @@ class ConnectionManager:
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
         # WebSocket → user id (per-user messages: {type: 'notification'})
         self._users: dict[WebSocket, str] = {}
+        # Set in a process without the sockets (the predictive worker, src/worker.py): messages are relayed to the
+        # app process through Postgres NOTIFY (websocket/relay.py) instead of sent here.
+        self.relay = None
 
     async def connect(self, ws: WebSocket, tenant_id: str, accept: bool = True, user_id: Optional[str] = None) -> None:
         if accept:
@@ -54,6 +57,9 @@ class ConnectionManager:
     async def send_to_user(self, tenant_id: str, user_id: str, message: dict) -> int:
         """Sends to the sockets of one user of the tenant (tenant isolation: only that tenant's
         connections are considered). Returns how many sockets got it."""
+        if self.relay is not None:
+            await self.relay.publish("user", str(tenant_id), str(user_id), message)
+            return 0
         sent, dead = 0, set()
         for ws in list(self._connections.get(tenant_id, ())):
             if self._users.get(ws) != str(user_id):
@@ -68,6 +74,9 @@ class ConnectionManager:
         return sent
 
     async def broadcast(self, tenant_id: str, message: dict) -> None:
+        if self.relay is not None:
+            await self.relay.publish("tenant", str(tenant_id), None, message)
+            return
         dead = set()
         # Snapshot: clients connect/disconnect while we await send_json. Iterating the live set
         # raised "Set changed size during iteration", which aborted the whole MQTT reading

@@ -18,7 +18,8 @@ from .maintenance import (MaintenancePlan, WorkOrder, WorkOrderHistory, WorkOrde
 from .gateway import Gateway
 from .ai import AiConversation, AiMessage, AiToolCall, AiUsage
 from .predictive import (PredictiveMonitor, PredictiveRule, ConditionBaseline, ConditionFeature, PredictiveAlert,
-                         PredictiveAlertEvent, ProductionPlanDay)
+                         PredictiveAlertEvent, ProductionPlanDay, PredictiveDirty)
+from .ingest import IngestDeadLetter, IngestWatermark
 from .notification import (Notification, NotificationPreference, PushSubscription, ApiToken, Webhook,
                            WebhookDelivery)
 
@@ -39,6 +40,7 @@ __all__ = [
     "MaintenanceSettings", "MaintenanceAbsence",
     "Gateway", "AiConversation", "AiMessage", "AiToolCall", "AiUsage",
     "PredictiveMonitor", "PredictiveRule", "ConditionBaseline", "ConditionFeature", "PredictiveAlert",
-    "PredictiveAlertEvent", "ProductionPlanDay",
+    "PredictiveAlertEvent", "ProductionPlanDay", "PredictiveDirty",
+    "IngestDeadLetter", "IngestWatermark",
     "Notification", "NotificationPreference", "PushSubscription", "ApiToken", "Webhook", "WebhookDelivery",
 ]

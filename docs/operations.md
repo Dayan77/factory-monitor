@@ -275,6 +275,15 @@ coleta o backend local em `host.docker.internal:8000`: suba o uvicorn com `--hos
 | `fm_mqtt_inflight_messages` | gauge | backend (existe) — backlog de leituras |
 | `fm_mqtt_messages_total{result}` | counter | backend (`services/metrics.py`) — `result` = `ok`·`rejected` (tag desconhecida/outro tenant)·`invalid` (tópico/payload)·`error` |
 | `fm_mqtt_processing_lag_seconds` | histogram | backend — fim do processamento − `ts` da leitura (leituras ao vivo; replays do buffer do edge ficam fora) |
+| `fm_ingest_queue_depth` / `fm_ingest_queue_capacity` | gauge | backend (Sprint 5b) — leituras dentro do pipeline de ingestão (filas por tag + processando + escrita no Influx pendente) e o teto (`MQTT_MAX_INFLIGHT`); no teto o servidor para de ler e o broker guarda o resto |
+| `fm_ingest_unacked` | gauge | backend — entregas QoS 1 ainda sem PUBACK (confirmadas em ordem, só depois de gravadas) |
+| `fm_ingest_active_tags` | gauge | backend — tags com leituras na fila ordenada |
+| `fm_ingest_latency_seconds` | histogram | backend — recebimento → leitura concluída (Influx + uso), toda leitura |
+| `fm_ingest_dead_letters_total{stage}` | counter | backend — leitura válida que falhou depois das repetições (`lookup`·`influx`·`usage`·`process`), guardada em `ingest_dead_letters` |
+| `fm_ingest_dropped_total` | counter | backend — leitura perdida (nem processada nem em dead letter). **Tem de ser 0** |
+| `fm_ingest_retries_total{stage}`, `fm_influx_write_retries_total` | counter | backend — falhas transitórias repetidas (banco/Influx) |
+| `fm_influx_write_batch_points` | histogram | backend — pontos por requisição de escrita no Influx |
+| `fm_ingest_late_readings_total` | counter | backend — leituras gravadas muito depois do próprio `ts` (buffer do gateway, backlog): as janelas preditivas que elas tocam são recalculadas |
 | `fm_downtime_events_total{kind}` | counter | backend — paradas criadas pela detecção (`stop`) e micro-paradas definitivas (`micro_stop`) |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total` | — | prometheus_client (existe) |
 
@@ -301,8 +310,15 @@ se a série sumir com o servidor no ar (`absent()`). `infra/tests/test_monitorin
 4. **Sintomas comuns**:
    - API fora: `docker logs fm_server --tail 200`; `dc up -d server`; banco cheio? `df -h`, `docker system df`.
    - Dados ao vivo parados: `FmMqttNoMessages`/backlog → `docker logs fm_mosquitto | tail` (`not authorised`?
-     certificado expirado?), `fm_mqtt_inflight_messages` alto → servidor não acompanha (`MQTT_MAX_CONCURRENCY`, CPU); no teto
-     (`MQTT_MAX_INFLIGHT`) o backlog passa para a fila do broker — olhar `$SYS/broker/store/messages/count`.
+     certificado expirado?), `fm_mqtt_inflight_messages`/`fm_ingest_queue_depth` alto → servidor não acompanha
+     (`MQTT_MAX_CONCURRENCY` = workers do pipeline, CPU); no teto (`MQTT_MAX_INFLIGHT`) o backlog passa para a fila do
+     broker (sessão persistente `MQTT_CLIENT_ID`) — olhar `$SYS/broker/store/messages/count`. **O broker tem de rodar
+     com `max_queued_messages`/`max_queued_bytes` de `infra/mosquitto/*.conf`**: com o padrão do Mosquitto (1000) o
+     log mostra `Outgoing messages are being dropped for client …` e leituras se perdem no broker (visto no QA do
+     Sprint 5b: container iniciado antes da mudança do arquivo — `docker restart fm_mosquitto` ou `kill -HUP`).
+   - `fm_ingest_dead_letters_total` > 0: leituras guardadas em `ingest_dead_letters` (banco/Influx fora além de
+     `MQTT_TRANSIENT_RETRY_S`, ou erro de programa — ver o log `ingest.dead_letter`). Corrigida a causa:
+     `cd server && python -m src.services.ingest.dead_letter --replay [--tenant <id>]` (idempotente).
    - Gateway específico: credencial revogada? tenant errado no `.env` do gateway (ACL nega em silêncio)? relógio?
    - Latência alta: p95 por rota no painel; `docker stats`; consultas longas
      `docker exec fm_postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "select pid, now()-query_start, query from pg_stat_activity where state<>'idle' order by 2 desc limit 5"`.

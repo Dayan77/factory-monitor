@@ -340,37 +340,67 @@ virtual (`edge/virtual_plant/`) roda **até a falha**, com seed, e é a régua d
   tem de ser exatamente os ciclos (i−1)·N+1 … i·N). O valor de referência é a última leitura até o cursor
   (lookback de 366 dias); um contador **sem nenhuma leitura anterior** usa a sua 1ª leitura como referência (ela
   não conta ciclo — não há como saber quantos ciclos ela representa).
-- **Custo por tick**: enquanto o bloco está aberto o servidor pergunta ao Influx só agregados (1ª/última leitura,
-  nº de quedas do contador, instante em que o contador atinge o alvo do bloco); as leituras brutas só são lidas
-  quando um bloco fecha. (Antes, cada tick relia e analisava o trecho inteiro desde o cursor — ~80 mil linhas por
-  monitor no F1 — e isso tirava o laço de eventos da ingestão MQTT.)
-- **Dados atrasados** (buffer *store-and-forward* do gateway):
-  * blocos de ciclos: o cursor **nunca pula** trecho vazio; leituras que chegam horas depois (gateway que esteve
-    sem rede) ainda caem no bloco certo. Leituras atrasadas **dentro de um bloco já fechado** não o reabrem
-    (limitação conhecida: o bloco ficou com menos leituras do que teria);
-  * janelas de tempo: o handler MQTT anota a máquina quando grava uma leitura mais velha que
-    `PREDICTIVE_GRACE_S` (`late_from`, como o detector de paradas); a execução seguinte **re-extrai as janelas
-    inválidas** do segmento atual que a leitura toca. A janela que ficar válida ganha o ponto e as horas de
-    operação dela corrigem o `u` das janelas seguintes. Janelas **válidas** não são reescritas (o ponto já
-    alimentou alertas e notificações). As anotações ficam em memória até o próximo tick do motor (≤ 5 min): se o
-    servidor reiniciar nesse intervalo, `POST /api/predictive/recompute` (padrão `reextract_invalid = true`)
-    relê do Influx todas as janelas inválidas do segmento e informa `windows_reextracted`.
-- **Capacidade de ingestão** (medida em `server/tests/test_ingestion_throughput.py`, Postgres + Influx locais, 1
-  processo): rajada de buffer com 8 tags de `stroke_time` + 2 contadores = **~250 leituras/s** (era ~160/s antes da
-  escrita agrupada no Influx e do *throttle* de `last_seen_at`; ~80/s com o motor preditivo relendo blocos abertos).
-  Leituras de **uma mesma tag** são processadas em ordem (uma por vez): um contador de ciclos (contabilização de uso
-  por leitura) fica em ~75–90 leituras/s, uma tag de `stroke_time` em ~150–200/s. Uma linha real com 10 cilindros
-  monitorados a 1–2 s de ciclo publica ~10–20 leituras/s de curso + contadores: folga de ~10×. Abaixo dessa
-  capacidade o broker enfileira; o gauge `fm_mqtt_inflight_messages` e o log `mqtt.backlog` mostram quando o
-  servidor não acompanha (ex.: planta virtual acelerada 150× no F1).
-- **Contrapressão e perda zero na ingestão** (QA Sprint 5, F1 a 500×: 448 mil leituras em memória, 1,5 GB, e uma
-  leitura descartada por timeout na verificação da tag): o servidor assina com QoS 1 e só confirma (PUBACK) cada
-  leitura quando há vaga (`MQTT_MAX_INFLIGHT`, padrão 2000); cheio, ele para de confirmar, o broker para de entregar
-  (janela `max_inflight_messages`) e o backlog fica na fila do broker (`max_queued_messages`/`max_queued_bytes` em
-  `infra/mosquitto/*.conf`). Falha transitória (timeout, Postgres/Influx indisponível) na verificação da tag ou na
-  escrita no Influx é repetida com *backoff* por até `MQTT_TRANSIENT_RETRY_S`; só tag inexistente é recusada de
-  imediato. Uma leitura só se perde se a fila do broker estourar ou após o prazo de repetição (log
-  `reading_lost=true`).
+- **Custo por tick** (Sprint 5b): o bloco inteiro é resolvido **dentro do Influx** — enquanto está aberto, só
+  agregados (1ª/última leitura, nº de quedas do contador, instante e valor da leitura que atinge o alvo do bloco);
+  quando fecha, `count()` e mediana exata (`quantile(q: 0.5, method: "exact_mean")` = `statistics.median`) dos
+  tempos de curso em (início, fim]. Nenhuma linha bruta de bloco é lida pelo servidor (antes: ~80 mil linhas por
+  monitor analisadas no laço de eventos, 74 % do laço no py-spy do QA). Janelas de tempo ainda leem as leituras da
+  janela (média ponderada no tempo), mas o CSV é analisado numa *thread* e a conta pesada também.
+- **Motor fora do processo da API** (Sprint 5b): `PREDICTIVE_WORKER=process` (padrão) — o app inicia e supervisiona
+  `python -m src.worker`, um processo só do motor preditivo (CPU e GIL próprios); `external` — o app não inicia
+  (rodar `python -m src.worker` como serviço próprio, ex. `worker` no compose, mesma imagem do server); `inline` —
+  tarefa no laço do app (só testes/depuração). As mensagens WebSocket do motor chegam aos navegadores pelo app via
+  `NOTIFY fm_ws` no Postgres (`websocket/relay.py`). `/process` e `/recompute` continuam na API (sob demanda).
+- **Dados atrasados** (buffer *store-and-forward* do gateway, backlog da ingestão) — Sprint 5b, substitui a regra
+  anterior ("janelas válidas não são reescritas"):
+  * a ingestão grava por tag (`ingest_watermarks`) o maior `ts` gravado e o intervalo das leituras que chegaram
+    mais de `PREDICTIVE_GRACE_S` depois do próprio `ts`; o motor transfere essas marcas para `predictive_dirty` (por
+    monitor afetado: janelas de tempo — qualquer tag da máquina; blocos — a tag de curso ou o contador da posição);
+  * janelas de tempo: toda janela do segmento que o intervalo atrasado pode mudar (uma leitura vale até o limite de
+    buraco de dados) é **reextraída, válida ou não**; as horas de operação corrigem o `u` das seguintes;
+  * blocos de ciclos: os blocos do segmento que terminam em/depois da leitura atrasada são **refeitos** — o cursor
+    volta para o fim do bloco anterior (`condition_features.carry` guarda os ciclos excedentes de cada bloco) e a
+    extração os corta de novo, exatamente como uma extração completa (enquanto não termina, a dobra não roda, para
+    não fechar alertas de blocos ainda não refeitos);
+  * em seguida os detectores são redobrados (EWMA, CUSUM, regras, RUL) e os alertas reconciliados: um alerta que a
+    dobra deixa de reproduzir e que só o motor tocou é fechado `duplicate`; um em que alguém agiu é reportado
+    (`mismatch`). Determinístico: incremental com qualquer ponto de corte e dados atrasados == extração completa
+    (`server/tests/test_predictive_cycle_cutpoints.py`, propriedade com sementes aleatórias);
+  * as marcas ficam no Postgres (sobrevivem a reinício e funcionam com o motor em outro processo).
+    `POST /api/predictive/recompute` com `reextract_all = true` reextrai todo o segmento do Influx e informa
+    `windows_reextracted` (blocos/janelas diferentes do armazenado) e `same` (alertas, inclusive instante, motivo e
+    origem do fechamento — `closed_by`).
+  * Uso e paradas: o processamento de uso é por leitura, idempotente e ignora leitura fora de ordem (o contador é
+    cumulativo, nada se perde); o detector de paradas já retrocede (`downtime_detector_states.late_from`).
+- **Falhas e alertas** (Sprint 5b): registrar ou editar uma falha (`failed_at`, severidade, posição) reavalia na
+  mesma requisição o fechamento `failed_before_action` dos alertas das posições envolvidas (antiga e nova) e redobra
+  os detectores; uma alteração feita por fora da API é encontrada pelo `/recompute` (`same = false`).
+- **Ingestão MQTT sem perda e com contrapressão** (Sprint 5b, QA F1 a 500×: janela 45 com n = 9 999, leitura de
+  `stroke_time` faltando no Influx): pipeline limitado — filas FIFO por (tenant, tag) (ordem por tag preservada),
+  *pool* fixo de workers (`MQTT_MAX_CONCURRENCY`), escrita no Influx em lote com repetição do lote inteiro em falha
+  transitória, no máximo `MQTT_MAX_INFLIGHT` leituras dentro do servidor. O servidor assina com QoS 1 numa **sessão
+  persistente** (`clean_session = false`, `MQTT_CLIENT_ID` estável, padrão `fm-server-<POSTGRES_DB>`) e só confirma
+  (PUBACK, na ordem de recebimento) a leitura **concluída** (gravada, ou em dead letter): cheio, o broker para na
+  janela `max_inflight_messages` e guarda o resto (`max_queued_messages`/`max_queued_bytes`), também durante um
+  reinício do servidor; o que foi recebido e não concluído é reentregue (processamento idempotente). Falha
+  transitória (timeout, Postgres/Influx fora) é repetida por até `MQTT_TRANSIENT_RETRY_S`; depois disso — ou erro
+  não transitório — a leitura vai para `ingest_dead_letters` (métrica `fm_ingest_dead_letters_total`, log
+  `ingest.dead_letter`; reprocessar com `python -m src.services.ingest.dead_letter --replay`). Só tag inexistente /
+  gateway revogado / payload inválido é recusado (`fm_mqtt_messages_total{result}`). `fm_ingest_dropped_total`
+  tem de ser 0. Prova: `e2e/sprint5b/ingest_load.py` (100 mil leituras do F1 publicadas na velocidade máxima ==
+  contagem no Influx == replay lento, blocos == F1, latência ao vivo com o motor rodando).
+- **Capacidade de ingestão** (medida no `e2e/sprint5b/ingest_load.py`, 1 processo, Postgres + Influx locais numa
+  máquina compartilhada de 4 núcleos, broker com `max_inflight_messages 100`): 100 001 leituras do F1 (1 tag de
+  curso + 1 contador) publicadas a ~3 400/s foram gravadas em ~220 s (**~450 leituras/s**, sem perda, fila do
+  servidor ≤ 100 = janela do broker); as leituras de uma tag que se acumulam na fila são processadas juntas (uma
+  transação de uso por lote, `usage.processor.process_readings`). `server/tests/test_ingestion_throughput.py`
+  (8 tags de curso + 2 contadores, pool NullPool dos testes): ~270 leituras/s (era ~20–115/s com uma transação por
+  leitura). Com o motor preditivo extraindo janelas pesadas (5 dias de corrente a 1 Hz) e leituras atrasadas
+  sujando janelas a cada 3 s, a latência ao vivo (publicação → WebSocket) ficou em p95 = 8 ms (processo próprio do
+  motor) e 39 ms (motor no laço da API, `inline`). **F1 completo pelo MQTT** (`FULL_F1=1`: 70 blocos, 1 400 001
+  leituras publicadas a ~3 200/s): tudo gravado (~440/s), 70 blocos exatos (n = 10 000, mediana, fim = instalação
+  + i·12 h), linha de base, traço dos detectores, alerta (janela 35, escalonamentos, antecedência 420/264 h) e os 4
+  pontos de RUL iguais ao JSON; `recompute` com `reextract_all` idêntico; nenhuma perda no servidor nem no broker.
 - **Tudo por tenant** (`tenant_id` em toda tabela e consulta) e teste de isolamento em todo endpoint.
 - **API proposta** (o `backend-engineer` pode ajustar nomes, não semântica):
 
