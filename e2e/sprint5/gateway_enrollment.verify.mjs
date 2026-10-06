@@ -125,7 +125,7 @@ check(enrolled && (fs.statSync(`${WORK}/creds.json`).mode & 0o777) === 0o600, "c
 const cfgOk = await until(() => /edge_gateway\.config\b.*origin=remote/.test(readLog()), 40000, 1000);
 check(cfgOk, "gateway loaded its remote config from the server", readLog().slice(-800));
 check(!/fcg_[A-Za-z0-9]{8,}/.test(readLog()), "gateway log never prints the device token");
-const online = await until(async () => { const g = (await api("GET", `/api/gateways/${gw.id}`, admin)).data; return g.status === "online" ? g : null; }, 60000);
+const online = await until(async () => { const g = (await api("GET", `/api/gateways/${gw.id}`, admin)).data; return g.status === "online" && g.version ? g : null; }, 60000);   // enrollment alone marks it online; wait for the 1st heartbeat
 check(online && online.version === "qa-0.5.0" && online.config_version === vStart, "API: gateway online, version and config version from the heartbeat", online);
 // data flows: Torno CNC readings reach the server
 const tornoCounter = torno.find((t) => /cycle|part/.test(t.semantic_role ?? "")) ?? torno[0];
