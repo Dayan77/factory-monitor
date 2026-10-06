@@ -85,8 +85,11 @@ for (const theme of ["light", "dark"]) {
       await row.waitFor();
       // Sprint 4 added the machine's maintenance panel (plan consumption bars): count only the life bars
       const bars = page.getByRole("progressbar", { name: /^Vida consumida/ });
-      check((await bars.count()) === 4, `4 life bars on Estação de Fixação (${await bars.count()})`);
+      // one life bar per position whose installed component has a nominal life (A1–A4 and, since Sprint 5, the
+      // predictive scenario's Cilindro B3): derived from the API instead of a fixed count
       const usage = await api(`/api/machines/${fixacao.id}/usage`);
+      const withLife = usage.positions.filter((p) => p.life_consumed_pct != null).length;
+      check(withLife >= 4 && (await bars.count()) === withLife, `${withLife} life bars on Estação de Fixação (${await bars.count()})`);
       const a3 = usage.positions.find((p) => p.name === "Cilindro A3");
       const now = Number(await page.getByRole("progressbar", { name: "Vida consumida — Cilindro A3" }).getAttribute("aria-valuenow"));
       check(Math.abs(now - Math.round(a3.life_consumed_pct * 100)) <= 1, `A3 life bar ${now}% == API ${(a3.life_consumed_pct * 100).toFixed(2)}%`);
