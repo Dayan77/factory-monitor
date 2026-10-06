@@ -54,7 +54,8 @@ from ..metrics import DOWNTIME_EVENTS
 from ..validation import ensure_uuid
 from ..usage.core import counter_step, CounterTrack
 from .calendar import Calendar
-from .detection import (Params, Reading, SignalState, Stop, detect, micro_pieces, segments, suggested_reason)
+from .detection import (Params, Reading, SignalState, Stop, detect, micro_pieces, restoration, segments,
+                        suggested_reason)
 from .engine import MachineInfo, UNJUSTIFIED, load_calendar, machine_infos, product_pri
 
 log = structlog.get_logger()
@@ -156,9 +157,12 @@ class TickResult:
     micro_stops: int = 0
     readings: int = 0
     rewound: bool = False
+    failures_kept: set = field(default_factory=set)
 
 
 _NEVER = datetime.min.replace(tzinfo=timezone.utc)
+# ISO 14224 detection method of the drafts the detector creates (marks them as "stop of production" failures)
+AUTO_DETECTION = "production_interference"
 # Micro-stop pieces still pending at a checkpoint start after `checkpoint - threshold` (≤ 300 s):
 # the snapshot keeps the buckets from one hour before it.
 _MICRO_MARGIN = timedelta(hours=1)
@@ -211,7 +215,15 @@ async def _upsert_events(db: AsyncSession, info: MachineInfo, cal: Calendar, sto
                          res: TickResult) -> set[str]:
     sugg = suggested_reason(stop.fault_code, info.fault_code_map)
     segs = segments(stop, cal, now)
+    restored = restoration(stop, cal)
     if not segs:
+        # Sprint 5 (kpis.md S5-1): an equipment fault that starts during a planned break or off-shift has no
+        # DowntimeEvent yet (no production time lost), but the FailureRecord (and so the emergency call) exists
+        # right away; the event of the productive part, if any, is linked to it when production time resumes.
+        if sugg and sugg.startswith("EQP-") and stop.fault_since is not None:
+            fr = await ensure_failure(db, [], failed_at=stop.fault_since, restored_at=restored,
+                                      tenant_id=info.tenant_id, machine_id=info.id)
+            res.failures_kept.add(fr.id)
         return set()
     existing = {e.start: e for e in (await db.execute(
         select(DowntimeEvent).where(DowntimeEvent.tenant_id == info.tenant_id, DowntimeEvent.machine_id == info.id,
@@ -248,8 +260,8 @@ async def _upsert_events(db: AsyncSession, info: MachineInfo, cal: Calendar, sto
     await db.flush()
     eff = rows[0].reason_code or sugg
     if eff and eff.startswith("EQP-"):
-        await ensure_failure(db, rows, failed_at=stop.fault_since or stop.start,
-                             restored_at=None if (stop.end is None or stop.ended_by_nodata) else stop.end)
+        fr = await ensure_failure(db, rows, failed_at=stop.fault_since or stop.start, restored_at=restored)
+        res.failures_kept.add(fr.id)
     return {e.id for e in rows}
 
 
@@ -291,15 +303,30 @@ async def _drop_stale_events(db: AsyncSession, info: MachineInfo, after: datetim
 
 
 async def ensure_failure(db: AsyncSession, events: list[DowntimeEvent], failed_at: datetime,
-                         restored_at: Optional[datetime]) -> FailureRecord:
-    """FailureRecord draft of a (possibly split) EQP-* stop; one per stop (domain.md §5.5)."""
-    first = events[0]
+                         restored_at: Optional[datetime], tenant_id: Optional[str] = None,
+                         machine_id: Optional[str] = None) -> FailureRecord:
+    """FailureRecord draft of a (possibly split) EQP-* stop; one per stop (domain.md §5.5).
+
+    `events` may be empty (Sprint 5, S5-1): a fault that began during a planned break / off-shift gets its
+    draft before any DowntimeEvent exists (`tenant_id`/`machine_id` given). When the productive part of the
+    stop later produces an event, the event-less draft of the same fault (same machine, same failed_at) is
+    found and linked to it instead of creating a second one."""
+    first = events[0] if events else None
+    tid = first.tenant_id if first is not None else tenant_id
+    mid = first.machine_id if first is not None else machine_id
     fid = next((e.failure_id for e in events if e.failure_id), None)
     fr = await db.get(FailureRecord, fid) if fid else None
     if fr is None:
-        fr = FailureRecord(tenant_id=first.tenant_id, machine_id=first.machine_id, downtime_event_id=first.id,
+        fr = (await db.execute(select(FailureRecord).where(
+            FailureRecord.tenant_id == tid, FailureRecord.machine_id == mid, FailureRecord.failed_at == failed_at,
+            FailureRecord.downtime_event_id.is_(None), FailureRecord.detection_method == AUTO_DETECTION)
+            .limit(1))).scalar_one_or_none()
+        if fr is not None:
+            fr.restored_at = restored_at
+    if fr is None:
+        fr = FailureRecord(tenant_id=tid, machine_id=mid, downtime_event_id=first.id if first is not None else None,
                            failed_at=failed_at, restored_at=restored_at, severity="critical", status="draft",
-                           detection_method="production_interference")
+                           detection_method=AUTO_DETECTION)
         db.add(fr)
         await db.flush()
     else:
@@ -313,9 +340,31 @@ async def ensure_failure(db: AsyncSession, events: list[DowntimeEvent], failed_a
                 "id": fr.id, "machine_id": fr.machine_id, "failed_at": clock.iso(fr.failed_at),
                 "restored_at": clock.iso(restored_at), "severity": fr.severity, "status": fr.status,
                 "downtime_event_id": fr.downtime_event_id, "work_order_id": fr.work_order_id})
+    if first is not None and fr.downtime_event_id is None:
+        fr.downtime_event_id = first.id
+        if fr.work_order_id:      # emergency WO opened during the break: now it also points at the stop
+            from ...models import WorkOrder
+            wo = await db.get(WorkOrder, fr.work_order_id)
+            if wo is not None and wo.downtime_event_id is None:
+                wo.downtime_event_id = first.id
     for e in events:
         e.failure_id = fr.id
     return fr
+
+
+async def _drop_stale_failures(db: AsyncSession, info: MachineInfo, floor: datetime, kept: set[str]) -> None:
+    """Event-less automatic drafts (S5-1) whose fault this pass no longer re-derives (late data changed the
+    picture) are removed — unless someone already acted on them (WO / emergency call)."""
+    q = select(FailureRecord).where(
+        FailureRecord.tenant_id == info.tenant_id, FailureRecord.machine_id == info.id,
+        FailureRecord.downtime_event_id.is_(None), FailureRecord.detection_method == AUTO_DETECTION,
+        FailureRecord.status == "draft", FailureRecord.work_order_id.is_(None),
+        FailureRecord.emergency_notified_at.is_(None), FailureRecord.failed_at >= floor)
+    if kept:
+        q = q.where(FailureRecord.id.not_in(kept))
+    for fr in (await db.execute(q)).scalars().all():
+        await db.delete(fr)
+    await db.flush()
 
 
 # micro-stop pieces: {"b": bucket_start, "slot", "shift_id", "day", "ps": piece_start, "n", "loss", "sf"}
@@ -622,8 +671,9 @@ async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now
     for stop in det.stops:
         if stop.duration_s >= info.threshold_s:
             kept |= await _upsert_events(db, info, cal, stop, now, res)
-    await _drop_stale_events(db, info, old_cp, now, kept, res,
-                             resumed=initial.down_since if initial.at is not None else None)
+    resumed = initial.down_since if initial.at is not None else None
+    await _drop_stale_events(db, info, old_cp, now, kept, res, resumed=resumed)
+    await _drop_stale_failures(db, info, min(old_cp, resumed) if resumed else old_cp, res.failures_kept)
 
     # micro-stops: final ones after the checkpoint are (re)counted on every pass; those the new
     # checkpoint passes become definitive, the others stay provisional (undone next pass)

@@ -347,3 +347,41 @@ Os exemplos usam a Planta Manaus (planta virtual e cenários D/E). "Hoje" = 01/1
   corretas em 13–15. Resultado registrado no PR.
 - Frontend (`/ai`): mostra as citações como links clicáveis, os avisos (`warnings`) e a recusa de forma clara;
   verificado no navegador (Playwright) com o modelo roteirizado.
+
+---
+
+## 7. Implementação (Sprint 5) — notas do backend
+
+Código: `server/src/services/ai/` (`catalog.py` = cópia deste catálogo, conferida por `server/tests/test_ai_catalog.py`;
+`tools.py` camada de ferramentas; `periods.py` IA-6; `verifier.py` IA-2; `privacy.py` IA-10; `providers.py`;
+`assistant.py` orquestrador) e `server/src/api/routes/ai_chat.py`. Testes: `server/tests/test_ai_assistant.py`
+(os 15 exemplos com modelo roteirizado, IA-12).
+
+- **Rotas**: `POST /api/ai/chat` e `POST /api/ai/chat/stream` (SSE: `start`, `tool_call`, `tool_result`,
+  `verifying`, `delta`, `done`, `error`) com `{message, conversation_id?, context?}`; `GET /api/ai/conversations`,
+  `GET/DELETE /api/ai/conversations/{id}` (só as do próprio usuário); `GET /api/ai/audit` (admin do tenant);
+  `GET /api/ai/status`. A resposta acrescenta ao contrato do §1: `verified`, `refusal_reasons` (todas as recusas da
+  pergunta, ex. 14 = `no_permission` + `out_of_scope`), `answer_source` (`model` | `template` | `refusal` | `system`),
+  `conversation_id`, `message_id`, `provider`, `model`; `citations[n] = {id, label, url}`;
+  `tool_calls[n] = {name, args, status, rows, duration_ms, summary}`.
+- **Streaming**: o texto só é enviado depois do verificador (IA-2) — número sem origem nunca chega à tela; durante o
+  turno o stream mostra o progresso (ferramentas chamadas e seus resultados).
+- **Provedor**: `AI_PROVIDER = openai | anthropic` + `AI_MODEL`; sem `AI_PROVIDER`, o da chave configurada
+  (`ANTHROPIC_API_KEY` preferida). Claude: SDK oficial `anthropic`, modelo padrão `claude-opus-5-5`, tool use com
+  `tool_choice` automático, `output_config.effort = low`, fallback de recusa no servidor (`fallbacks = "default"`).
+  Os modelos Claude atuais não aceitam parâmetros de amostragem: `temperature` (≤ 0,2) é enviado à OpenAI e aos Claude
+  antigos que o aceitam; nos atuais a estabilidade vem do esforço baixo + verificador. `AI_PROVIDER=scripted`
+  (só fora de produção) liga um roteiro determinístico para verificar a tela `/ai` no navegador sem chave.
+- **Recusas**: o modelo marca `[[recusa:<motivo>]]` (removido do texto); o servidor também detecta sozinho 403 de
+  ferramenta (`no_permission`), ranking de pessoas (`out_of_scope`), pedido de ação (`write_not_allowed`), nome
+  ambíguo sem dado depois (`ambiguous`) e orçamento (`budget_exceeded`).
+- **Verificador**: uma nova tentativa com a lista dos números sem origem; falhou de novo → resposta em modelo fixo
+  (`answer_source = template`) montada só com os resultados, com aviso. Referências documentadas (metas de PMP,
+  cumprimento, faixa do backlog, 80 %/100 % de vida, "amostra pequena" < 3) vêm no resultado (`reference`), não da
+  memória do modelo.
+- **Limites**: 6 chamadas e 20 s por turno, 50 linhas por resultado, 20 mensagens/min por usuário (429),
+  orçamento **diário** de tokens por tenant (`AI_DAILY_TOKEN_BUDGET`, padrão 2 000 000; decisão do Sprint 5 no lugar
+  do mensal do §1), `AI_ENABLED=false` / `AI_DISABLED_TENANTS` desligam. Retenção 90 dias (conversas e auditoria).
+- **Extensões de API feitas**: `GET /api/oee` aceita `group_by=shift_name` e `compare_to=previous_period`
+  (`previous` + `delta` calculados pelo servidor). `period` é traduzido pela camada de ferramentas; `failure_mode` e
+  `q` de `search_failures` são filtros da camada de ferramentas sobre `GET /api/failures/`.

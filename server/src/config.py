@@ -39,6 +39,28 @@ class ServerSettings(BaseSettings):
 
     openai_api_key: str = ""
 
+    # AI assistant (Sprint 5 — docs/ai_assistant.md). Provider: openai | anthropic; empty = whichever key is set
+    # (ANTHROPIC_API_KEY preferred when both are). AI_MODEL empty = the provider default.
+    anthropic_api_key: str = ""
+    ai_provider: str = ""
+    ai_model: str = ""
+    ai_enabled: bool = True
+    # tenants with the assistant switched off (comma-separated tenant ids) — AI_ENABLED=false turns it off for all
+    ai_disabled_tenants: str = ""
+    ai_temperature: float = 0.1                # ≤ 0.2 (IA spec); only sent to models that accept sampling params
+    ai_max_tool_calls: int = 6                 # per turn
+    ai_turn_timeout_s: float = 20.0
+    ai_max_rows: int = 50                      # rows per tool result sent to the model
+    ai_rate_limit_per_min: int = 20            # messages per user per minute
+    ai_daily_token_budget: int = 2_000_000     # input + output tokens per tenant per day (UTC); 0 = unlimited
+    ai_max_output_tokens: int = 4096
+    ai_retention_days: int = 90
+
+    # Field gateways (Sprint 5): offline after max(3 × heartbeat_s, this); degraded when the buffer exceeds
+    gateway_offline_after_s: float = 90.0
+    gateway_degraded_buffer: int = 1000
+    gateway_enroll_ttl_h: float = 24.0
+
     # Machine status derived from data: a machine with no reading for longer than
     # this is marked 'unknown' (offline). The sweeper runs every N seconds.
     machine_offline_timeout_s: int = 60
@@ -129,6 +151,10 @@ class ServerSettings(BaseSettings):
     maintenance_tick_s: float = 30.0
     maintenance_plan_recompute_s: float = 3600.0
     webhook_tick_s: float = 5.0
+    # Predictive module (Sprint 5, docs/predictive.md P-12): pipeline tick (closed windows → detectors → alerts)
+    predictive_tick_s: float = 300.0
+    predictive_grace_s: float = 120.0          # a window is extracted this long after it closes (late readings)
+    predictive_enabled: bool = True
     webhook_timeout_s: float = 10.0
     # Outbound webhooks to private/loopback addresses are refused (SSRF) unless this is true.
     webhook_allow_private_hosts: bool = False

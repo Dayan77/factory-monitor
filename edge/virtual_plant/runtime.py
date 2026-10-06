@@ -168,7 +168,8 @@ class VirtualPlantRuntime:
         self.control_token = control_token
         self._control_runner: Optional[web.AppRunner] = None
         self.update_s = update_ms / 1000.0
-        self.addresses = addresses(model.layout)
+        # playback do cenário F: máquinas Modbus servidas em OPC UA (precisa do SourceTimestamp)
+        self.addresses = addresses(model.layout, opcua_machines=getattr(model, "opcua_machines", ()))
         self.by_key = {a.key: a for a in self.addresses}
         self.pulses = {k: PulseTrain(pulse_high_ms / 1000, pulse_low_ms / 1000) for k in model.pulse_targets()}
         self.opcua: Optional[Server] = None

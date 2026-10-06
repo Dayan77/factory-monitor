@@ -1,14 +1,30 @@
-import { useState } from "react";
-import { Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { usePlant } from "@/hooks/useEfficiency";
+import { normalizeCatalogParams } from "@/utils/deepLinks";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { useAuthStore } from "@/store/auth";
 import { useRealtimeConnection } from "@/hooks/useWebSocket";
 import EmergencyAlert from "./notifications/EmergencyAlert";
 
+/** AI citations use API-style params (start/stop, group_by, line_id…): translate them to each screen's URL state. */
+function useCatalogDeepLinks() {
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const { tree, tz } = usePlant();
+  const needsTz = /[?&](start|stop)=/.test(search);
+  useEffect(() => {
+    if (!search || (needsTz && tree.isPending)) return;
+    const next = normalizeCatalogParams(pathname, new URLSearchParams(search), tz);
+    if (next) navigate({ pathname, search: next.toString() ? `?${next.toString()}` : "" }, { replace: true });
+  }, [pathname, search, tz, needsTz, tree.isPending, navigate]);
+}
+
 export default function Layout() {
   const tenantId = useAuthStore((s) => s.user?.tenant_id);
   useRealtimeConnection(tenantId);
+  useCatalogDeepLinks();
   const [navOpen, setNavOpen] = useState(false);
 
   return (

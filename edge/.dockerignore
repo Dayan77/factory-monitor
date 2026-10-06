@@ -6,3 +6,5 @@ __pycache__/
 *.db
 .env
 config/*.local.json
+tests/
+**/__pycache__/

@@ -99,6 +99,9 @@ class PlanOut(BaseModel):
     consumed: Optional[float]
     created_at: datetime
     updated_at: datetime
+    # Sprint 5 (predictive.md P-9): condition plan
+    condition_trigger: Optional[dict] = None
+    condition_due_date: Optional[date] = None
 
     model_config = {"from_attributes": True}
 
@@ -153,6 +156,9 @@ class TransitionIn(BaseModel):
     labor_hours: Optional[float] = Field(None, ge=0, le=24)
     remaining_hours: Optional[float] = Field(None, ge=0)
     at: Optional[datetime] = None
+    # Sprint 5 (predictive.md P-9 / P-2): achado da OS preditiva e reinício da linha de base na conclusão
+    finding: Optional[Literal["defect_confirmed", "no_defect"]] = None
+    resets_baseline: Optional[bool] = None
 
 
 class LaborIn(BaseModel):

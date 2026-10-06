@@ -189,7 +189,8 @@ async def update_plan(plan_id: str, body: PlanUpdate, user: CurrentUser, db: DB)
                 skip=frozenset({"task_list", "last_done_at", "last_done_usage"}))
     if body.task_list is not None:
         plan.task_list = _tasks(body.task_list)
-    if not any((plan.interval_cycles, plan.interval_hours, plan.interval_starts, plan.interval_days)):
+    if not any((plan.interval_cycles, plan.interval_hours, plan.interval_starts, plan.interval_days,
+                plan.condition_trigger)):          # condition_trigger: predictive.md P-9 (Sprint 5)
         raise HTTPException(status_code=422, detail="O plano precisa de pelo menos um gatilho.")
     if "last_done_at" in body.model_fields_set or "last_done_usage" in body.model_fields_set:
         await _set_last_done(db, plan, body.last_done_at or plan.last_reset_at, body.last_done_usage)
@@ -426,7 +427,8 @@ async def transition_work_order(wo_id: str, body: TransitionIn, user: CurrentUse
     res = await ms.transition(db, wo, body.to, user, note=body.note, at=body.at, scheduled_for=body.scheduled_for,
                               assignee_id=body.assignee_id, hold_reason=body.hold_reason,
                               cancel_reason=body.cancel_reason, labor_hours=body.labor_hours,
-                              remaining_hours=body.remaining_hours)
+                              remaining_hours=body.remaining_hours, finding=body.finding,
+                              resets_baseline=body.resets_baseline)
     await _commit(db)
     await db.refresh(wo)
     return {**(await ms.wo_out(db, wo, user)), "plans_reset": res["plans_reset"], "new_draft_id": res["new_draft_id"]}
@@ -617,7 +619,8 @@ async def _failure_out(db: AsyncSession, f: FailureRecord) -> dict:
         "severity": f.severity, "failure_mode": f.failure_mode, "mechanism": f.mechanism,
         "failure_mechanism": f.mechanism, "cause": f.cause, "failure_cause": f.cause,
         "detection_method": f.detection_method, "status": f.status, "usage_at_failure": f.usage_at_failure,
-        "note": f.note, "open": f.restored_at is None and f.downtime_event_id is not None,
+        "note": f.note, "open": f.restored_at is None and (f.downtime_event_id is not None
+                                                      or f.detection_method == "production_interference"),
         "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
     }
 

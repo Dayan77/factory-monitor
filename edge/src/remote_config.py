@@ -1,5 +1,5 @@
 """
-Configuração remota do gateway (base para o Sprint seguinte): o mapa de dispositivos/tags vem do servidor.
+Configuração remota do gateway: o mapa de dispositivos/tags vem do servidor (docs/gateways.md).
 
 Ativada só quando `GATEWAY_CONFIG_URL` está definido; sem ele o gateway continua lendo o arquivo
 `PLANT_MAP_PATH` (padrão inalterado).
@@ -13,7 +13,7 @@ Ativada só quando `GATEWAY_CONFIG_URL` está definido; sem ele o gateway contin
 falta, do mapa local (`PLANT_MAP_PATH`).
 
 Resposta esperada (200, application/json):
-    {"gateway_id": "gw-planta-manaus-01", "revision": "2026-10-05T12:00:00Z#7", "plant_map": { ...mapa v1... }}
+    {"gateway_id": "<uuid>", "revision": "7", "config_version": 7, "plant_map": { ...mapa v1... }}
 ou o próprio mapa v1 (edge/src/plant_map.py) no corpo. Cabeçalho `ETag` opcional (vira If-None-Match na próxima
 partida; 304 = usar a cópia local). O mapa é validado (`parse_plant_map`) ANTES de ser aceito e gravado; o
 `gateway_id` do mapa precisa ser o deste gateway.
@@ -66,15 +66,30 @@ class LoadedConfig:
     origin: str                 # "remote" | "cache" | "file"
     revision: Optional[str] = None
     detail: str = ""
+    config_version: Optional[int] = None    # sobe a cada mudança do mapa no servidor (docs/gateways.md)
+
+
+def _version(raw: Any) -> Optional[int]:
+    try:
+        return None if raw is None or isinstance(raw, bool) else int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_map(body: Any) -> tuple[dict, Optional[str]]:
+    """(mapa v1, revision) da resposta (contrato verificado também pelos testes do servidor)."""
+    doc, revision, _ = extract_config(body)
+    return doc, revision
+
+
+def extract_config(body: Any) -> tuple[dict, Optional[str], Optional[int]]:
+    """(mapa v1, revision, config_version) da resposta de GET /api/gateways/{id}/config."""
     if not isinstance(body, dict):
         raise PlantMapError("resposta não é um objeto JSON")
     if isinstance(body.get("plant_map"), dict):
-        return body["plant_map"], body.get("revision")
+        return body["plant_map"], body.get("revision"), _version(body.get("config_version"))
     if "tags" in body and "sources" in body:
-        return body, body.get("revision")
+        return body, body.get("revision"), _version(body.get("config_version"))
     raise PlantMapError("resposta sem 'plant_map' (nem um mapa v1 no corpo)")
 
 
@@ -99,12 +114,13 @@ def read_cache(path: str | Path) -> Optional[dict]:
 
 
 def write_cache(path: str | Path, doc: dict, gateway_id: str, url: str, etag: Optional[str],
-                revision: Optional[str]) -> None:
+                revision: Optional[str], config_version: Optional[int] = None) -> None:
     """Grava a cópia local de forma atômica (tmp + rename). Nunca grava o token."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"cache_version": CACHE_VERSION, "gateway_id": gateway_id, "source_url": url, "etag": etag,
-               "revision": revision, "fetched_at": datetime.now(timezone.utc).isoformat(), "plant_map": doc}
+               "revision": revision, "config_version": config_version,
+               "fetched_at": datetime.now(timezone.utc).isoformat(), "plant_map": doc}
     fd, tmp = tempfile.mkstemp(prefix=".gwcfg-", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -159,19 +175,21 @@ async def load_gateway_config(
         reason = "GATEWAY_TOKEN vazio"
     else:
         own = session is None
-        sess = session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_s))
+        sess = session or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_s), trust_env=True)
         try:
             status, body, etag = await fetch_remote(sess, url, token, (cache or {}).get("etag"))
             if status == 200:
-                doc, revision = _extract_map(body)
+                doc, revision, version = extract_config(body)
                 pm = _validate(doc, gateway_id, env)
-                write_cache(cache_path, doc, gateway_id, url, etag, revision)
-                log.info("remote_config.loaded", url=url, revision=revision, tags=len(pm.tags))
-                return LoadedConfig(pm, "remote", revision)
+                write_cache(cache_path, doc, gateway_id, url, etag, revision, version)
+                log.info("remote_config.loaded", url=url, revision=revision, config_version=version,
+                         tags=len(pm.tags))
+                return LoadedConfig(pm, "remote", revision, config_version=version)
             if status == 304 and cache is not None:
                 pm = _validate(cache["plant_map"], gateway_id, env)
                 log.info("remote_config.not_modified", url=url, revision=cache.get("revision"))
-                return LoadedConfig(pm, "cache", cache.get("revision"), "304")
+                return LoadedConfig(pm, "cache", cache.get("revision"), "304",
+                                    config_version=_version(cache.get("config_version")))
             reason = f"HTTP {status}" + (" (token recusado)" if status in (401, 403) else "")
         except (aiohttp.ClientError, TimeoutError, OSError) as e:
             reason = f"servidor inacessível: {type(e).__name__}"
@@ -184,7 +202,8 @@ async def load_gateway_config(
         try:
             pm = _validate(cache["plant_map"], gateway_id, env)
             log.warning("remote_config.using_cache", url=url, reason=reason, fetched_at=cache.get("fetched_at"))
-            return LoadedConfig(pm, "cache", cache.get("revision"), reason)
+            return LoadedConfig(pm, "cache", cache.get("revision"), reason,
+                                config_version=_version(cache.get("config_version")))
         except PlantMapError as e:
             log.warning("remote_config.cache_invalid", error=str(e))
     if fallback_path:

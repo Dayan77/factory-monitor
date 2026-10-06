@@ -61,6 +61,10 @@ class MaintenancePlan(Base, TimestampMixin):
     state:                Mapped[str]             = mapped_column(String(16), nullable=False, default="ok", server_default=text("'ok'"))
     consumed:             Mapped[Optional[float]] = mapped_column(Float(precision=53), nullable=True)
     evaluated_at:         Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sprint 5 (predictive.md P-9): gatilho de condição {feature, min_severity}; vencimento por condição
+    condition_trigger:    Mapped[Optional[dict]]  = mapped_column(JSONB, nullable=True)
+    condition_due_date:   Mapped[Optional[date]]  = mapped_column(Date, nullable=True)
+    condition_alert_id:   Mapped[Optional[str]]   = mapped_column(UUID(as_uuid=False), nullable=True)
     created_by:           Mapped[Optional[str]]   = mapped_column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
@@ -114,6 +118,11 @@ class WorkOrder(Base, TimestampMixin):
     # instante da última transição de estado (validação de `at` retroativo)
     state_changed_at:  Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     overdue_notified_on: Mapped[Optional[date]]   = mapped_column(Date, nullable=True)
+    # Sprint 5 (predictive.md P-9): OS preditiva gerada de um alerta; achado na conclusão; reinício da linha de base
+    source_alert_id:   Mapped[Optional[str]]      = mapped_column(UUID(as_uuid=False), ForeignKey("predictive_alerts.id", ondelete="SET NULL"), nullable=True, index=True)
+    finding:           Mapped[Optional[str]]      = mapped_column(String(24), nullable=True)
+    resets_baseline:   Mapped[Optional[bool]]     = mapped_column(Boolean, nullable=True)
+    due_by:            Mapped[Optional[date]]     = mapped_column(Date, nullable=True)
 
 
 class WorkOrderHistory(Base):

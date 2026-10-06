@@ -3,7 +3,7 @@ from typing import Optional
 import enum
 
 from sqlalchemy import String, Boolean, Float, Integer, BigInteger, ForeignKey, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
 
@@ -72,6 +72,10 @@ class Tag(Base, TimestampMixin):
     counter_max:      Mapped[Optional[int]]  = mapped_column(BigInteger, nullable=True)
     # Contagens/s máximas plausíveis (filtro §3.3 regra 4). Nulo → 2 / ideal_cycle_time da máquina.
     max_rate_per_s:   Mapped[Optional[float]]= mapped_column(Float, nullable=True)
+    # Sprint 5 — gateway de campo que lê esta tag (mapa remoto) e os campos de borda do mapa v1
+    # (source, key, unit_id, register_type, data_type_plc, word_order, signal_role): edge/src/plant_map.py
+    gateway_id:       Mapped[Optional[str]]  = mapped_column(UUID(as_uuid=False), ForeignKey("gateways.id", ondelete="SET NULL"), nullable=True, index=True)
+    edge:             Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     tenant  = relationship("Tenant",  back_populates="tags")
     machine = relationship("Machine", back_populates="tags")

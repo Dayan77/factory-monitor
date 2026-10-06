@@ -129,6 +129,11 @@ async def management_kpis(db: AsyncSession, tenant_id: str, plant_id: Optional[s
         "overdue_count": bl["overdue_count"], "overdue_hours": bl["overdue_hours"], "overdue_ids": bl["overdue_ids"],
         "drafts_not_in_backlog": bl["drafts_not_in_backlog"], "requests_pending": bl["requests_pending"],
         "work_order_numbers": numbers,
+        # predictive.md P-9: cost of predictive false alarms, shown apart (PMP formula unchanged)
+        "predictive_no_defect_hours": sum(float(w.labor_hours or 0.0) for w in wos
+                                          if w.type == "predictive" and w.state in ("completed", "closed")
+                                          and w.finding == "no_defect" and w.completed_at is not None
+                                          and start <= w.completed_at < stop),
     }
 
 

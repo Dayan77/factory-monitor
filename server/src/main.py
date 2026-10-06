@@ -15,7 +15,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from .config import settings
 from .api.routes import (auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras,
                          plants, positions, components, usage, public, production, oee, maintenance,
-                         notifications, integration, users)
+                         notifications, integration, users, gateways, predictive)
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber, cancel_inflight
 from .services.oee.detector import run_downtime_detector
@@ -23,6 +23,7 @@ from .services.machine_status import run_offline_sweeper
 from .services.influx import influx
 from .services.usage.broadcaster import usage_broadcaster
 from .services.maintenance.engine import run_maintenance_engine, run_webhook_worker
+from .services.predictive.engine import run_predictive_engine
 
 # LOG_LEVEL (default INFO): structlog printed every level, i.e. one DEBUG line per MQTT reading.
 _level = logging.getLevelName(settings.log_level.upper())
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"),
         asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
     ]
+    if settings.predictive_enabled:
+        tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
 
     yield
 
@@ -133,6 +136,8 @@ app.include_router(notifications.router,        prefix="/api/notifications",    
 app.include_router(notifications.push_router,   prefix="/api/push",                tags=["notifications"])
 app.include_router(integration.tokens_router,   prefix="/api/api-tokens",          tags=["integration"])
 app.include_router(integration.webhooks_router, prefix="/api/webhooks",            tags=["integration"])
+app.include_router(gateways.router,             prefix="/api/gateways",            tags=["gateways"])
+app.include_router(predictive.router,           prefix="/api/predictive",          tags=["predictive"])
 
 app.include_router(ws_router, prefix="/ws")
 

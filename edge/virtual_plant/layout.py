@@ -325,6 +325,14 @@ PLANTA_MANAUS = PlantLayout(
                         _cyl("A2", "VP-FIX-A2-0001"),
                         _cyl("A3", "VP-FIX-A3-0001"),
                         _cyl("A4", "VP-FIX-A4-0001"),
+                        # Sprint 5 (preditiva, cenário F1): cilindro novo em terminal de válvulas inteligente que
+                        # mede o tempo de curso a cada golpe e tem contador próprio de 32 bits.
+                        Position(
+                            name="Cilindro B3", component_type="pneumatic_cylinder",
+                            component=Component("Festo", "DSBC-50-100-PPVA-N3", "VP-FIX-B3-0001",
+                                                _life(cycles=8_000_000)),
+                            counter_signal="b3.cycles",
+                        ),
                     ),
                     signals=(
                         Signal("run_state", "Em operação", "run_state", "bool", poll_interval_ms=500),
@@ -346,6 +354,11 @@ PLANTA_MANAUS = PlantLayout(
                         )),
                         _product_signal(),
                         *_flow_signals(),
+                        # Sprint 5: cilindro B3 (perfil lento de degradação até a falha, predictive.md P-11)
+                        Signal("b3.cycles", "Cilindro B3 — ciclos (terminal de válvulas)", "cycle_counter",
+                               "counter32", "ciclos", position="Cilindro B3"),
+                        Signal("b3.stroke_time", "Cilindro B3 — tempo de curso", "stroke_time", "float", "ms",
+                               position="Cilindro B3", scale=0.1),
                     ),
                 ),
                 Machine(
@@ -355,6 +368,11 @@ PLANTA_MANAUS = PlantLayout(
                     positions=(
                         Position("Motor do transportador", "electric_motor",
                                  Component("WEG", "W22 2 cv + redutor", "VP-TRP-MOT-0001",
+                                           _life(hours=30_000, starts=200_000))),
+                        # Sprint 5 (preditiva, cenário F2): motor da segunda esteira com módulo de condição
+                        # (corrente RMS, vibração RMS e pico de velocidade calculados no sensor)
+                        Position("Motor B", "electric_motor",
+                                 Component("WEG", "W22 3 cv + redutor", "VP-TRP-MOTB-0001",
                                            _life(hours=30_000, starts=200_000))),
                     ),
                     signals=(
@@ -371,6 +389,15 @@ PLANTA_MANAUS = PlantLayout(
                         # Sprint 4: vibração do mancal (desgaste do rolamento, wear.py); bruto × 0,01 mm/s
                         Signal("motor.vibration", "Motor — vibração", "analog", "float", "mm/s",
                                position="Motor do transportador", scale=0.01),
+                        # Sprint 5: Motor B (corrente sobe com a carga do produto, sem falha — predictive.md P-11)
+                        Signal("motor_b.run", "Motor B — em operação", "run_state", "bool",
+                               position="Motor B", poll_interval_ms=500),
+                        Signal("motor_b.current", "Motor B — corrente RMS", "current", "float", "A",
+                               position="Motor B", scale=0.01),
+                        Signal("motor_b.vibration", "Motor B — vibração RMS", "analog", "float", "mm/s",
+                               position="Motor B", scale=0.01),
+                        Signal("motor_b.vibration_peak", "Motor B — vibração (pico)", "analog", "float", "mm/s",
+                               position="Motor B", scale=0.01),
                     ),
                 ),
             ),
@@ -426,7 +453,8 @@ WEAR_FAULT_CODES: dict[str, dict[int, str]] = {
     "usinagem.centro": {214: "Rolamento do motor da bomba de refrigeração travando",
                         524: "Ferramenta no fim de vida (desgaste)"},
     "montagem.robo": {131 + n: f"Folga excessiva no redutor do eixo {n}" for n in range(1, 7)},
-    "montagem.fixacao": {443 + i: f"Vazamento na vedação do cilindro A{i + 1}" for i in range(4)},
+    "montagem.fixacao": {**{443 + i: f"Vazamento na vedação do cilindro A{i + 1}" for i in range(4)},
+                         447: "Cilindro B3 — tempo de curso acima do limite (vedação gasta)"},
     "montagem.transportador": {252: "Rolamento do motor travando (proteção do motor)"},
 }
 
@@ -464,14 +492,20 @@ def signal_key(line: Line, machine: Machine, signal: Signal) -> str:
     return f"{line.key}.{machine.key}.{signal.suffix}"
 
 
-def addresses(layout: PlantLayout = PLANTA_MANAUS, ns_index: int = 2) -> list[Address]:
-    """Endereço de cada sinal, em ordem de declaração (determinístico)."""
+def addresses(layout: PlantLayout = PLANTA_MANAUS, ns_index: int = 2,
+              opcua_machines: frozenset[str] | set[str] | tuple = ()) -> list[Address]:
+    """Endereço de cada sinal, em ordem de declaração (determinístico).
+
+    `opcua_machines` ("montagem.fixacao", ...): máquinas Modbus servidas em OPC UA (NodeId = chave do sinal) —
+    usado no playback do cenário F, que precisa do SourceTimestamp (relógio do cenário) que o Modbus não tem. O
+    bit de fim de curso (`cycle_pulse`) continua em Modbus (trem de pulsos, contagem de borda no edge)."""
     out: list[Address] = []
     for line, m in layout.machines():
         di = hr = 0
+        mkey = f"{line.key}.{m.key}"
         for s in m.signals:
             key = signal_key(line, m, s)
-            if m.protocol == "opcua":
+            if m.protocol == "opcua" or (mkey in opcua_machines and s.role != "cycle_pulse"):
                 out.append(Address(key, line, m, s, "opcua", node_id=f"ns={ns_index};s={key}"))
                 continue
             if s.kind == "bool":
@@ -505,10 +539,15 @@ def build_plant_map(
     pulse_poll_ms: int = 20,
     heartbeat_s: float = 10.0,
     shifts: Optional[tuple[ShiftDef, ...]] = None,
+    opcua_machines: frozenset[str] | set[str] | tuple = (),
+    installed_at: Optional[dict[tuple[str, str], str]] = None,
 ) -> dict:
     """Mapa de dispositivos/tags consumido pelo gateway (edge/src/plant_map.py) e pelo provisionamento.
     `shifts` substitui o calendário do layout (ex.: o turno de um cenário de ouro, para o servidor ter as
-    mesmas pausas planejadas que o cenário)."""
+    mesmas pausas planejadas que o cenário). `installed_at` {(chave da máquina, posição): ISO-8601}: data de
+    instalação do componente (o provisionamento a usa ao instalar — cenário F: instalação no relógio do playback,
+    que é o início da linha de base da preditiva)."""
+    installed_at = installed_at or {}
     shifts = layout.shifts if shifts is None else shifts
     lines = []
     for line in layout.lines:
@@ -531,13 +570,15 @@ def build_plant_map(
                         "manufacturer": p.component.manufacturer, "model": p.component.model,
                         "serial_number": p.component.serial_number,
                         "nominal_life": dict(p.component.nominal_life),
+                        **({"installed_at": installed_at[(f"{line.key}.{m.key}", p.name)]}
+                           if (f"{line.key}.{m.key}", p.name) in installed_at else {}),
                     },
                 } for p in m.positions],
             })
         lines.append({"name": line.name, "output_machine": line.output_machine, "machines": machines})
 
     tags = []
-    for a in addresses(layout):
+    for a in addresses(layout, opcua_machines=opcua_machines):
         s = a.signal
         tag = {
             "key": a.key,

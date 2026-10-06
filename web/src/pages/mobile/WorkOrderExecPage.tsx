@@ -10,6 +10,10 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { Progress } from "@/components/ui/LifeBar";
 import { OverdueBadge, WoStateBadge, WoTypeBadge } from "@/components/maintenance/badges";
 import FailureForm from "@/components/maintenance/FailureForm";
+import WoPredictiveBlock from "@/components/predictive/WoPredictiveBlock";
+import { useAlert } from "@/hooks/usePredictive";
+import { COMPATIBLE_MODES } from "@/utils/predictive";
+import type { WoFinding } from "@/services/maintenanceTypes";
 import { transitionErrorMessage } from "@/components/maintenance/transitionError";
 import { BigChoice, HoursStepper, ScanInput } from "@/components/mobile/inputs";
 import { useEffectiveWorkOrder, useOnline, useQueueState, useTechAction, useTechWorkOrder } from "@/hooks/useTechnician";
@@ -137,6 +141,12 @@ export default function WorkOrderExecPage() {
         {notice?.text}
       </p>
 
+      {wo.source_alert_id && (
+        <Block title="Por que esta OS existe (preditiva)">
+          <WoPredictiveBlock alertId={wo.source_alert_id} online={online} />
+        </Block>
+      )}
+
       {(wo.state === "scheduled" || wo.state === "open") && wo.position_id && (
         <Block title="Conferir posição">
           <ScanInput id="pos-check" label="QR da etiqueta da posição" value={checked} onChange={setChecked}
@@ -237,10 +247,10 @@ export default function WorkOrderExecPage() {
 
       <PauseSheet open={sheet === "pause"} wo={wo} onClose={() => setSheet(null)}
         onSubmit={(body) => void run({ kind: "transition", wo, body: { to: "on_hold", ...body } }, "OS pausada.").then((ok) => ok && setSheet(null))} />
-      <CompleteSheet open={sheet === "complete"} wo={wo} onClose={() => setSheet(null)}
-        onSubmit={async (hours, note) => {
+      <CompleteSheet open={sheet === "complete"} wo={wo} online={online} onClose={() => setSheet(null)}
+        onSubmit={async (hours, note, extra) => {
           if (hours > 0 && !(await run({ kind: "labor", wo, body: { hours, note: note || null } }, "Horas apontadas."))) return;
-          if (await run({ kind: "transition", wo, body: { to: "completed", note: note || null } }, "OS concluída.")) {
+          if (await run({ kind: "transition", wo, body: { to: "completed", note: note || null, ...extra } }, "OS concluída.")) {
             setSheet(null);
           }
         }} />
@@ -277,19 +287,97 @@ function PauseSheet({ open, wo, onClose, onSubmit }: { open: boolean; wo: WorkOr
   );
 }
 
-function CompleteSheet({ open, wo, onClose, onSubmit }: { open: boolean; wo: WorkOrder; onClose: () => void; onSubmit: (hours: number, note: string) => Promise<void> }) {
+const FINDINGS: { value: WoFinding; label: string }[] = [
+  { value: "defect_confirmed", label: "Defeito confirmado (degradação encontrada)" },
+  { value: "no_defect", label: "Sem defeito (componente em bom estado)" },
+];
+const DEFECT_SEVERITIES: { value: "incipient" | "degraded"; label: string }[] = [
+  { value: "incipient", label: "Incipiente (início de desgaste)" },
+  { value: "degraded", label: "Degradada (perda parcial de função)" },
+];
+
+type CompleteExtra = { finding?: WoFinding; resets_baseline?: boolean };
+
+function CompleteSheet({ open, wo, online, onClose, onSubmit }: { open: boolean; wo: WorkOrder; online: boolean; onClose: () => void; onSubmit: (hours: number, note: string, extra: CompleteExtra) => Promise<void> }) {
   const [hours, setHours] = useState(0);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const predictive = !!wo.source_alert_id;
+  const [finding, setFinding] = useState<WoFinding | "">("");
+  const [mode, setMode] = useState("");
+  const [sev, setSev] = useState<"incipient" | "degraded" | "">("");
+  const [resets, setResets] = useState(true);
+  const [err, setErr] = useState("");
+  const alert = useAlert(predictive && open && online ? wo.source_alert_id ?? null : null);
+  const modes = alert.data ? COMPATIBLE_MODES[alert.data.feature] : [];
   const since = useMemo(() => [...(wo.history ?? [])].reverse().find((h) => h.to_state === "in_progress")?.at ?? wo.started_at, [wo]);
-  useEffect(() => { if (open) { setHours(elapsedSinceResume(wo, Date.now())); setNote(""); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (open) {
+      setHours(elapsedSinceResume(wo, Date.now())); setNote(""); setFinding(wo.finding ?? ""); setMode(""); setSev(""); setErr("");
+      setResets(wo.resets_baseline ?? (wo.type === "predictive" || wo.type === "corrective" || wo.replacements.length > 0));
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const undone = wo.task_list.filter((t) => !t.done).length;
+  const showResets = !!wo.position_id && (wo.type === "predictive" || wo.type === "corrective" || wo.replacements.length > 0);
+
+  async function submit() {
+    setErr("");
+    if (predictive && !finding) { setErr("Informe o achado da inspeção preditiva."); return; }
+    if (predictive && finding === "defect_confirmed") {
+      if (!online) { setErr("Registrar o defeito exige conexão."); return; }
+      if (!mode || !sev) { setErr("Informe o modo de falha e a severidade do defeito."); return; }
+    }
+    setBusy(true);
+    try {
+      if (predictive && finding === "defect_confirmed" && wo.machine_id) {
+        try {
+          await failuresApi.create({
+            machine_id: wo.machine_id, position_id: wo.position_id, failed_at: new Date().toISOString(), severity: sev,
+            failure_mode: mode, detection_method: "continuous_condition_monitoring", work_order_id: wo.id,
+            note: note.trim() || "Defeito confirmado na OS preditiva",
+          });
+        } catch (e) {
+          setErr(apiErrorMessage(e, "Não foi possível registrar o defeito."));
+          return;
+        }
+      }
+      const extra: CompleteExtra = {};
+      if (predictive && finding) extra.finding = finding;
+      if (showResets) extra.resets_baseline = resets;
+      await onSubmit(hours, note.trim(), extra);
+    } finally { setBusy(false); }
+  }
+
   return (
     <Sheet open={open} onClose={onClose} title="Concluir OS"
-      footer={<button type="button" disabled={busy} onClick={async () => { setBusy(true); try { await onSubmit(hours, note.trim()); } finally { setBusy(false); } }}
+      footer={<button type="button" disabled={busy} onClick={() => void submit()}
         className="min-h-14 w-full rounded-xl bg-accent text-heading font-bold text-accent-fg disabled:opacity-50">Concluir OS</button>}>
       <div className="space-y-5">
         {undone > 0 && <p role="alert" className="rounded-xl bg-warn-solid/10 px-3 py-2 text-body text-warn">{undone} item(ns) do checklist não marcado(s).</p>}
+        {predictive && (
+          <div className="space-y-4" data-testid="complete-finding">
+            <BigChoice name="finding" legend="Achado da inspeção preditiva (obrigatório)" options={FINDINGS} value={finding} onChange={setFinding} />
+            {finding === "defect_confirmed" && (
+              <>
+                <Field label="Modo de falha (ISO 14224)" htmlFor="pred-mode" hint="Compatível com o sinal que gerou o alerta.">
+                  <select id="pred-mode" value={mode} onChange={(e) => setMode(e.target.value)} className={inputClass} disabled={!modes.length}>
+                    <option value="">{modes.length ? "Escolha…" : "Carregando…"}</option>
+                    {modes.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </Field>
+                <BigChoice name="defect-sev" legend="Severidade do defeito" options={DEFECT_SEVERITIES} value={sev} onChange={setSev} />
+                <p className="text-caption text-fg-subtle">Registra a falha (detectada por monitoramento de condição). Falha incipiente não entra no MTBF.</p>
+              </>
+            )}
+          </div>
+        )}
+        {showResets && (
+          <label className="flex min-h-12 items-center gap-3 rounded-xl border-2 border-line px-3 text-body text-fg">
+            <input type="checkbox" checked={resets} onChange={(e) => setResets(e.target.checked)} className="size-5" />
+            A condição do componente mudou (troca/reparo): reiniciar a referência da preditiva
+          </label>
+        )}
+        {err && <p role="alert" className="rounded-xl bg-danger-solid/10 px-3 py-2 text-body text-danger">{err}</p>}
         <HoursStepper id="complete-hours" label="Horas trabalhadas nesta sessão" value={hours} onChange={setHours} />
         <p className="text-caption text-fg-subtle">Pré-preenchido pelo tempo em execução{since ? ` desde ${formatDateTime(since)}` : ""}. Já apontadas: {hoursLabel(wo.labor_hours)}. Ajuste se necessário.</p>
         <Field label="Observação (opcional)" htmlFor="complete-note">

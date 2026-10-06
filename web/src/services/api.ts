@@ -130,10 +130,6 @@ export const sensorsApi = {
     }),
 };
 
-export const aiApi = {
-  chat: (message: string) => api.post<{ reply: string }>("/api/ai/chat", { message }),
-};
-
 export const camerasApi = {
   list:   (machineId?: string) =>
     api.get<Camera[]>("/api/cameras/", { params: machineId ? { machine_id: machineId } : undefined }),

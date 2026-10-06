@@ -7,6 +7,7 @@
  *   {type: "usage", position_id|null, machine_id|null, measure, delta, total, timestamp}
  *   {type: "downtime", action, event: {id, machine_id, start, end, duration_s, reason_code, ...}}
  *   {type: "notification", notification: {id, type, title, body, url, severity, created_at, read_at, ...}}
+ *   {type: "predictive_alert", event, alert: {id, severity, state, position_id, machine_id, ...}}
  * Legacy sensor messages without `type` are accepted as readings.
  */
 
@@ -83,6 +84,22 @@ export function parseRealtimeMessage(raw: string): RealtimeMessage | null {
   if (data.type === "notification") {
     const notification = parseNotification(data.notification);
     return notification ? { type: "notification", notification } : null;
+  }
+
+  if (data.type === "predictive_alert") {
+    const a = data.alert;
+    if (!isRecord(a) || typeof a.id !== "string") return null;
+    return {
+      type: "predictive_alert",
+      event: optString(data.event),
+      alert: {
+        id: a.id,
+        severity: typeof a.severity === "string" ? a.severity : "watch",
+        state: typeof a.state === "string" ? a.state : "open",
+        position_id: optString(a.position_id),
+        machine_id: optString(a.machine_id),
+      },
+    };
   }
 
   if (data.type === undefined || data.type === "sensor_reading") {

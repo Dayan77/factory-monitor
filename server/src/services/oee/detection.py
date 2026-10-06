@@ -52,13 +52,14 @@ class SignalState:
     down_since: Optional[datetime] = None
     stop_fault: Optional[int] = None
     stop_fault_since: Optional[datetime] = None
+    stop_fault_until: Optional[datetime] = None   # S5-1: when that fault went back to 0 (None = still active)
 
     def to_json(self) -> dict:
         iso = lambda d: d.isoformat() if d else None  # noqa: E731
         return {"run": self.run, "fault": self.fault, "fault_since": iso(self.fault_since),
                 "last_cycle": iso(self.last_cycle), "last_data": iso(self.last_data), "at": iso(self.at),
                 "down_since": iso(self.down_since), "stop_fault": self.stop_fault,
-                "stop_fault_since": iso(self.stop_fault_since)}
+                "stop_fault_since": iso(self.stop_fault_since), "stop_fault_until": iso(self.stop_fault_until)}
 
     @classmethod
     def from_json(cls, d: Optional[dict]) -> "SignalState":
@@ -68,7 +69,7 @@ class SignalState:
         return cls(run=d.get("run"), fault=float(d.get("fault") or 0.0), fault_since=p("fault_since"),
                    last_cycle=p("last_cycle"), last_data=p("last_data"), at=p("at"),
                    down_since=p("down_since"), stop_fault=int(sf) if sf is not None else None,
-                   stop_fault_since=p("stop_fault_since"))
+                   stop_fault_since=p("stop_fault_since"), stop_fault_until=p("stop_fault_until"))
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class Stop:
     seen_end: datetime                    # end, or `now` while open
     fault_code: Optional[int] = None
     fault_since: Optional[datetime] = None
+    fault_until: Optional[datetime] = None  # S5-1: the attributed fault went back to 0 here (None = active / unknown)
     ended_by_nodata: bool = False
     final: bool = False
     source: str = "auto_run_state"
@@ -139,6 +141,17 @@ def _attribute(fault_pts: list[tuple[datetime, float, Optional[datetime]]], star
         if v != 0 and (ts < end or (inclusive and ts <= end)) and (nxt is None or nxt > start):
             return int(v), max(fsince or ts, start)
     return None, None
+
+
+def _fault_clear(fault_pts: list[tuple[datetime, float, Optional[datetime]]], since: Optional[datetime],
+                 end: datetime) -> Optional[datetime]:
+    """First instant after `since` (≤ end) at which fault_state is back to 0."""
+    if since is None:
+        return None
+    for ts, v, _ in fault_pts:
+        if ts > since and ts <= end and v == 0:
+            return ts
+    return None
 
 
 def detect(initial: SignalState, readings: Iterable[Reading], now: datetime, p: Params,
@@ -240,9 +253,11 @@ def detect(initial: SignalState, readings: Iterable[Reading], now: datetime, p: 
     for s in stops:
         if s is resumed and initial.stop_fault is not None:
             code, since = initial.stop_fault, initial.stop_fault_since
+            until = initial.stop_fault_until or _fault_clear(fault_pts, since, s.seen_end)
         else:
             code, since = _attribute(fault_pts, s.start, s.seen_end)
-        s.fault_code, s.fault_since = code, since
+            until = _fault_clear(fault_pts, since, s.seen_end)
+        s.fault_code, s.fault_since, s.fault_until = code, since, until
         s.source = "auto_fault" if code is not None else ("auto_run_state" if p.mode == "run" else "auto_cycle_gap")
         if s.end is None:
             s.final = False
@@ -273,9 +288,12 @@ def detect(initial: SignalState, readings: Iterable[Reading], now: datetime, p: 
                 continue                  # running inside a merged stop: resuming here would split it
             if inside is resumed and initial.stop_fault is not None:
                 code, since = initial.stop_fault, initial.stop_fault_since
+                until = initial.stop_fault_until or _fault_clear(fault_pts, since, at)
             else:
                 code, since = _attribute(fault_pts, inside.start, at, inclusive=True)
-            cp_state = replace(snap, down_since=inside.start, stop_fault=code, stop_fault_since=since)
+                until = _fault_clear(fault_pts, since, at)
+            cp_state = replace(snap, down_since=inside.start, stop_fault=code, stop_fault_since=since,
+                               stop_fault_until=until)
         else:
             if p.mode == "cycle" and (snap.last_cycle is None or at - snap.last_cycle > pri):
                 continue                  # a cycle gap starting before `at` may still turn into a stop
@@ -328,6 +346,11 @@ def segments(stop: Stop, cal: Calendar, now: datetime) -> list[EventSegment]:
         adot = total_s(unplanned)
         if adot <= 0:
             continue
+        # Sprint 5 (kpis.md "Decisões Sprint 5" S5-1): an equipment-fault stop that began inside a planned break
+        # covers only the productive part — the event starts when the break ends (the break stays PDOT either
+        # way). Other stops keep the Sprint 3 shape (event from the stop start, break part counted as PDOT).
+        if stop.fault_code is not None:
+            a = min(s for s, _ in unplanned)
         open_seg = stop.end is None and inst.end > end
         out.append(EventSegment(a, None if open_seg else b, stop.start, inst.shift_id, inst.productive_day,
                                 adot, total_s(intersect([(a, b)], brk))))
@@ -380,3 +403,19 @@ def classify_cycle_gaps(ideal_cycle_s: float, threshold_s: float, gaps_s: Iterab
 
 def with_end(s: Stop, end: datetime) -> Stop:
     return replace(s, end=end, seen_end=end)
+
+
+def productive_at(cal: Calendar, ts: datetime) -> bool:
+    """`ts` is planned production time: inside a shift instance and outside its breaks / planned stops."""
+    inst = cal.instance_at(ts)
+    return inst is not None and not any(a <= ts < b for a, b in inst.break_intervals())
+
+
+def restoration(stop: Stop, cal: Calendar) -> Optional[datetime]:
+    """restored_at of the failure of an EQP stop. D1: end of the stop (back to running). S5-1: a fault that clears
+    while there is no production time (planned break / off-shift) is restored when it clears — nobody restarts
+    the machine before production time resumes, and that wait is not repair time (MTTR is clock time from
+    failed_at to restoration)."""
+    if stop.fault_until is not None and not productive_at(cal, stop.fault_until):
+        return stop.fault_until
+    return None if (stop.end is None or stop.ended_by_nodata) else stop.end

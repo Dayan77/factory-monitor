@@ -10,8 +10,11 @@ AES-256-GCM envelope — see edge/src/security/payload_crypto.py for the exact f
 """
 
 import json
+import os
 import ssl
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiomqtt
@@ -24,12 +27,76 @@ log = structlog.get_logger()
 PAYLOAD_VERSION = 1
 
 
-def tls_context(ca_cert: str = "") -> ssl.SSLContext:
-    """Client TLS context: system CAs, or the PEM bundle at `ca_cert`. Hostname checked."""
+def tls_context(ca_cert: str = "", client_cert: str = "", client_key: str = "") -> ssl.SSLContext:
+    """Client TLS context: system CAs, or the PEM bundle at `ca_cert`. Hostname checked; TLS ≥ 1.2.
+    `client_cert` + `client_key` (PEM): mutual TLS, for brokers that authenticate gateways by certificate."""
     ctx = ssl.create_default_context(cafile=ca_cert or None)
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    if client_cert:
+        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key or None)
     return ctx
+
+
+class MqttTlsError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class MqttTlsConfig:
+    """TLS settings of the broker connection (env MQTT_TLS, MQTT_CA_CERT, MQTT_CLIENT_CERT, MQTT_CLIENT_KEY)."""
+    enabled: bool = False
+    ca_cert: str = ""
+    client_cert: str = ""
+    client_key: str = ""
+    warnings: tuple[str, ...] = ()
+
+    def context(self) -> Optional[ssl.SSLContext]:
+        return tls_context(self.ca_cert, self.client_cert, self.client_key) if self.enabled else None
+
+
+def _readable_file(path: str, what: str) -> str:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise MqttTlsError(f"{what}: arquivo não encontrado: {path}")
+    if not os.access(p, os.R_OK):
+        raise MqttTlsError(f"{what}: sem permissão de leitura: {path}")
+    return str(p)
+
+
+def parse_tls_settings(enabled, ca_cert: str = "", client_cert: str = "", client_key: str = "") -> MqttTlsConfig:
+    """Validates the TLS settings at startup (never falls back to plaintext): files must exist; a client
+    certificate needs its key; TLS options without MQTT_TLS=true are reported (likely a mistake)."""
+    if isinstance(enabled, str):
+        txt = enabled.strip().lower()
+        if txt not in ("1", "true", "yes", "on", "0", "false", "no", "off", ""):
+            raise MqttTlsError(f"MQTT_TLS inválido: {enabled!r} (use true/false)")
+        enabled = txt in ("1", "true", "yes", "on")
+    ca_cert, client_cert, client_key = (x.strip() for x in (ca_cert or "", client_cert or "", client_key or ""))
+    if not enabled:
+        given = [n for n, v in (("MQTT_CA_CERT", ca_cert), ("MQTT_CLIENT_CERT", client_cert),
+                                ("MQTT_CLIENT_KEY", client_key)) if v]
+        warn = (f"{', '.join(given)} definido(s) com MQTT_TLS=false: conexão SEM TLS",) if given else ()
+        return MqttTlsConfig(False, warnings=warn)
+    if bool(client_cert) != bool(client_key):
+        raise MqttTlsError("MQTT_CLIENT_CERT e MQTT_CLIENT_KEY vão juntos (TLS mútuo)")
+    return MqttTlsConfig(
+        True,
+        ca_cert=_readable_file(ca_cert, "MQTT_CA_CERT") if ca_cert else "",
+        client_cert=_readable_file(client_cert, "MQTT_CLIENT_CERT") if client_cert else "",
+        client_key=_readable_file(client_key, "MQTT_CLIENT_KEY") if client_key else "",
+    )
+
+
+def effective_port(port: Optional[int], tls: bool) -> int:
+    """MQTT_BROKER_PORT, or the standard port (8883 with TLS, 1883 without)."""
+    if port in (None, 0, ""):
+        return 8883 if tls else 1883
+    port = int(port)
+    if not 1 <= port <= 65535:
+        raise MqttTlsError(f"MQTT_BROKER_PORT inválida: {port}")
+    return port
 
 
 def format_ts(ts: datetime) -> str:
@@ -50,6 +117,7 @@ class MqttPublisher:
         encryption_key: str = "",
         tls: bool = False,
         ca_cert: str = "",
+        tls_config: Optional[MqttTlsConfig] = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -57,7 +125,9 @@ class MqttPublisher:
         self._password = password or None
         # TLS (broker of production on 8883): verified certificate + host name; a missing/invalid CA
         # file fails at startup (never silently falls back to plaintext).
-        self._tls_context: Optional[ssl.SSLContext] = tls_context(ca_cert) if tls else None
+        if tls_config is None:
+            tls_config = MqttTlsConfig(bool(tls), ca_cert=ca_cert)
+        self._tls_context: Optional[ssl.SSLContext] = tls_config.context()
         # Raises ValueError on a malformed key: fail at startup, never publish in clear by mistake.
         self._cipher: Optional[PayloadCipher] = PayloadCipher.from_setting(encryption_key)
         self._client: Optional[aiomqtt.Client] = None

@@ -69,7 +69,7 @@ TOOLS = {
     "usinagem.torno.tool": ("usinagem.torno", "Eixo-árvore", 523, 800.0, 4.0),
     "usinagem.centro.tool": ("usinagem.centro", "Eixo-árvore", 524, 380.0, 4.0),
 }
-SEAL_CODES = {"A1": 443, "A2": 444, "A3": 445, "A4": 446}
+SEAL_CODES = {"A1": 443, "A2": 444, "A3": 445, "A4": 446, "B3": 447}
 
 def weibull_life(rng: random.Random, eta: float, beta: float, age: float = 0.0) -> float:
     """Vida até a falha ~ Weibull(η, β) condicionada a ter sobrevivido até `age`."""
@@ -95,6 +95,8 @@ class WearItem:
     failures: list = field(default_factory=list)
     installs: list = field(default_factory=list)
     starts: int = 0
+    installed_s: float = 0.0            # instante (s simulados) da instalação atual
+    onset_s: Optional[float] = None     # início da degradação na instalação atual (predictive.md P-11)
     _running: bool = False
 
     def rng(self, *suffix) -> random.Random:
@@ -173,6 +175,15 @@ class WearModel:
 
     # ── instalação ─────────────────────────────────────────────────────
     def _init_seal(self, it: WearItem, c: "Cylinder", original: bool) -> None:
+        if c.failure_frac is not None:
+            # perfil lento determinístico (B3, predictive.md P-11): falha quando a deriva nominal chega a
+            # failure_frac · base, depois de `onset_strokes` golpes saudáveis; a troca reinstala o mesmo perfil
+            c.leak_threshold_ms = c.failure_frac * c.base_ms
+            rate = c.degrade_ms_per_kcycle / 1000.0
+            life = c.onset_strokes + c.leak_threshold_ms / rate if rate > 0 else math.inf
+            it.usage = float(c.strokes_since_install)
+            it.life = it.fail_at = life
+            return
         lo, hi = SEAL_LEAK_PCT
         rng = it.rng("seal")
         threshold = c.base_ms * rng.uniform(lo, hi)
@@ -197,6 +208,8 @@ class WearModel:
         it.usage = 0.0
         it.starts = 0
         it.failed = False
+        it.installed_s = round(now, 1)
+        it.onset_s = None
         if it.mode == "seal_leak":
             c = self._cyl[it.id]
             c.life_cycles = 0
@@ -236,6 +249,8 @@ class WearModel:
             for iid, c in self._cyl.items():
                 it = self.items[iid]
                 it.usage = float(c.life_cycles)
+                if it.onset_s is None and c.onset_strokes and c.degraded_strokes() > 0:
+                    it.onset_s = round(now, 1)
                 if it.usage >= it.fail_at:
                     self._fail(it, now)
         if cell.cycles_done != self._last_cell_cycles:
@@ -360,6 +375,51 @@ class WearModel:
 
     def status(self) -> dict:
         return {iid: self.item_status(iid) for iid in self.items}
+
+    # ── verdade de campo da preditiva (predictive.md P-11) ─────────────
+    def degradations(self) -> list[dict]:
+        """Um registro por (item, sinal) com degradação: perfil, início, falha (instalação atual) e estado."""
+        out = []
+        for iid, c in self._cyl.items():
+            it = self.items[iid]
+            if c.onset_strokes:
+                profile, onset = "linear_after_onset", it.onset_s
+                onset_usage: Optional[float] = float(c.onset_strokes)
+            else:
+                profile = "accelerated" if c.degrade_ms_per_kcycle > 0 else "linear_wear"
+                onset, onset_usage = it.installed_s, 0.0
+            out.append(self._degradation(it, "stroke_time", profile, onset, onset_usage, {
+                "base_ms": c.base_ms, "nominal_ms": round(c.nominal_stroke_ms(), 2),
+                "failure_limit_ms": round(c.base_ms + c.leak_threshold_ms, 2),
+                "iso14224_mode": "PDE" if c.onset_strokes else "ELP"}))
+        for it, _ in self._bearings:
+            for feature in ("vibration", "current"):
+                out.append(self._degradation(it, feature, "bearing_wear_quartic", it.installed_s, 0.0, {
+                    "iso14224_mode": "BRD", **(self.item_status(it.id).get("indicators") or {})}))
+        return out
+
+    def _degradation(self, it: WearItem, feature: str, profile: str, onset: Optional[float],
+                     onset_usage: Optional[float], extra: dict) -> dict:
+        fails = [f for f in it.failures if f["install_no"] == it.install_no]
+        if it.failed:
+            state = "failed"
+        elif onset is not None and (onset_usage is None or it.usage > onset_usage):
+            state = "degrading"
+        else:
+            state = "healthy"
+        return {"position": it.id, "machine": it.machine, "position_name": it.position, "feature": feature,
+                "profile": profile, "measure": it.measure, "install_no": it.install_no,
+                "installed_s": it.installed_s, "onset_s": onset, "onset_usage": onset_usage,
+                "failure_s": fails[0]["start_s"] if fails else None,
+                "failure_usage": None if math.isinf(it.fail_at) else round(it.fail_at, 3),
+                "usage": round(it.usage, 3), "remaining_usage": None if math.isinf(it.remaining)
+                else round(it.remaining, 3), "failure_code": it.code, "state": state, **extra}
+
+    def failures(self) -> list[dict]:
+        """Todas as falhas por desgaste já ocorridas (todas as instalações), em ordem de início."""
+        out = [{"position": it.id, "machine": it.machine, "position_name": it.position, "mode": it.mode, **f}
+               for it in self.items.values() for f in it.failures]
+        return sorted(out, key=lambda f: f["start_s"])
 
     def item_status(self, iid: str) -> dict:
         it = self.items[iid]

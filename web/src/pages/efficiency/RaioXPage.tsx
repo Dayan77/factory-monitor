@@ -1,5 +1,8 @@
 import { useMemo } from "react";
 import { OverdueWorkOrdersCard } from "@/components/maintenance/MaintenancePanels";
+import PredictiveCard from "@/components/predictive/PredictiveCard";
+import { useAuthStore } from "@/store/auth";
+import { can } from "@/utils/maintenance";
 import { Link, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -201,6 +204,24 @@ function NearEol({ data }: { data: Overview }) {
   );
 }
 
+/** Data freshness: an offline/degraded gateway means the numbers below may be late (never silent). */
+function GatewayWarning({ data, now }: { data: Overview; now: number }) {
+  const user = useAuthStore((s) => s.user);
+  const bad = (data.gateways ?? []).filter((g) => g.status === "offline" || g.status === "degraded");
+  if (!bad.length) return null;
+  return (
+    <div role="status" data-testid="raiox-gateway-warning" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warn-solid/40 bg-warn-solid/10 px-4 py-3 text-body text-fg">
+      <p>
+        {bad.map((g, i) => (
+          <span key={g.id}>{i > 0 && "; "}<strong>{g.name}</strong> {g.status === "offline" ? "offline" : "degradado"}{g.last_seen_at ? ` (visto ${formatAgo(secondsSince(g.last_seen_at, now) ?? 0)})` : ""}</span>
+        ))}
+        {" "}— os dados desta planta podem estar atrasados ou incompletos.
+      </p>
+      {can(user, "gateways.view") && <Link to="/settings/gateways" className="text-body font-medium text-ok hover:underline">Ver gateways ›</Link>}
+    </div>
+  );
+}
+
 export default function RaioXPage() {
   const { tree, plant } = usePlant();
   const overview = useOverview(plant?.id);
@@ -237,6 +258,7 @@ export default function RaioXPage() {
         <ErrorState title="Não foi possível calcular o Raio-X" error={overview.error} onRetry={() => void overview.refetch()} />
       ) : (
         <>
+          {data && <GatewayWarning data={data} now={now} />}
           <section aria-label="Linhas" >
             {!data ? (
               <LoadingRegion label="Calculando OEE das linhas…">
@@ -255,6 +277,7 @@ export default function RaioXPage() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             <MachinesInFault tree={plant} overview={data} now={now} />
+            <PredictiveCard />
             {data ? <TopLosses data={data} plantId={plant?.id} /> : <Skeleton className="h-64 rounded-xl" />}
             {data ? <NearEol data={data} /> : <Skeleton className="h-64 rounded-xl" />}
             <OverdueWorkOrdersCard />

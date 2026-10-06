@@ -27,6 +27,7 @@ const KPI_REFRESH_MS = 5000;
  *   event is new) and schedule a throttled refresh of the KPI views (overview / OEE / Pareto)
  * - notification messages are prepended to the cached ["notifications"] list (bell), emergency calls
  *   raise the full-screen alert, and work-order related ones refresh the ["maintenance"] queries
+ * - predictive_alert messages (Sprint 5) invalidate the ["predictive"] queries (alerts, monitors, Raio-X card)
  * - close 4401 (token expired/invalid): refresh the token through the API
  *   client (its 401 interceptor rotates it, or logs out) and reconnect
  * - close 4403 (token of another tenant): stop, never retry
@@ -115,6 +116,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           void qc.invalidateQueries({ queryKey: ["efficiency"] });
           void qc.invalidateQueries({ queryKey: ["maintenance"] });
           void qc.invalidateQueries({ queryKey: ["notifications"] });
+          void qc.invalidateQueries({ queryKey: ["predictive"] });
         }
         wasConnected = true;
       };
@@ -131,6 +133,10 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           applyDowntime(msg);
         } else if (msg.type === "notification") {
           applyNotification(msg.notification);
+        } else if (msg.type === "predictive_alert") {
+          // alert opened / escalated / closed: lists, details, monitors and the Raio-X card refetch
+          void qc.invalidateQueries({ queryKey: ["predictive"] });
+          if (msg.event === "converted" || msg.alert.state === "converted") void qc.invalidateQueries({ queryKey: ["maintenance"] });
         } else {
           qc.setQueriesData<Machine[]>({ queryKey: ["machines"] }, (old) => applyMachineStatus(old, msg));
           qc.setQueryData<TreePlant[]>(queryKeys.tree, (old) => applyMachineStatusToTree(old, msg));

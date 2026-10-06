@@ -117,6 +117,16 @@ const ICON_PHONE = (
       </svg>
     );
 const ICON_PLANS = ICON_CALENDAR;
+const ICON_PREDICTIVE = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M3 17l5-5 4 3 4-6" /><path d="M16 9h4v4" strokeDasharray="2 2" /><path d="M3 21h18" />
+      </svg>
+    );
+const ICON_GATEWAY = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 16.5h.01M11 16.5h.01" /><path d="M8 9a6 6 0 0 1 8 0M5.5 6.5a10 10 0 0 1 13 0" /><path d="M12 13v-2" />
+      </svg>
+    );
 
 interface NavItem { label: string; to: string; icon: JSX.Element; cap?: Capability }
 
@@ -137,6 +147,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: "Próximas manutenções", to: "/maintenance/upcoming", icon: ICON_WRENCH, cap: "maintenance.plan" },
       { label: "Ordens de serviço", to: "/maintenance/work-orders", icon: ICON_BOARD, cap: "maintenance.view" },
       { label: "Programação", to: "/maintenance/schedule", icon: ICON_CALENDAR, cap: "maintenance.plan" },
+      { label: "Preditiva", to: "/maintenance/predictive", icon: ICON_PREDICTIVE, cap: "predictive.view" },
       { label: "Componentes", to: "/maintenance/components", icon: ICON_LIFE, cap: "maintenance.plan" },
       { label: "Falhas", to: "/maintenance/failures", icon: ICON_FAILURE, cap: "maintenance.failures" },
       { label: "Gestão", to: "/maintenance/kpis", icon: ICON_KPI, cap: "maintenance.kpis" },
@@ -158,7 +169,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: "Sensores", to: "/sensors", icon: ICON_SENSORS },
       { label: "Câmeras", to: "/cameras", icon: ICON_CAMERAS },
       { label: "Alertas", to: "/alerts", icon: ICON_ALERTS },
-      { label: "IA & Chat", to: "/ai", icon: ICON_AI },
+      { label: "Assistente IA", to: "/ai", icon: ICON_AI },
     ],
   },
   {
@@ -166,6 +177,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS },
       { label: "Planos de manutenção", to: "/settings/maintenance-plans", icon: ICON_PLANS, cap: "maintenance.plan" },
+      { label: "Gateways", to: "/settings/gateways", icon: ICON_GATEWAY, cap: "gateways.view" },
     ],
   },
 ];

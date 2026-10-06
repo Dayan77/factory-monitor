@@ -37,23 +37,28 @@ class DeadbandFilter:
         self._last_ts: dict[str, float] = {}
 
     def should_publish(self, tag_id: str, value: float, bypass: bool = False,
-                       now: Optional[float] = None) -> bool:
+                       now: Optional[float] = None, force: bool = False,
+                       deadband_pct: Optional[float] = None) -> bool:
         """`now` (segundos): relógio da leitura para medir o silêncio (o gateway passa o timestamp da
         leitura, assim um dispositivo com relógio próprio — ex. playback acelerado — tem heartbeat no seu
-        tempo); padrão = relógio do filtro."""
+        tempo); padrão = relógio do filtro. `force`: publica mesmo sem mudança (evento por ciclo, ex. tempo de
+        curso de cada golpe). `deadband_pct`: banda desta tag (substitui a global)."""
         if isinstance(value, float) and math.isnan(value):
             return False  # never publish NaN (server rejects / corrupts aggregates)
 
         now = self._clock() if now is None else now
         last = self._last.get(tag_id)
-        if last is None:
+        band = self._deadband if deadband_pct is None else deadband_pct / 100.0
+        if last is None or force:
             changed = True
         elif bypass:
             changed = value != last
         elif last == 0:
             changed = value != 0
+        elif band == 0:
+            changed = value != last
         else:
-            changed = abs(value - last) / abs(last) >= self._deadband
+            changed = abs(value - last) / abs(last) >= band
 
         if not changed and self._max_silence is not None:
             changed = now - self._last_ts.get(tag_id, now) >= self._max_silence

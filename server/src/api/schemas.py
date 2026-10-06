@@ -272,6 +272,7 @@ class TagOut(BaseModel):
     position_id: Optional[str] = None
     counter_max: Optional[int] = None
     max_rate_per_s: Optional[float] = None
+    gateway_id: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -9,7 +9,7 @@
  */
 
 import type {
-  Overview, OverviewComponentNearEol, OverviewLine, OverviewMachineInError, OverviewWorstMachine, ParetoRow,
+  Overview, OverviewComponentNearEol, OverviewGateway, OverviewLine, OverviewMachineInError, OverviewWorstMachine, ParetoRow,
 } from "./types";
 
 type Rec = Record<string, unknown>;
@@ -119,5 +119,17 @@ export function normalizeOverview(raw: unknown): Overview {
     machines_in_error: arr(r.machines_in_error).map(machineInError).filter(notNull),
     components_near_eol: arr(r.components_near_eol ?? r.components_near_end).map(nearEol).filter(notNull)
       .sort((a, b) => b.life_consumed_pct - a.life_consumed_pct),
+    ...(Array.isArray(r.gateways) ? { gateways: arr(r.gateways).map(gateway).filter(notNull) } : {}),
+  };
+}
+
+const GW_STATUSES = ["pending", "online", "degraded", "offline"] as const;
+
+function gateway(v: unknown): OverviewGateway | null {
+  if (!isRec(v) || typeof v.id !== "string") return null;
+  const st = (GW_STATUSES as readonly string[]).includes(String(v.status)) ? (v.status as OverviewGateway["status"]) : "offline";
+  return {
+    id: v.id, name: str(v.name) ?? "Gateway", status: st, version: str(v.version),
+    last_seen_at: str(v.last_seen_at), config_version: typeof v.config_version === "number" ? v.config_version : null,
   };
 }

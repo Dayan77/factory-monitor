@@ -32,6 +32,8 @@ const FailuresPage = lazy(() => import("@/pages/maintenance/FailuresPage"));
 const PlansSettingsPage = lazy(() => import("@/pages/maintenance/PlansSettingsPage"));
 const KpisPage = lazy(() => import("@/pages/maintenance/KpisPage"));
 const ReliabilityPage = lazy(() => import("@/pages/maintenance/ReliabilityPage"));
+const PredictivePage = lazy(() => import("@/pages/maintenance/PredictivePage"));
+const GatewaysPage = lazy(() => import("@/pages/settings/GatewaysPage"));
 const MobileLayout = lazy(() => import("@/pages/mobile/MobileLayout"));
 const MyWorkOrdersPage = lazy(() => import("@/pages/mobile/MyWorkOrdersPage"));
 const WorkOrderExecPage = lazy(() => import("@/pages/mobile/WorkOrderExecPage"));
@@ -96,6 +98,9 @@ export default function App() {
               <Route path="/maintenance/failures" element={<RequireCapability cap="maintenance.failures"><FailuresPage /></RequireCapability>} />
               <Route path="/maintenance/kpis" element={<RequireCapability cap="maintenance.kpis"><KpisPage /></RequireCapability>} />
               <Route path="/maintenance/reliability" element={<RequireCapability cap="maintenance.kpis"><ReliabilityPage /></RequireCapability>} />
+              <Route path="/maintenance/predictive" element={<RequireCapability cap="predictive.view"><PredictivePage /></RequireCapability>} />
+              <Route path="/maintenance/predictive/alerts/:id" element={<DetailRedirect to={(id) => `/maintenance/predictive?alert=${encodeURIComponent(id)}`} />} />
+              <Route path="/settings/gateways" element={<RequireCapability cap="gateways.view"><GatewaysPage /></RequireCapability>} />
               <Route path="/factory"   element={<FactoryPage />} />
               <Route path="/factory/lines/:lineId" element={<LinePage />} />
               <Route path="/factory/machines/:machineId" element={<MachinePage />} />

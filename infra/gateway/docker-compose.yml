@@ -1,0 +1,56 @@
+# FactoryConnect — gateway de campo num host da fábrica (IPC x86-64 ou Raspberry Pi 4/5 com SO 64 bits).
+# Guia completo (rede, portas, firewall, cadastro): edge/README.md → "Instalação na fábrica".
+#
+#   cp gateway.env.example gateway.env      # preencha SERVER_URL, ENROLL_CODE e o broker MQTT
+#   docker compose up -d                    # 1ª partida: cadastra o gateway e guarda a credencial no volume
+#   docker compose logs -f gateway          # procure "enrollment.done" e "edge_gateway.config"
+#
+# Depois do cadastro o ENROLL_CODE pode sair do gateway.env (é de uso único). A credencial (token do gateway e
+# senha MQTT) fica em /data/gateway_credentials.json (0600) no volume `gateway-data`: faça backup do volume ou
+# cadastre de novo com um código novo se o host for trocado.
+name: factoryconnect-gateway
+
+services:
+  gateway:
+    # Imagem multi-arch (linux/amd64 + linux/arm64). Sem registro: `docker compose build` constrói no próprio host
+    # (amd64 ou arm64) a partir de ../../edge. Com registro: EDGE_IMAGE=<registro>/factoryconnect-edge:0.5.0
+    # (gerada com `docker buildx build --platform linux/amd64,linux/arm64 ... --push edge/`, ver edge/README.md).
+    image: ${EDGE_IMAGE:-factoryconnect-edge:0.5.0}
+    build:
+      context: ../../edge
+      args:
+        EDGE_VERSION: "0.5.0"
+    container_name: fc_gateway
+    restart: unless-stopped
+    env_file: gateway.env
+    environment:
+      # estado persistente no volume (valores padrão da imagem, repetidos aqui para ficar explícito)
+      BUFFER_DB_PATH: /data/edge_buffer.db
+      COUNTER_DB_PATH: /data/edge_counters.db
+      GATEWAY_CONFIG_CACHE: /data/gateway_config.json
+      GATEWAY_CREDENTIALS_PATH: /data/gateway_credentials.json
+      HEALTH_FILE: /data/gateway.health
+    volumes:
+      - gateway-data:/data
+      # CA do broker/servidor se não for pública (MQTT_CA_CERT=/certs/ca.pem no gateway.env)
+      - ./certs:/certs:ro
+    # Só conexões de SAÍDA: CLPs na rede OT (Modbus TCP 502, OPC UA 4840), servidor (HTTPS 443) e broker
+    # (MQTT/TLS 8883). Nenhuma porta publicada. Rede bridge padrão: o Docker roteia pela tabela do host — se os CLPs
+    # estiverem numa 2ª placa de rede sem rota a partir da bridge, use `network_mode: host`.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  gateway-data:

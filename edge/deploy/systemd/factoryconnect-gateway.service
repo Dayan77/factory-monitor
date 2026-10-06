@@ -1,0 +1,53 @@
+# FactoryConnect — gateway de campo como serviço systemd (alternativa ao Docker).
+# Instalado por edge/deploy/install.sh; configuração em /etc/factoryconnect/gateway.env.
+#   systemctl status factoryconnect-gateway · journalctl -u factoryconnect-gateway -f
+[Unit]
+Description=FactoryConnect — gateway de campo (Modbus TCP / OPC UA → MQTT)
+Documentation=https://github.com/Dayan77/factory-monitor/blob/main/edge/README.md
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=factoryconnect
+Group=factoryconnect
+WorkingDirectory=/opt/factoryconnect/edge
+EnvironmentFile=/etc/factoryconnect/gateway.env
+# estado persistente: /var/lib/factoryconnect (0700) — credencial do cadastro, cópia da config, buffer, contadores
+Environment=BUFFER_DB_PATH=/var/lib/factoryconnect/edge_buffer.db
+Environment=COUNTER_DB_PATH=/var/lib/factoryconnect/edge_counters.db
+Environment=GATEWAY_CONFIG_CACHE=/var/lib/factoryconnect/gateway_config.json
+Environment=GATEWAY_CREDENTIALS_PATH=/var/lib/factoryconnect/gateway_credentials.json
+Environment=HEALTH_FILE=/var/lib/factoryconnect/gateway.health
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/factoryconnect/venv/bin/python -m src.gateway
+Restart=always
+RestartSec=10
+# 2 = configuração inválida (ex.: CA do MQTT ausente), 3 = código de cadastro inválido: reiniciar não resolve
+RestartPreventExitStatus=2 3
+StateDirectory=factoryconnect
+StateDirectoryMode=0700
+UMask=0077
+# endurecimento
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/factoryconnect
+
+[Install]
+WantedBy=multi-user.target

@@ -58,6 +58,11 @@ U32 = 0x1_0000_0000
 DAY_S = 86400
 
 
+def det_gauss(seed: int, key: str, bucket: int) -> float:
+    """N(0, 1) determinístico por (seed, chave, bloco de tempo) — não depende de quantas vezes foi chamado."""
+    return random.Random(f"{seed}/{key}/{bucket}").gauss(0.0, 1.0)
+
+
 # ── Turnos ────────────────────────────────────────────────────────────────────
 
 def parse_shifts(spec: Optional[str]) -> list[tuple[int, int]]:
@@ -166,6 +171,13 @@ class PlantConfig:
     buffer_resume_s: float = 60.0        # célula volta a rodar quando o buffer chega aqui
     wear_failures: bool = True           # falhas por desgaste (wear.py); o desgaste/sintomas existem sempre
     wear_repair: str = "auto"            # "auto" (plantão troca o componente) | "manual" (espera a API)
+    # Sprint 5 (predictive.md P-11): perfil lento do cilindro B3 — 30 000 golpes saudáveis (aquecimento + linha
+    # de base de 25 blocos de 1 000 cabem) e depois +0,5 ms a cada 1 000 golpes até 120 % do curso novo (240 ms)
+    # → falha 447 em 110 000 golpes (~70 dias de produção da célula).
+    b3_onset_strokes: int = 30_000
+    b3_drift_ms_per_kstroke: float = 0.5
+    # Motor B: corrente RMS por produto (carga) — SUP-200 é mais pesado (+0,5 A, deriva sem falha, cenário F2)
+    motor_b_current_a: dict = field(default_factory=lambda: {"SUP-100": 12.0, "SUP-200": 12.5})
 
     def with_micro_rate(self, per_h: Optional[float]) -> "PlantConfig":
         if per_h is not None:
@@ -385,6 +397,12 @@ class Cylinder:
     stroke_ms: float = 0.0
     strokes_at_install: int = 0     # `strokes` quando o componente atual foi instalado (troca, wear.py)
     leak_threshold_ms: float = math.inf   # deriva do curso que vira vazamento (wear.py)
+    # Sprint 5 (predictive.md P-11): perfil "lento" — saudável até `onset_strokes` golpes desde a instalação,
+    # depois deriva linear `degrade_ms_per_kcycle`; falha quando a deriva chega a `failure_frac` · base.
+    onset_strokes: int = 0
+    failure_frac: Optional[float] = None
+    counter_mod: int = U16          # contador do CLP: 16 bits (padrão) ou 32 bits (terminal de válvulas)
+    own_rng: Optional[random.Random] = None   # gerador próprio (não desloca os sorteios da célula)
 
     @property
     def strokes_since_install(self) -> int:
@@ -394,14 +412,17 @@ class Cylinder:
         self.strokes += 1
         self.life_cycles += 1
         nxt = self.plc_counter + 1
-        if nxt >= U16:
+        if nxt >= self.counter_mod:
             self.rollovers += 1
-        self.plc_counter = nxt % U16
-        self.stroke_ms = round(self.nominal_stroke_ms() + rng.gauss(0.0, 1.5), 1)
+        self.plc_counter = nxt % self.counter_mod
+        self.stroke_ms = round(self.nominal_stroke_ms() + (self.own_rng or rng).gauss(0.0, 1.5), 1)
+
+    def degraded_strokes(self) -> int:
+        return max(0, self.strokes_since_install - self.onset_strokes)
 
     def nominal_stroke_ms(self) -> float:
         return (self.base_ms + self.wear_ms_per_kcycle * self.life_cycles / 1000.0
-                + self.degrade_ms_per_kcycle * self.strokes_since_install / 1000.0)
+                + self.degrade_ms_per_kcycle * self.degraded_strokes() / 1000.0)
 
 
 def _machine(layout: PlantLayout, line_key: str, machine_key: str) -> Machine:
@@ -500,7 +521,8 @@ class AssemblyCell:
     AXIS_MOVES = (14, 14, 10, 8, 8, 6)
     FLOW = ("montagem.fixacao", "montagem.robo", "montagem.transportador")   # montante → jusante
 
-    def __init__(self, rng: random.Random, layout: PlantLayout, cfg: PlantConfig, faults: bool) -> None:
+    def __init__(self, rng: random.Random, layout: PlantLayout, cfg: PlantConfig, faults: bool,
+                 seed: int = 0) -> None:
         self.rng = rng
         self.cfg = cfg
         self.scrap_rate = cfg.scrap_rate["cell"]
@@ -517,6 +539,11 @@ class AssemblyCell:
             Cylinder("A2", (0.10,), 40_210, 3_400_000, 205.0, 0.012, degrade_ms_per_kcycle=20.0),
             Cylinder("A3", (0.15, 0.90), 65_200, 2_100_000, 160.0, 0.004),
             Cylinder("A4", (0.95,), 63_900, 600_000, 230.0, 0.004),
+            # B3 (Sprint 5, predictive.md P-11): novo, saudável até `b3_onset_strokes`, depois +x ms/1000 golpes
+            # até 120 % do curso novo → 447 (timeout de curso). Gerador próprio: não muda os sorteios acima.
+            Cylinder("B3", (0.50,), 0, 0, 200.0, 0.0, degrade_ms_per_kcycle=cfg.b3_drift_ms_per_kstroke,
+                     onset_strokes=cfg.b3_onset_strokes, failure_frac=0.20, counter_mod=U32,
+                     own_rng=random.Random(f"{seed}/b3")),
         ]
         for c in self.cylinders:   # tempo de curso inicial coerente com o desgaste
             c.stroke_ms = round(c.nominal_stroke_ms(), 1)
@@ -697,7 +724,7 @@ class PlantModel:
                                       "torno", 2 * 3600, 5 * 60, faults)
         self.centro = MachiningMachine(self.rng, "usinagem.centro", _machine(layout, "usinagem", "centro"), cfg,
                                        "centro", 3 * 3600, 8 * 60, faults, tool_changes=4)
-        self.cell = AssemblyCell(self.rng, layout, cfg, faults)
+        self.cell = AssemblyCell(self.rng, layout, cfg, faults, seed=seed)
         self.cal_state = self.calendar.at(self.start_sod)
         self.trackers: dict[str, BoolTracker] = {}
         self._keys = {signal_key(line, m, s) for line, m in layout.machines() for s in m.signals}
@@ -797,6 +824,7 @@ class PlantModel:
             "usinagem.centro.run_state": c.running, "usinagem.centro.spindle.run": c.cutting,
             "usinagem.centro.coolant.run": c.cutting, "montagem.robo.run_state": cell.running,
             "montagem.fixacao.run_state": cell.running, "montagem.transportador.motor.run": cell.running,
+            "montagem.transportador.motor_b.run": cell.running,
         }
 
     def _discrete(self) -> dict[str, float | int | bool]:
@@ -827,6 +855,7 @@ class PlantModel:
             "montagem.fixacao.fault_state": cell.fix_fault.code,
             "montagem.transportador.fault_state": cell.conv_fault.code,
             "montagem.transportador.motor.run": cell.running,
+            "montagem.transportador.motor_b.run": cell.running,
             "montagem.transportador.parts_good": cell.good,
             "montagem.transportador.parts_scrap": cell.scrap,
         }
@@ -869,7 +898,38 @@ class PlantModel:
             # vibração (mm/s RMS) cresce com o desgaste do rolamento; parado ≈ ruído de fundo
             "usinagem.centro.coolant.vibration": on(c.cutting, 1.1 + 6.0 * f_pump ** 4, 0.08, 0.05),
             "montagem.transportador.motor.vibration": on(cell.running, 1.1 + 6.0 * f_mot ** 4, 0.08, 0.05),
+            **self._motor_b(),
         }
+
+    def _motor_b(self) -> dict[str, float]:
+        """Motor B (Sprint 5): sinais da preditiva DENTRO do contrato de determinismo (predictive.md P-11 item 5):
+        ruído = função da seed, da tag e do bloco de 10 s simulados — mesmo valor no mesmo instante, qualquer
+        que seja a frequência de exportação. Corrente RMS depende da carga (produto ativo): deriva sem falha."""
+        cell = self.cell
+        k = "montagem.transportador.motor_b"
+        if not cell.running:
+            return {f"{k}.current": 0.0, f"{k}.vibration": 0.05, f"{k}.vibration_peak": 0.12}
+        b = int(self.sim_time_s // 10)
+        cur = self.config.motor_b_current_a.get(cell.setup.product.product, 12.0)
+        vib = 1.30 + 0.03 * det_gauss(self.seed, f"{k}.vibration", b)
+        return {f"{k}.current": round(cur + 0.05 * det_gauss(self.seed, f"{k}.current", b), 3),
+                f"{k}.vibration": round(vib, 3),
+                f"{k}.vibration_peak": round(vib * 2.4 + 0.05 * det_gauss(self.seed, f"{k}.peak", b), 3)}
+
+    def degradations(self) -> list[dict]:
+        """Verdade da preditiva (predictive.md P-11 item 4): desgaste dos componentes + Motor B (carga)."""
+        out = self.wear.degradations()
+        out.append({"position": "montagem.transportador.motor_b", "machine": "montagem.transportador",
+                    "position_name": "Motor B", "feature": "current", "profile": "load_by_product",
+                    "measure": "operating_hours", "onset_s": None, "failure_s": None, "state": "healthy",
+                    "current_by_product_a": dict(self.config.motor_b_current_a),
+                    "product": self.cell.setup.product.product})
+        return out
+
+    def truth(self) -> dict:
+        """Verdade de campo para validar a preditiva no servidor (GET /truth da API de controle)."""
+        return {"kind": "live", "seed": self.seed, "sim_time_s": self.sim_time_s,
+                "degradations": self.degradations(), "failures": self.wear.failures()}
 
     def values(self, include_analog: bool = True) -> dict[str, float | int | bool]:
         v = self._discrete()
@@ -930,5 +990,6 @@ class PlantModel:
                              "plant_s": round(self.plant_seconds(), 1)},
                 "buffer_s": round(cell.buffer_s, 1),
                 "wear": self.wear.status(),
+                "degradations": self.degradations(),
             },
         }

@@ -505,6 +505,7 @@
               "444": "EQP-03",
               "445": "EQP-03",
               "446": "EQP-03",
+              "447": "EQP-03",
               "541": "EQP-05"
             },
             "positions": [
@@ -575,6 +576,23 @@
                     "starts": null
                   }
                 }
+              },
+              {
+                "name": "Cilindro B3",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 1,
+                "counter_tag": "montagem.fixacao.b3.cycles",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-B3-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
               }
             ]
           },
@@ -614,6 +632,23 @@
                   "manufacturer": "WEG",
                   "model": "W22 2 cv + redutor",
                   "serial_number": "VP-TRP-MOT-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 30000,
+                    "starts": 200000
+                  }
+                }
+              },
+              {
+                "name": "Motor B",
+                "component_type": "electric_motor",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "electric_motor",
+                  "manufacturer": "WEG",
+                  "model": "W22 3 cv + redutor",
+                  "serial_number": "VP-TRP-MOTB-0001",
                   "nominal_life": {
                     "cycles": null,
                     "hours": 30000,
@@ -862,6 +897,12 @@
       },
       "446": {
         "description": "Vazamento na vedação do cilindro A4",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "447": {
+        "description": "Cilindro B3 — tempo de curso acima do limite (vedação gasta)",
         "category": "pneumatic",
         "reason_code": "EQP-03",
         "label": "Falha pneumática/hidráulica"
@@ -1858,6 +1899,48 @@
       "register_type": "discrete"
     },
     {
+      "key": "montagem.fixacao.b3.cycles",
+      "tag_id": null,
+      "name": "Cilindro B3 — ciclos (terminal de válvulas)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro B3",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 10,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.b3.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro B3 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro B3",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 12,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
       "key": "montagem.transportador.fault_state",
       "tag_id": null,
       "name": "Código de falha",
@@ -2036,6 +2119,88 @@
       "max_rate_per_s": null,
       "source": "modbus-plc",
       "address": 7,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.run",
+      "tag_id": null,
+      "name": "Motor B — em operação",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 3,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 3,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.transportador.motor_b.current",
+      "tag_id": null,
+      "name": "Motor B — corrente RMS",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 8,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.vibration",
+      "tag_id": null,
+      "name": "Motor B — vibração RMS",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 9,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.vibration_peak",
+      "tag_id": null,
+      "name": "Motor B — vibração (pico)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 10,
       "scale": 0.01,
       "poll_interval_ms": 1000,
       "unit_id": 3,

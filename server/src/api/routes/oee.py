@@ -17,7 +17,7 @@ from ...services.oee import kpi
 from ...services.oee.detector import ensure_failure, event_message
 from ...services.oee.engine import (UNJUSTIFIED, components as machine_components, effective_reason, load_calendar,
                                     load_machine_data, machine_infos, reason_meta)
-from ...services.oee.service import (day_components, instances_of_day, load_units, oee_for, oee_payload,
+from ...services.oee.service import (oee_delta, day_components, instances_of_day, load_units, oee_for, oee_payload,
                                      pareto_for, parse_window, productive_today, reliability_for, resolve_scope)
 from ...services.usage import queries as uq
 from ...services.validation import is_uuid
@@ -236,11 +236,21 @@ Scope = Literal["machine", "line", "plant"]
 @kpi_router.get("/oee", response_model=OeeOut)
 async def get_oee(user: CurrentUser, db: DB, scope: Scope = "machine", id: str = Query(...),
                   start: Optional[datetime] = None, stop: Optional[datetime] = None,
-                  group_by: Literal["none", "hour", "shift", "day"] = "none"):
+                  group_by: Literal["none", "hour", "shift", "day", "shift_name"] = "none",
+                  compare_to: Literal["none", "previous_period"] = "none"):
+    """group_by=shift_name sums every instance of the same shift (S3-8); compare_to=previous_period adds the
+    same-length period just before (`previous`) and the server-computed `delta` (Sprint 5, AI assistant)."""
     now = datetime.now(timezone.utc)
     sc = await resolve_scope(db, user.tenant_id, scope, id)
     s, e = parse_window(sc, start, stop, now, group_by)
-    return await oee_for(db, sc, s, e, group_by, now)
+    out = await oee_for(db, sc, s, e, group_by, now)
+    if compare_to == "previous_period":
+        ps = s - (e - s)
+        prev = await oee_for(db, sc, ps, s, group_by, now)
+        prev.pop("points", None)
+        out["previous"] = prev
+        out["delta"] = oee_delta(out, prev)
+    return out
 
 
 @kpi_router.get("/losses/pareto", response_model=list[ParetoRow])
@@ -413,5 +423,13 @@ async def overview(user: CurrentUser, db: DB, plant_id: Optional[str] = None):
                                  "life_consumed_pct": life, "life_measure": measure,
                                  "projected_end_date": end_date.isoformat() if end_date else None})
         near_end.sort(key=lambda x: -x["life_consumed_pct"])
+    from ...models import Gateway
+    from ...services.gateways import effective_status
+    gws = (await db.execute(select(Gateway).where(Gateway.tenant_id == tid, Gateway.plant_id == plant.id)
+                            .order_by(Gateway.name))).scalars().all()
+    gateways = [{"id": g.id, "name": g.name, "status": effective_status(g, now), "version": g.version,
+                 "last_seen_at": g.last_seen_at.isoformat() if g.last_seen_at else None,
+                 "config_version": g.config_version} for g in gws]
     return OverviewOut(plant_id=plant.id, plant_name=plant.name, productive_day=today, generated_at=now,
-                       lines=out_lines, top_losses=top, machines_in_error=in_error, components_near_end=near_end)
+                       lines=out_lines, top_losses=top, machines_in_error=in_error, components_near_end=near_end,
+                       gateways=gateways)

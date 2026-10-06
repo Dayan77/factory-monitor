@@ -188,7 +188,13 @@ export interface WorkOrder {
   assignee_name?: string | null;
   plan_name?: string | null;
   line_id?: string | null;
+  /** Sprint 5 (predictive.md P-9): predictive WO born from a condition alert, its finding and baseline reset. */
+  source_alert_id?: string | null;
+  finding?: WoFinding | null;
+  resets_baseline?: boolean | null;
 }
+
+export type WoFinding = "defect_confirmed" | "no_defect";
 
 /** Who an emergency call reached (POST /api/work-orders/emergency-call). `fallback` = no on-call technician
  *  covers the line, so planners / managers / admins were called; `escalated_count` = how many of those were
@@ -248,6 +254,9 @@ export interface TransitionBody {
   cancel_reason?: CancelReason | null;
   /** Technician's estimate when pausing (S4-5 / S4-7). Sent alongside; ignored by servers that don't take it. */
   remaining_hours?: number | null;
+  /** Completing a predictive WO from an alert requires `finding` (P-9); `resets_baseline` restarts the baseline (P-2). */
+  finding?: WoFinding | null;
+  resets_baseline?: boolean | null;
 }
 
 export interface LaborBody {

@@ -190,7 +190,7 @@ async def test_gateway_start_uses_remote_config(server, tmp_path, monkeypatch):
         return None
     monkeypatch.setattr(g.buffer, "initialize", noop)
     monkeypatch.setattr(g.publisher, "connect", noop)
-    for loop_name in ("_flush_buffer_loop", "_heartbeat_loop", "_refresh_loop"):
+    for loop_name in ("_flush_buffer_loop", "_heartbeat_loop", "_refresh_loop", "_fleet_loop"):
         monkeypatch.setattr(g, loop_name, noop)
     await g.start()
     assert loaded and loaded[0].gateway_id == GW and len(loaded[0].tags) == 2

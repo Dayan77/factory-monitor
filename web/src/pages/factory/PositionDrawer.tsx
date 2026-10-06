@@ -17,6 +17,8 @@ import {
   canManageAssets, componentName, componentTypeLabel, LIFE_MEASURE_LABEL, REMOVAL_REASON_LABEL, rulReasonLabel,
 } from "@/utils/assets";
 import { AssetMaintenance } from "@/components/maintenance/MaintenancePanels";
+import { ConditionPanel } from "@/components/predictive/parts";
+import { Tabs, TabPanel } from "@/components/ui/Tabs";
 import { can } from "@/utils/maintenance";
 import { formatDate, formatDateTime, formatDec1, formatInt, formatPct } from "@/utils/format";
 import { apiErrorMessage } from "@/utils/errors";
@@ -398,6 +400,23 @@ function DrawerBody({ d }: { d: PositionDetail }) {
   );
 }
 
+const DRAWER_TABS = [{ value: "general", label: "Geral" }, { value: "condition", label: "Condição" }] as const;
+
+/** "Geral" (component, life, usage, maintenance) and — for roles that read predictive data — "Condição" (P-12). */
+function PositionTabs({ d }: { d: PositionDetail }) {
+  const user = useAuthStore((s) => s.user);
+  const [tab, setTab] = useState<"general" | "condition">("general");
+  if (!can(user, "predictive.view")) return <DrawerBody d={d} />;
+  return (
+    <div className="space-y-4">
+      <Tabs id={`pos-${d.id}`} label="Seções da posição" items={DRAWER_TABS} value={tab} onChange={setTab} />
+      <TabPanel id={`pos-${d.id}`} activeValue={tab}>
+        {tab === "general" ? <DrawerBody d={d} /> : <ConditionPanel positionId={d.id} compact />}
+      </TabPanel>
+    </div>
+  );
+}
+
 export default function PositionDrawer({ positionId, onClose }: { positionId: string | null; onClose: () => void }) {
   const q = usePosition(positionId);
   return (
@@ -412,7 +431,7 @@ export default function PositionDrawer({ positionId, onClose }: { positionId: st
         loading={<LoadingRegion label="Carregando posição…"><div className="space-y-3"><Skeleton className="h-6 w-40" /><Skeleton className="h-20" /><Skeleton className="h-32" /></div></LoadingRegion>}
         errorTitle="Não foi possível carregar a posição"
       >
-        {(d) => <DrawerBody key={d.id} d={d} />}
+        {(d) => <PositionTabs key={d.id} d={d} />}
       </QueryView>
     </Sheet>
   );

@@ -159,6 +159,7 @@ class FakeApi:
         if any(x["position_id"] == pid and not x["removed_at"] for x in self.db["components"].values()):
             return web.json_response({"detail": "posição já tem componente instalado"}, status=409)
         comp["position_id"] = pid
+        comp["installed_at"] = body.get("installed_at")
         return web.json_response(comp, status=201)
 
 

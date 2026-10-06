@@ -87,6 +87,8 @@ export interface Tag {
   max_value: number | null;
   poll_interval_ms: number;
   is_active: boolean;
+  /** Sprint 5: field gateway that reads this tag (docs/gateways.md). */
+  gateway_id?: string | null;
   created_at: string;
   /** Fase 1 — what the tag means for usage processing (default "analog"). */
   semantic_role?: SemanticRole;
@@ -154,8 +156,16 @@ export interface UsageMessage {
   timestamp?: string;
 }
 
+/** Sprint 5: {type: 'predictive_alert', event, alert} — only to users who may read predictive alerts. */
+export interface PredictiveAlertRealtimeMessage {
+  type: "predictive_alert";
+  event: string | null;
+  alert: { id: string; severity: string; state: string; position_id: string | null; machine_id: string | null };
+}
+
 export type RealtimeMessage =
-  | SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage | NotificationMessage;
+  | SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage | NotificationMessage
+  | PredictiveAlertRealtimeMessage;
 
 // ── Assets & usage (Fase 1 — mirror server/src/api/schemas_assets.py) ──
 // Conventions: life_consumed_pct is a FRACTION (0..1, may exceed 1, never truncated);
@@ -760,4 +770,15 @@ export interface Overview {
   top_losses: ParetoRow[];
   machines_in_error: OverviewMachineInError[];
   components_near_eol: OverviewComponentNearEol[];
+  /** Sprint 5: field gateways of the plant (docs/gateways.md). Absent on older servers. */
+  gateways?: OverviewGateway[];
+}
+
+export interface OverviewGateway {
+  id: string;
+  name: string;
+  status: "pending" | "online" | "degraded" | "offline";
+  version: string | null;
+  last_seen_at: string | null;
+  config_version: number | null;
 }

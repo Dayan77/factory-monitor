@@ -343,6 +343,7 @@ class OeePoint(BaseModel):
     pbt_s: float = 0.0
     good: float = 0.0
     scrap: float = 0.0
+    instances: Optional[int] = None          # group_by=shift_name: shift instances summed in the point
 
 
 class ProducedOutside(BaseModel):
@@ -392,6 +393,9 @@ class OeeOut(BaseModel):
     counts_prorated: bool = False
     calendar_default: bool = False
     points: list[OeePoint] = Field(default_factory=list)
+    # Sprint 5 — compare_to=previous_period: the previous period and the server-computed differences
+    previous: Optional[dict] = None
+    delta: Optional[dict] = None
 
 
 class ParetoRow(BaseModel):
@@ -476,3 +480,5 @@ class OverviewOut(BaseModel):
     top_losses: list[ParetoRow]
     machines_in_error: list[dict]
     components_near_end: list[dict]
+    # Sprint 5: field gateways of the plant with their effective status (online | degraded | offline | pending)
+    gateways: list[dict] = Field(default_factory=list)

@@ -1,6 +1,7 @@
 # edge — gateway, planta virtual e provisionamento
 
-Visão geral do projeto em `CLAUDE.md`. Este arquivo cobre o que o edge faz para os KPIs da Fase 2 (OEE).
+Visão geral do projeto em `CLAUDE.md`. Este arquivo cobre o que o edge faz para os KPIs da Fase 2 (OEE), a
+manutenção (Sprint 4), a preditiva e a frota de gateways (Sprint 5 — [instalação na fábrica](#instalação-na-fábrica)).
 
 ## Planta virtual (`python -m edge.virtual_plant`)
 
@@ -158,12 +159,132 @@ intervalos de fábrica (2 000 000 ciclos / 180 dias para vedações etc.).
 
 ## Configuração remota do gateway (`edge/src/remote_config.py`)
 
-Padrão inalterado: mapa do arquivo `PLANT_MAP_PATH`. Com `GATEWAY_CONFIG_URL` (URL base do servidor) o gateway busca
-`GET {url}/api/gateways/{GATEWAY_ID}/config` com `Authorization: Gateway <GATEWAY_TOKEN>` (`If-None-Match` com o ETag
-da cópia local), valida o mapa e grava a cópia em `GATEWAY_CONFIG_CACHE` (atômica, 0600, sem o token). Sem servidor,
-401/403, 5xx ou mapa inválido → cópia local; sem cópia → `PLANT_MAP_PATH`; nada disso → não sobe. Resposta esperada:
-`{"gateway_id": "...", "revision": "...", "plant_map": {mapa v1}}` (ou o mapa v1 direto no corpo). O endpoint do
-servidor vem num sprint seguinte.
+Padrão inalterado: mapa do arquivo `PLANT_MAP_PATH`. Com `GATEWAY_CONFIG_URL` (URL base do servidor) — ou depois do
+cadastro na frota (abaixo) — o gateway busca `GET {url}/api/gateways/{GATEWAY_ID}/config` com
+`Authorization: Gateway <token>` (`If-None-Match` com o ETag da cópia local), valida o mapa e grava a cópia em
+`GATEWAY_CONFIG_CACHE` (atômica, 0600, sem o token, com o `config_version`). Sem servidor, 401/403, 5xx ou mapa
+inválido → cópia local; sem cópia → `PLANT_MAP_PATH`; nada disso → não sobe. Resposta:
+`{"gateway_id": "...", "revision": "7", "config_version": 7, "plant_map": {mapa v1}}` (contrato em docs/gateways.md).
+
+## Gateway na frota (Sprint 5): cadastro, heartbeat e recarga a quente
+
+| Peça | Arquivo | O que faz |
+|---|---|---|
+| cadastro | `edge/src/enrollment.py` | 1ª partida com `ENROLL_CODE` + `SERVER_URL`: `POST /api/gateways/enroll {code}` → `{gateway_id, tenant_id, token, mqtt{username, password}}` gravado em `GATEWAY_CREDENTIALS_PATH` com **0600** (diretório 0700, escrita atômica). Partidas seguintes usam o arquivo; o código é de uso único. Código inválido/expirado (401) → sai com código 3 (não adianta reiniciar); servidor fora do ar → tenta de novo (5 s … 60 s). `SERVER_URL` precisa ser `https://` (http só localhost ou `ALLOW_INSECURE_HTTP=true`). Token e senha nunca vão para o log. |
+| configuração | `edge/src/remote_config.py` | como acima, com o token do cadastro |
+| heartbeat HTTP | `edge/src/fleet.py` | a cada `GATEWAY_HEARTBEAT_S` (60 s): `POST /api/gateways/{id}/heartbeat {version, uptime_s, buffer_depth, errors[], config_version}`. `errors`: fontes desconectadas, broker MQTT fora, falhas de heartbeat/configuração desde o último heartbeat entregue. Resposta `config_changed` → busca a config e aplica. Por garantia a config também é consultada a cada `GATEWAY_CONFIG_POLL_S` (300 s; 304 quando nada mudou). |
+| recarga a quente | `EdgeGateway.apply_plant_map` | para os drivers do mapa antigo, carrega o novo e sobe os drivers — **sem** reiniciar o processo: buffer SQLite, conexão MQTT, contadores de borda (`cycle_pulse`, SQLite por `key`), deadband, timestamps monotônicos e relógios dos dispositivos continuam. Mapa novo inválido → fica o atual (erro no próximo heartbeat). |
+| MQTT | `edge/src/protocols/mqtt_publisher.py` | usuário/senha por gateway: `MQTT_USERNAME`/`MQTT_PASSWORD` do ambiente, senão os do cadastro. TLS: `MQTT_TLS=true`, `MQTT_CA_CERT` (PEM; vazio = CAs do sistema), TLS mútuo opcional `MQTT_CLIENT_CERT` + `MQTT_CLIENT_KEY`; `MQTT_BROKER_PORT` vazio = 8883 com TLS / 1883 sem. Certificado e nome do host sempre verificados, TLS ≥ 1.2; arquivo ausente → o gateway não sobe (código 2). |
+
+Compatibilidade: sem `SERVER_URL`/`ENROLL_CODE`/`GATEWAY_CREDENTIALS_PATH` nada disso roda — `PLANT_MAP_PATH` (mapa em
+arquivo) e `GATEWAY_CONFIG_URL` + `GATEWAY_TOKEN` (Sprint 4) funcionam como antes. O mapa aceita o endereço Modbus no
+formato do servidor (`"unit=2;hr=10:uint16"`) além do inteiro.
+
+### Instalação na fábrica
+
+**Hardware**: PC industrial/IPC x86-64 ou Raspberry Pi 4/5 com SO **64 bits** (Raspberry Pi OS 64, Ubuntu Server
+arm64), 1 GB de RAM, 2 GB livres (buffer offline: ~1 KB por leitura). Relógio sincronizado por NTP (timestamps UTC
+na origem). Duas placas de rede são o arranjo recomendado: uma na rede OT dos CLPs, outra na rede corporativa/Internet.
+
+**Rede e firewall** — o gateway **só abre conexões de saída**; não há porta de entrada a liberar:
+
+| Destino | Porta | Protocolo | Para quê |
+|---|---|---|---|
+| CLPs (rede OT) | 502/TCP | Modbus TCP | leitura de registradores/bits (polling) |
+| CLPs / servidores OPC UA (rede OT) | 4840/TCP (ou a do servidor) | OPC UA binário | assinatura de tags |
+| servidor FactoryConnect | 443/TCP | HTTPS | cadastro, configuração, heartbeat |
+| broker MQTT | 8883/TCP | MQTT sobre TLS | envio das leituras e heartbeat MQTT |
+| servidores NTP | 123/UDP | NTP | relógio do host |
+| (opcional) registro de imagens | 443/TCP | HTTPS | `docker pull` |
+
+Regras sugeridas no firewall da fábrica: a rede OT **não** roteia para a Internet; só o host do gateway fala com os
+CLPs (502/4840) e só ele sai para 443/8883 nos endereços do FactoryConnect. Proxy HTTP corporativo: o gateway usa
+`HTTPS_PROXY`/`NO_PROXY` do ambiente para o HTTPS; o MQTT/TLS precisa de saída direta na 8883 (ou um broker na DMZ).
+
+**Cadastro** (no servidor, perfil admin): Gateways → novo gateway (planta, dispositivos: endereço OPC UA / IP Modbus)
+→ atribuir as tags → "Gerar código" (`XXXX-XXXX-XXXX`, uso único, 24 h). No gateway:
+
+*Docker* (`infra/gateway/`; imagem multi-arch `linux/amd64` + `linux/arm64`):
+```bash
+cd infra/gateway && cp gateway.env.example gateway.env   # SERVER_URL, ENROLL_CODE, broker MQTT/TLS
+docker compose up -d && docker compose logs -f gateway  # "enrollment.done" → "edge_gateway.config"
+```
+Construir/publicar a imagem das duas arquiteturas: `docker buildx build --platform linux/amd64,linux/arm64
+--build-arg EDGE_VERSION=0.5.0 -t <registro>/factoryconnect-edge:0.5.0 --push edge/` (todas as dependências têm wheel
+manylinux para as duas arquiteturas: o build não compila nada). O container roda sem root, com sistema de arquivos
+somente leitura, sem capabilities, e o estado em `/data` (volume `gateway-data`, 0700). Saúde: `HEALTH_FILE` tocado
+a cada heartbeat (HEALTHCHECK da imagem).
+
+*systemd* (sem Docker):
+```bash
+sudo edge/deploy/install.sh --server https://app.factoryconnect.tech --code ABCD-EFGH-JKLM --mqtt-host <broker>
+journalctl -u factoryconnect-gateway -f
+```
+Instala em `/opt/factoryconnect` (venv só com wheels binários), configuração em `/etc/factoryconnect/gateway.env`
+(0640), estado em `/var/lib/factoryconnect` (0700) e a unidade `edge/deploy/systemd/factoryconnect-gateway.service`
+(usuário sem privilégios, `ProtectSystem=strict`, sem reinício em loop para código de cadastro inválido).
+Rodar de novo atualiza o código e preserva configuração e estado; `--uninstall` remove serviço e código.
+
+Depois do cadastro o `ENROLL_CODE` pode sair da configuração. Trocar o host: cadastre de novo (novo código) ou leve o
+arquivo de credencial junto. Token revogado no servidor: o heartbeat passa a dar 401 (aparece nos logs e o gateway
+fica `offline` na frota) — apague o arquivo de credencial e cadastre com um código novo.
+
+Verificação manual (rede de testes): `python -m edge.src.enrollment --server https://... --code ...` cadastra sem subir
+o gateway e mostra a credencial mascarada.
+
+## Preditiva — o que o edge entrega (docs/predictive.md P-1)
+
+As características por janela (mediana do bloco de ciclos, médias ponderadas só rodando) são calculadas **no
+servidor**. O edge garante as leituras certas:
+
+- `stroke_time` = **uma leitura por golpe**, mesmo com o mesmo valor do golpe anterior (o servidor exige leitura em
+  ≥ 80 % dos ciclos do bloco). OPC UA: cada notificação é um golpe (a notificação inicial ao assinar e o re-envio de
+  heartbeat não contam). Modbus: o tempo de curso é publicado quando o **contador da mesma posição** avança (polling
+  mais rápido que o ciclo); sem contador, só quando o valor muda.
+- Vibração/corrente RMS: quando o sensor já entrega o RMS (caso da planta virtual e de sensores IO-Link de vibração),
+  a tag é um `analog`/`current` comum; `deadband_pct` por tag (ex.: 0,1 %) evita viés na média ponderada. Quando o
+  sensor entrega amostras, `"aggregate": {"window_s": 1, "stat": "rms" | "peak" | "mean" | "max" | "min"}` publica um
+  valor por janela (instante = fim da janela).
+
+**Planta ao vivo**: posição nova **Cilindro B3** (Estação de Fixação, contador de 32 bits + tempo de curso) com perfil
+lento — saudável por `--b3-onset-strokes` golpes (30 000), depois `--b3-drift-ms-per-kstroke` (0,5 ms / 1 000 golpes)
+até 120 % do curso novo (240 ms) → falha 447 (`EQP-03`), ~110 000 golpes; e **Motor B** (Transportador de Saída:
+`run`, corrente RMS, vibração RMS e pico) com corrente que depende do produto (SUP-100 12,0 A, SUP-200 12,5 A — deriva
+sem falha). Sinais do Motor B são determinísticos (seed + tag + bloco de 10 s). Tags novas acrescentadas no fim de cada
+máquina (endereços antigos inalterados); reprovisionar cria as posições/tags.
+
+**Cenário F** (`edge/virtual_plant/predictive.py`):
+```bash
+python -m edge.virtual_plant --write-map /tmp/plant.f.json --scenario docs/scenarios/scenario_f_predictive.json  # [--scenario-cases F1]
+python -m edge.src.provision --map /tmp/plant.f.json --out /tmp/plant.f.local.json --speed 500
+python -m edge.virtual_plant --scenario docs/scenarios/scenario_f_predictive.json --speed 500   # [--scenario-cases F1]
+PLANT_MAP_PATH=/tmp/plant.f.local.json VIRTUAL_PLANT_MAX_CLOCK_SKEW_S=off python -m edge.src.gateway
+python -m edge.virtual_plant.control truth          # verdade de campo (GET 127.0.0.1:7070/truth)
+```
+- F1: 700 000 golpes (um a cada 4,32 s do cenário); a mediana de cada bloco de 10 000 golpes é exatamente o `x` do
+  JSON; contador `b3.cycles` fecha o bloco i em `installed_at + i·12 h`; falha 447 no fim do bloco 70 e o cilindro para.
+- F2: corrente do Motor B constante = `x_i` enquanto roda (02:00–22:00 local) → média ponderada só rodando = `x_i`;
+  dia 47 parado.
+- O mapa gerado com `--scenario` leva a **data de instalação** do Cilindro B3 / Motor B no relógio do playback (o
+  provisionamento instala com ela: é o início da linha de base, P-2). Gere o mapa e rode a planta com os mesmos
+  `--scenario-cases`/`--scenario-shift-days` (ou na mesma semana) e num tenant em que esses componentes ainda não
+  estejam instalados (o provisionamento avisa quando a data instalada diverge).
+- Relógio do dispositivo deslocado um número inteiro de **semanas** para o passado (hora local e dia da semana
+  preservados). As máquinas do cenário (Estação de Fixação, Transportador) são servidas em **OPC UA** neste modo (o
+  mapa gerado com `--scenario` já aponta para lá; o pulso `a1.eos` continua Modbus).
+- **Servidor de QA com `SOURCE_TS_MAX_AGE_S` maior que a idade do playback** (hoje: F1 ≈ 36 dias, F1+F2 ≈ 92 dias;
+  a planta imprime o valor necessário ao subir): o servidor troca timestamps com mais de 30 dias (padrão) pela hora
+  de chegada (`mqtt.insane_source_ts`), o que desmontaria os blocos e as datas do cenário.
+- Vazão: ≤ 25 golpes por passo de 100 ms (fila de 64 notificações por item OPC UA) → a planta e o gateway aguentam
+  até ~860× (medido: 500× = ~264 mensagens MQTT/s sem buffer). **O limite prático é a ingestão do servidor**: no
+  stack de dev ~80 leituras/s; acima disso o broker descarta mensagens da fila do assinante. Para o F1 pelo caminho
+  completo use `--speed 150 --scenario-heartbeat-s 0` (≈ 70 leituras/s; 35 dias ≈ 5 h 40 min); só F2
+  (`--scenario-cases F2`, poucas leituras) roda a 3 000×+.
+- `GET /truth` (API de controle, também no playback): por caso o perfil, início da degradação e **falha real** no
+  relógio do dispositivo (`failure_at`, o que o servidor recebe) e no do JSON, o estado verdadeiro agora (valor
+  nominal, fração da degradação, vida remanescente real em golpes/dias) e o `expected.evaluation` do JSON — para
+  conferir `GET /api/predictive/evaluation`. Na planta ao vivo, `/truth` traz `degradations` (vedações, rolamentos,
+  B3, Motor B) e `failures` (todas as falhas por desgaste).
 
 No compose (`fm_virtual_plant`), a API de controle fica no localhost do container:
 `docker exec fm_virtual_plant python -m virtual_plant.control status`. Para expô-la numa rede de testes:

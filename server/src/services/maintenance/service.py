@@ -104,6 +104,9 @@ async def evaluate_plans(db: AsyncSession, tenant_id: str, plans: list[Maintenan
         except Exception:  # noqa: BLE001 — one bad plan must not break the listing or the engine
             log.exception("maintenance.plan.evaluate_error", tenant_id=tenant_id, plan_id=p.id)
             st = None
+        if p.condition_trigger:            # Sprint 5 (predictive.md P-9): condition plan reached → at least due
+            from ..predictive.service import apply_condition_due
+            st = apply_condition_due(p, st, today)
         out.append(PlanEval(p, st, tz, today))
     return out
 
@@ -301,6 +304,8 @@ async def reset_plan(db: AsyncSession, plan: MaintenancePlan, at: datetime, by: 
     plan.last_reset_usage = await mu.usage_at(db, plan.tenant_id, scope, eid, at, now)
     plan.last_reset_at = at
     plan.last_reset_by = by
+    plan.condition_due_date = None          # predictive.md P-9: completing the WO zeroes the condition trigger too
+    plan.condition_alert_id = None
     return True
 
 
@@ -358,6 +363,8 @@ async def wo_out(db: AsyncSession, wo: WorkOrder, user: Optional[User] = None, f
         "cancelled_at": iso(wo.cancelled_at), "cancel_reason": wo.cancel_reason, "hold_reason": wo.hold_reason,
         "overdue": bool(wo.scheduled_for and wo.scheduled_for < today and wo.state in core.BEFORE_COMPLETED),
         "replacements": reps, "history": hist, "labor": labor,
+        "source_alert_id": wo.source_alert_id, "finding": wo.finding, "resets_baseline": wo.resets_baseline,
+        "due_by": wo.due_by.isoformat() if wo.due_by else None,
         "allowed_transitions": allowed,
         "user_allowed_transitions": [t for t in allowed if user is None or can_transition(user, wo, t)],
     }
@@ -485,7 +492,8 @@ async def transition(db: AsyncSession, wo: WorkOrder, to: str, user: User, *, no
                      at: Optional[datetime] = None, scheduled_for: Optional[date] = None,
                      assignee_id: Optional[str] = None, hold_reason: Optional[str] = None,
                      cancel_reason: Optional[str] = None, labor_hours: Optional[float] = None,
-                     remaining_hours: Optional[float] = None, check_permission: bool = True) -> dict:
+                     remaining_hours: Optional[float] = None, check_permission: bool = True,
+                     finding: Optional[str] = None, resets_baseline: Optional[bool] = None) -> dict:
     """Validated state change with audit trail and side effects. Returns {'plans_reset': [...],
     'new_draft_id': ...}. Raises 422 (invalid transition, with `allowed`) or 403."""
     now = clock.now()
@@ -496,6 +504,8 @@ async def transition(db: AsyncSession, wo: WorkOrder, to: str, user: User, *, no
     if check_permission and not can_transition(user, wo, to, line_id):
         raise HTTPException(status_code=403, detail="Seu papel não permite esta transição.")
     at = check_at(at, wo, now)
+    from ..predictive import service as predictive   # P-9: `finding` of a predictive WO born from an alert
+    await predictive.validate_wo_transition(db, wo, to, finding)
     frm = wo.state
     result: dict = {"plans_reset": [], "new_draft_id": None}
     assignee_changed = False
@@ -592,6 +602,8 @@ async def transition(db: AsyncSession, wo: WorkOrder, to: str, user: User, *, no
                            body=wo.title, link=f"/maintenance/work-orders/{wo.id}",
                            data={"work_order_id": wo.id, "scheduled_for": wo.scheduled_for.isoformat()}, line_id=line_id)
     await _notify_assignee(db, wo, assignee_changed, bool(result.get("rescheduled")))
+    # P-2/P-8: baseline resets, alert closed/back to acknowledged by the WO outcome
+    await predictive.on_wo_transition(db, wo, frm, to, at, finding=finding, resets_baseline=resets_baseline)
     data = await wo_out(db, wo, full=False)
     await webhooks.enqueue(db, wo.tenant_id, "work_order.state_changed", {**data, "from_state": frm, "to_state": to})
     await webhooks.enqueue(db, wo.tenant_id, f"work_order.{to}", data)

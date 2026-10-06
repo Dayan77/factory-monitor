@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
@@ -127,11 +127,21 @@ async def overdue_work_orders(db: AsyncSession, tenant_id: str, now: datetime) -
     return n
 
 
+def stop_failure():
+    """Failures that stop the machine: linked to a stop, or detector drafts of a fault that began during a planned
+    break / off-shift (S5-1, no DowntimeEvent yet)."""
+    return or_(FailureRecord.downtime_event_id.is_not(None),
+               FailureRecord.detection_method == "production_interference")
+
+
 async def emergency_calls(db: AsyncSession, tenant_id: str, now: datetime) -> int:
     cfg = await settings_for(db, tenant_id)
+    # Sprint 5 (kpis.md S5-1): the call goes out regardless of the calendar — a fault that began during a planned
+    # break / off-shift has a FailureRecord but no DowntimeEvent yet, and the technicians are called anyway.
+    # Manual records never match: they are created with emergency_notified_at already set.
     frs = (await db.execute(select(FailureRecord).where(
         FailureRecord.tenant_id == tenant_id, FailureRecord.emergency_notified_at.is_(None),
-        FailureRecord.downtime_event_id.is_not(None), FailureRecord.restored_at.is_(None),
+        stop_failure(), FailureRecord.restored_at.is_(None),
         FailureRecord.severity.in_(core.COUNTED_SEVERITIES)))).scalars().all()
     n = 0
     for f in frs:
@@ -152,9 +162,11 @@ async def emergency_calls(db: AsyncSession, tenant_id: str, now: datetime) -> in
         mins = max(int((now - f.failed_at).total_seconds() // 60), 0)
         # workflows §3: the call carries the emergency WO so the technician can take it on /m
         wo = await engine_emergency_work_order(db, f, f"Chamado emergencial — {m.name if m else 'máquina'}", now)
+        body = ("Parada por falha de equipamento (EQP)." if f.downtime_event_id else
+                "Falha de equipamento (EQP) durante pausa planejada ou fora do turno — a máquina não volta a produzir.")
         await emergency_call(db, tenant_id, f.machine_id,
                              f"Chamado emergencial: {m.name if m else 'máquina'} — falha há {mins} min",
-                             body="Parada por falha de equipamento (EQP).", link=f"/m/work-orders/{wo.id}",
+                             body=body, link=f"/m/work-orders/{wo.id}",
                              data={"failure_id": f.id, "downtime_event_id": f.downtime_event_id,
                                    "machine_id": f.machine_id, "work_order_id": wo.id})
         n += 1
@@ -180,7 +192,7 @@ async def escalations(db: AsyncSession, tenant_id: str, now: datetime) -> int:
     cfg = await settings_for(db, tenant_id)
     frs = (await db.execute(select(FailureRecord).where(
         FailureRecord.tenant_id == tenant_id, FailureRecord.escalated_at.is_(None),
-        FailureRecord.restored_at.is_(None), FailureRecord.downtime_event_id.is_not(None),
+        FailureRecord.restored_at.is_(None), stop_failure(),
         FailureRecord.severity.in_(core.COUNTED_SEVERITIES)))).scalars().all()
     n = 0
     for f in frs:

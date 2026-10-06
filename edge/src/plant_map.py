@@ -15,6 +15,7 @@ Formato (version 1):
         {"key": "linha.maquina.sinal", "tag_id": "<uuid do servidor>|null", "source": "modbus-plc",
          "semantic_role": "cycle_counter", "unit": "ciclos", "counter_max": 65535,
          "address": 10,                      # OPC UA: NodeId "ns=2;s=..."; Modbus: endereço 0-based
+                                             #   (ou "unit=2;hr=10:uint16", formato do Tag.address do servidor)
          "unit_id": 2, "register_type": "holding", "data_type_plc": "uint16", "word_order": "big",
          "scale": 1.0, "offset": 0.0, "poll_interval_ms": 1000}
       ],
@@ -36,6 +37,19 @@ Regras (docs/domain.md §3):
   `sources[].max_clock_skew_s`: número > 0 (padrão 2) ou `off`. Ver edge/src/clock.py.
 - `signal_role` (opcional): papel de borda quando o servidor ainda não tem o papel (Sprint 3: `product_code`
   = código do produto no CLP, `starved`, `blocked`); esses sinais discretos também não passam por deadband.
+
+Sprint 5 (preditiva, docs/predictive.md P-1 — as características por janela são calculadas no SERVIDOR; o edge
+entrega as leituras certas):
+- `stroke_time` é um **evento por ciclo**: cada golpe vira uma leitura, mesmo com o mesmo valor do golpe anterior
+  (o servidor tira a mediana do bloco e exige leitura em ≥ 80 % dos ciclos). OPC UA: cada notificação é um golpe.
+  Modbus: o gateway publica o tempo de curso quando o **contador da mesma posição** avança (`machine`+`position`
+  ou `position_id` iguais; papel `cycle_counter`/`cycle_pulse`) — sem contador, só quando o valor muda.
+- `deadband_pct` (opcional, por tag): substitui o DEADBAND_PCT global (ex.: 0,1 % para a corrente RMS usada na
+  média ponderada da preditiva; 0 = publica toda mudança).
+- `aggregate` (opcional, só grandezas contínuas): `{"window_s": 1.0, "stat": "rms"|"peak"|"mean"|"max"|"min"}` —
+  o gateway amostra a tag (poll/notificação) e publica UM valor por janela (instante = fim da janela): RMS ou pico
+  (máx |x|) de vibração/corrente quando o sensor entrega a forma de onda/amostras e não o valor RMS pronto.
+  Em OPC UA cada NodeId só pode ter uma tag (para RMS e pico do mesmo sinal use Modbus ou dois nós).
 """
 
 from __future__ import annotations
@@ -58,8 +72,12 @@ DEADBAND_ROLES = {"analog", "speed", "current"}      # só grandezas contínuas 
 COUNTER_ROLES = {"cycle_counter", "cycle_pulse", "part_counter_good", "part_counter_scrap", "part_counter_total"}
 MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
 MODBUS_BIT_TYPES = {"coil", "discrete"}
+AGGREGATE_STATS = {"rms", "peak", "mean", "max", "min"}
 
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+# Endereço Modbus no formato do servidor (Tag.address gravado pelo provisionamento): "unit=2;hr=10:uint16"
+_MODBUS_ADDR = re.compile(r"^unit=(\d+);(hr|ir|di|co)=(\d+)(?::(\w+))?$")
+_AREA = {"hr": "holding", "ir": "input", "di": "discrete", "co": "coil"}
 
 
 class PlantMapError(ValueError):
@@ -126,6 +144,15 @@ class MapTag:
     offset: float = 0.0
     poll_interval_ms: int = 1000
     signal_role: Optional[str] = None
+    machine: str = ""               # nome da máquina (mapa da planta virtual) ou machine_id (mapa do servidor)
+    position: Optional[str] = None  # nome da posição ou position_id
+    deadband_pct: Optional[float] = None
+    aggregate: Optional[dict] = None    # {"window_s": float, "stat": "rms"|...}
+
+    @property
+    def position_group(self) -> Optional[str]:
+        """Identidade da posição para parear tempo de curso ↔ contador (None = tag da máquina)."""
+        return f"{self.machine}/{self.position}" if self.position else None
 
     @property
     def bypass_deadband(self) -> bool:
@@ -213,7 +240,14 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
             if role == "cycle_pulse":
                 raise PlantMapError(f"tag {key}: cycle_pulse só é suportado em bit Modbus (coil/discrete)")
         else:
-            if not isinstance(address, int) or address < 0:
+            m = _MODBUS_ADDR.match(address.strip()) if isinstance(address, str) else None
+            if m:          # "unit=2;hr=10:uint16" (Tag.address do servidor) → campos do mapa v1
+                raw = {**raw, "unit_id": raw.get("unit_id", int(m.group(1))),
+                       "register_type": raw.get("register_type", _AREA[m.group(2)])}
+                if m.group(4):
+                    raw.setdefault("data_type_plc", m.group(4))
+                address = int(m.group(3))
+            if not isinstance(address, int) or isinstance(address, bool) or address < 0:
                 raise PlantMapError(f"tag {key}: endereço Modbus deve ser inteiro >= 0 ({address!r})")
             rt = raw.get("register_type", "holding")
             if rt not in MODBUS_REGISTER_TYPES:
@@ -226,6 +260,20 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
         counter_max = raw.get("counter_max")
         if counter_max is not None and (not isinstance(counter_max, int) or counter_max <= 0):
             raise PlantMapError(f"tag {key}: counter_max inválido {counter_max!r}")
+        deadband_pct = raw.get("deadband_pct")
+        if deadband_pct is not None and (isinstance(deadband_pct, bool) or not isinstance(deadband_pct, (int, float))
+                                         or deadband_pct < 0):
+            raise PlantMapError(f"tag {key}: deadband_pct inválido {deadband_pct!r}")
+        aggregate = raw.get("aggregate") or None
+        if aggregate is not None:
+            if role not in DEADBAND_ROLES or signal_role in SIGNAL_ROLES:
+                raise PlantMapError(f"tag {key}: aggregate só vale para grandezas contínuas (não {role})")
+            w, stat = aggregate.get("window_s") if isinstance(aggregate, dict) else None, \
+                (aggregate.get("stat") if isinstance(aggregate, dict) else None)
+            if isinstance(w, bool) or not isinstance(w, (int, float)) or w <= 0 or stat not in AGGREGATE_STATS:
+                raise PlantMapError(f"tag {key}: aggregate inválido {aggregate!r} "
+                                    f"(window_s > 0, stat em {sorted(AGGREGATE_STATS)})")
+            aggregate = {"window_s": float(w), "stat": stat}
 
         tag = MapTag(
             key=key, source=src.id, semantic_role=role, address=address,
@@ -234,6 +282,9 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
             data_type_plc=raw.get("data_type_plc", "uint16"), word_order=raw.get("word_order", "big"),
             scale=float(raw.get("scale", 1.0)), offset=float(raw.get("offset", 0.0)),
             poll_interval_ms=int(raw.get("poll_interval_ms", 1000)), signal_role=signal_role,
+            machine=str(raw.get("machine_id") or raw.get("machine") or ""),
+            position=(raw.get("position_id") or raw.get("position") or None),
+            deadband_pct=None if deadband_pct is None else float(deadband_pct), aggregate=aggregate,
         )
         if tag.tag_id is None:
             skipped.append(key)

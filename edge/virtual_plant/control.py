@@ -6,6 +6,10 @@ planta → gateway → servidor → OS → ação física → planta:
 
     GET  /status                       verdade de campo: uso, vida até a falha e restante por componente,
                                        falha ativa por máquina, tempo simulado
+    GET  /truth                        verdade da preditiva (predictive.md P-10/P-11): por (posição, sinal) o
+                                       perfil de degradação, início, falha real e estado verdadeiro agora;
+                                       lista de falhas reais. Também no playback do cenário F (com instantes no
+                                       relógio do dispositivo = o que o servidor recebe)
     POST /replace        {"position": "montagem.fixacao.a2", "reset_counter": false, "reason": "preventive_replacement"}
                                        troca o componente: desgaste zerado, nova vida sorteada; com
                                        reset_counter=true o contador do CLP da posição também vai a 0 (como numa
@@ -102,7 +106,18 @@ class PlantControl:
                         "fault_item": ev.get("item") if ev else None}
         return out
 
+    def truth(self) -> dict:
+        """Verdade de campo da preditiva (predictive.md P-10/P-11): degradações e falhas reais."""
+        fn = getattr(self.model, "truth", None)
+        if fn is None:
+            raise ControlError(409, "este modelo não exporta verdade de campo da preditiva")
+        return fn()
+
     def status(self) -> dict:
+        if getattr(self.model, "wear", None) is None and hasattr(self.model, "truth"):
+            snap = self.model.snapshot()       # playback preditivo: sem manutenção, só estado + verdade
+            return {"sim_time_s": self.model.sim_time_s, "seed": self.model.seed, "scenario": snap.get("scenario"),
+                    "truth": snap.get("truth")}
         w = self.wear
         return {"sim_time_s": self.model.sim_time_s, "seed": self.model.seed, "repair_mode": w.repair_mode,
                 "wear_failures": w.failures_enabled, "machines": self.machines_status(), "components": w.status()}
@@ -118,6 +133,7 @@ class PlantControl:
         return self.wear.replace(it.id, reset_counter=reset, reason=reason)
 
     def repair(self, body: dict) -> dict:
+        self.wear                                   # playback de cenário → 409
         machine = self._machine(body.get("machine"))
         out = self.wear.repair(machine)
         if not out["cleared_code"] and out["wear_item"] is None:
@@ -127,6 +143,7 @@ class PlantControl:
         return out
 
     def force_failure(self, body: dict) -> dict:
+        self.wear                                   # playback de cenário → 409
         duration = body.get("duration_s")
         if duration is not None and (not isinstance(duration, (int, float)) or isinstance(duration, bool)
                                      or duration <= 0):
@@ -196,8 +213,12 @@ def build_app(control: PlantControl, token: str = "", after_change: Optional[Cal
     async def status(_request):
         return web.json_response(control.status())
 
+    async def truth(_request):
+        return web.json_response(control.truth())
+
     app = web.Application(middlewares=[guard])
     app.router.add_get("/status", status)
+    app.router.add_get("/truth", truth)
     app.router.add_post("/replace", action(control.replace))
     app.router.add_post("/repair", action(control.repair))
     app.router.add_post("/force-failure", action(control.force_failure))
@@ -224,6 +245,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--url", default=env("VP_CONTROL_URL", f"http://127.0.0.1:{env('VP_CONTROL_PORT', '7070')}"))
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
+    sub.add_parser("truth")
     r = sub.add_parser("replace")
     r.add_argument("position")
     r.add_argument("--reset-counter", action="store_true")
@@ -238,8 +260,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     f.add_argument("--duration-s", type=float)
     a = p.parse_args(argv)
     token = env("VP_CONTROL_TOKEN", "")
-    if a.cmd == "status":
-        st, out = _call(a.url, "GET", "/status", token=token)
+    if a.cmd in ("status", "truth"):
+        st, out = _call(a.url, "GET", f"/{a.cmd}", token=token)
     elif a.cmd == "replace":
         st, out = _call(a.url, "POST", "/replace", {"position": a.position, "reset_counter": a.reset_counter,
                                                     "reason": a.reason}, token)

@@ -606,3 +606,11 @@ Dia 1 = 04/01/2027 (troca de rolamentos; aquecimento). Janela = 1 dia local, mé
    dê a série de F1 (ex.: 10 000 leituras = valor do bloco ± ruído simétrico) e conferir a característica;
    (c) **planta virtual** — perfil lento de degradação até a falha (predictive.md P-11) para medir antecedência e
    falsos alarmes reais (não é ouro: é estocástica com seed).
+
+## Testes de especificação do Sprint 6 (docs, sem servidor)
+
+| Arquivo | O que prova |
+|---|---|
+| [`test_reports_spec.py`](test_reports_spec.py) | kpis.md "Decisões Sprint 5" (`kpi-s5-cases`: falha na pausa, S5-1/S5-1b) por aritmética de intervalos + conformidade com `server/src/services/oee/kpi.py` e `maintenance/core.py`; reports.md: Weibull MLE com censura (oráculo por maximização da verossimilhança de perfil e Hessiana numérica), ranks de Johnson/Bernard, horários de envio (`ready_at`/`send_at`) no fuso da planta, valores exibidos a partir de `kpi-test-cases` |
+| [`test_sprint6_spec.py`](test_sprint6_spec.py) | sprint6.md: precedência de estados do mapa contra `MachineStatus`; layout de exemplo; CSV de tags lido com `csv` e aceito pelo parser do edge (`edge/src/plant_map.py`); papéis semânticos = servidor = edge |
+| [`test_pilot_spec.py`](test_pilot_spec.py) | pilot.md: comparação antes × depois recalculada pelas regras de kpis.md §1 e referências cruzadas |

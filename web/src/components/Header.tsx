@@ -19,13 +19,15 @@ const TITLES: Record<string, string> = {
   "/maintenance/failures": "Falhas",
   "/maintenance/kpis": "Gestão da manutenção",
   "/maintenance/reliability": "Confiabilidade",
+  "/maintenance/predictive": "Manutenção preditiva",
+  "/settings/gateways": "Gateways de campo",
   "/factory": "Fábrica",
   "/lines": "Linhas de Produção",
   "/machines": "Máquinas",
   "/sensors": "Sensores",
   "/cameras": "Câmeras",
   "/alerts": "Alertas",
-  "/ai": "IA & Chat",
+  "/ai": "Assistente de IA",
   "/admin": "Administração",
 };
 

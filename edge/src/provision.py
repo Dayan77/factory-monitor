@@ -451,13 +451,19 @@ class Provisioner:
             or (position.get("installed_component") or {}).get("id") == found["id"]
             or (position.get("current_component") or {}).get("id") == found["id"]
         )
+        want_at = comp.get("installed_at")
         if installed_here:
+            have = found.get("installed_at")
+            if want_at and have and _iso_utc(have) != _iso_utc(want_at):
+                # cenário F: a linha de base começa na instalação; outra data = playback fora da janela monitorada
+                self._warn(f"{label}: componente {serial} instalado em {have}, o mapa pede {want_at} "
+                           "(remova o componente da posição e rode o provisionamento de novo)")
             return
         if found.get("position_id") and not found.get("removed_at"):
             self._warn(f"componente {serial} está instalado em outra posição; não reinstalado")
             return
-        status, data = await self.api.request("POST", f"/api/positions/{position['id']}/install",
-                                              json_body={"component_id": found["id"]})
+        body = {"component_id": found["id"], **({"installed_at": want_at} if want_at else {})}
+        status, data = await self.api.request("POST", f"/api/positions/{position['id']}/install", json_body=body)
         if status in (200, 201, 204):
             self.stats["created"] += 1
             self.log(f"  + instalação {serial} em {label}")
@@ -465,6 +471,16 @@ class Provisioner:
             self._warn(f"{label}: posição já tem outro componente instalado ({str(data)[:120]})")
         else:
             raise ProvisionError(f"install {serial} em {label} → {status}: {str(data)[:300]}")
+
+
+def _iso_utc(s: str) -> str:
+    """ISO-8601 normalizado em UTC (comparar datas vindas do servidor com as do mapa)."""
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except ValueError:
+        return str(s)
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
 
 
 def _address_string(tag: dict) -> str:

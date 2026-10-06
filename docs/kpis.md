@@ -766,3 +766,120 @@ Resumo para quem procura aqui:
 
 Pergunta de toda manhã nº 11 (complementa §5): **Manutenção** — "O que está degradando e quando vai falhar?" →
 tela Preditiva (`/maintenance/predictive`) → alertas por severidade, RUL de condição com faixa (predictive.md P-8).
+
+## Decisões Sprint 5
+
+- **S5-1 — Falha de equipamento que começa durante pausa planejada ou fora do turno** (achado do QA do Sprint 4:
+  nada era criado até a pausa acabar). Decisão do dono do produto, normativa:
+  - O `FailureRecord` rascunho (`failed_at` = instante em que `fault_state` ficou ≠ 0, `detection_method =
+    production_interference`) e o **chamado emergencial** aos técnicos de plantão são criados **imediatamente**,
+    independentemente do calendário — a máquina quebrou e precisa de manutenção mesmo sem tempo de produção perdido.
+    Enquanto não há tempo produtivo envolvido a falha não tem `DowntimeEvent` (`downtime_event_id` nulo) e aparece
+    como **aberta** em Falhas; o escalonamento (> 2 × MTTR) vale para ela também.
+  - **OEE inalterado**: o tempo dentro da pausa continua PDOT; o tempo fora do turno continua fora do POT. Uma parada
+    inteiramente na pausa/fora do turno continua sem evento (D4/C24d).
+  - Quando o tempo produtivo recomeça com a falha ainda ativa, o `DowntimeEvent` cobre **só a parte produtiva** (começa
+    no fim da pausa / no início do turno) e é ligado à **mesma** falha (uma falha por parada, D3); a OS emergencial
+    aberta na pausa passa a apontar para essa parada. Só paradas com falha (`fault_state ≠ 0`) são cortadas assim; as
+    demais paradas que começam numa pausa mantêm a forma do Sprint 3 (evento desde o início, parte na pausa = PDOT).
+  - **MTTR** usa o tempo de relógio de `failed_at` até o restabelecimento. Restabelecimento: o fim da parada (D1) — exceto
+    quando a falha **some fora do tempo produtivo** (na pausa ou fora do turno): aí `restored_at` = instante em que
+    `fault_state` voltou a 0, porque ninguém religa a máquina antes do turno e essa espera não é reparo. Ex.: falha
+    10:05–10:20 numa pausa 10:00–10:30 → `restored_at` 10:20, MTTR 15 min, sem evento; falha 10:05 numa pausa
+    10:00–10:15 que só some às 10:40 → evento 10:15–10:40 (ADOT 25 min, PDOT da pausa 15 min), MTTR 35 min.
+  - Releitura/atraso de dados (rewind) que apaga a falha remove o rascunho sem evento, salvo se já houve chamado/OS.
+  - Testes: `server/tests/test_break_fault_s5.py`.
+
+### S5-1 — Exemplo trabalhado (caso `break_fault_shift`)
+
+Torno CNC (Linha de Usinagem, Planta Manaus), dia produtivo 05/10, **Turno A 06:00–14:00**, produto único com
+PRI = 30 s, `micro_stop_threshold_s = 120`. Pausas do turno (`PLN-01`): café **10:00–10:15** e refeição
+**12:00–12:30** → PDOT 45 min, PBT 435 min. Quatro falhas com código (`fault_state ≠ 0`), mapeadas para `EQP-*`:
+
+| # | `fault_state ≠ 0` | `run_state` | Onde começa | `DowntimeEvent` (ADOT) | `failed_at` → `restored_at` | Tempo p/ restabelecer |
+|---|---|---|---|---|---|---|
+| F1 | 08:00–08:20 | 0 de 08:00 a 08:20 | produção | 08:00–08:20 (**20 min**) | 08:00 → 08:20 (fim da parada, D1) | 20 min |
+| F2 | 10:05–10:40 | 0 de 10:00 (pausa) a 10:40 | café | **10:15**–10:40 (**25 min**; só a parte produtiva) | 10:05 → 10:40 (fim da parada) | 35 min |
+| F3 | 12:10–12:20 | 0 de 12:00 a 12:30 (volta no fim da pausa) | refeição | nenhum (falha sumiu dentro da pausa) | 12:10 → **12:20** (`fault_state` = 0) | 10 min |
+| F4 | 14:30–15:00 | 0 desde 14:00 (fim do turno) | fora do turno | nenhum (fora do POT) | 14:30 → **15:00** (`fault_state` = 0) | 30 min |
+
+Produção: PQ = 760, GQ = 745 (SQ = 15). Sem micro-paradas.
+
+- **OEE (inalterado pela decisão)**: ADOT = 20 + 25 = 45 min → APT = 390 min. Σ PRI·PQ = 380 min, Σ PRI·GQ = 372,5 min.
+  A = 390/435 = **0,896552**; P = 380/390 = **0,974359**; Q = 745/760 = **0,980263**; OEE = 372,5/435 = **0,856322**.
+  PDOT continua **45 min**: os 10 min de F2 dentro do café (10:05–10:15) e toda a F3 são PDOT; F4 está fora do POT.
+- **Ao** (§2.6): T_req = 480 − 45 = 435 min; D_eq = paradas `EQP-*` dentro de T_req = 45 min → Ao = 390/435 = **0,896552**.
+  A parte de F2 dentro do café e as falhas F3/F4 **não** entram em D_eq (não havia tempo requerido).
+- **Confiabilidade do dia** (janela 05/10 00:00–24:00 local, por `failed_at`): n = **4** (todas `critical`, D3);
+  tempo de operação = Σ `run_state = 1` = 390 min = 6,5 h (C23) → MTBF = 6,5/4 = **1,625 h**;
+  MTTR = (20 + 35 + 10 + 30)/4 = 95/4 = **23,75 min**; `restored = 4`.
+- **Chamados**: F1, F2, F3 e F4 geram o chamado emergencial no primeiro ciclo do motor depois de ficarem ativas por
+  `micro_stop_threshold_s` (ver S5-1b); F3 e F4 geram OS emergencial **sem** `downtime_event_id`; a OS de F2 passa a
+  apontar para o evento 10:15–10:40 quando ele abre.
+
+Respostas erradas (o teste garante que nenhuma coincide com o certo):
+
+| Interpretação errada | Resultado |
+|---|---|
+| comportamento do Sprint 4 (falha só nasce quando a pausa acaba; F3/F4 não existem; F2 com `failed_at` 10:15) | n = 2, MTTR = (20 + 25)/2 = 22,5 min, MTBF = 3,25 h |
+| contar a parte de F2 dentro do café como ADOT (evento desde 10:05) | ADOT 55, A = 380/435 = **0,873563** (e Ao idem) — a pausa viraria perda de disponibilidade |
+| MTTR de F2 pela duração do evento (25 min) | MTTR = (20 + 25 + 10 + 30)/4 = 21,25 min |
+| `restored_at` de F4 = início do próximo turno (06:00 de 06/10) | MTTR = (20 + 35 + 10 + 930)/4 = 248,75 min |
+
+### S5-1b — Falha curta fora do tempo produtivo (complemento normativo de S5-1)
+
+O limiar de C22 vale também aqui, aplicado à **duração da própria falha** (não da parada, que numa pausa é longa
+por definição): uma falha que começa **e termina** fora do tempo produtivo com `fault_until − fault_since <
+micro_stop_threshold_s` é contada só como `short_faults`, **não** gera `FailureRecord` nem chamado. Uma falha ainda
+ativa só gera o rascunho e o chamado quando completa o limiar (é a mesma espera do chamado em produção:
+maintenance_workflows.md §5, "após o limiar de parada"). Motivo: em pausa/limpeza é comum um alarme de porta aberta
+ou de emergência acionada por segundos; sem o limiar, cada um viraria chamado de plantão e falha no MTBF.
+Exemplo (caso `break_short_fault`): pausa 10:00–10:30, `fault_state = 7` de 10:05:00 a 10:05:20 → 20 s < 120 s →
+`short_faults = 1`, nenhuma falha, nenhum chamado; se durasse 10:05:00–10:07:00 (120 s, limiar inclusivo como C22)
+→ 1 falha, `restored_at` 10:07, MTTR 2 min.
+**Divergência encontrada** (Sprint 5, verificada contra `server/src/services/oee/detector.py`): hoje a falha de
+20 s dentro da pausa cria `FailureRecord` (o filtro de C22 olha a duração da parada) — corrigir no backend e
+acrescentar o caso a `server/tests/test_break_fault_s5.py`.
+
+### S5-1c — Revisão de consistência com ISO 14224 e ISO 22400
+
+| # | Ponto | Norma | Conclusão |
+|---|---|---|---|
+| 1 | Falha registrada mesmo sem tempo de produção | ISO 14224 (definição de *failure*, seção 3 — confirmar número da cláusula): término da capacidade de o item desempenhar a função requerida; o registro de falha independe de o item estar em produção (há falhas em espera/*standby* e "falha ao partir") | **consistente**: o `FailureRecord` nasce do estado do equipamento, não do calendário |
+| 2 | Tempo dentro da pausa = PDOT; fora do turno = fora do POT | ISO 22400-2: PDOT é tempo planejado sem produção; ADOT só existe dentro do PBT | **consistente**: o OEE mede perda do tempo planejado para produzir; a falha na pausa não tirou tempo planejado |
+| 3 | Pausa que se estende por causa da falha (F2 10:15–10:40) | ISO 22400-2: parada não planejada dentro do PBT → ADOT | **consistente** (ADOT 25 min, motivo `EQP-*`) |
+| 4 | MTTR desde `failed_at`, inclusive a parte na pausa | ISO 14224 / IEC 60050-192: *time to restoration* = do instante da falha até o item voltar ao estado de funcionar (inclui detecção, espera e reparo) | **consistente**; MART (§2.3) continua sendo o tempo ativo de reparo, quando apontado |
+| 5 | `restored_at` = `fault_state` volta a 0 fora do tempo produtivo | IEC 60050-192: restabelecimento = item capaz de desempenhar a função; a espera pelo turno é tempo não requerido, não indisponibilidade | **consistente** como *proxy*; a UI mostra "restabelecido (falha zerada no CLP)" para diferenciar de "voltou a produzir" |
+| 6 | MTBF por **tempo de operação** com falhas que ocorreram parado | ISO 14224 admite base de tempo **calendário** ou **operacional**, desde que declarada | **consistente, com ressalva**: F3/F4 entram em n mas o tempo parado não entra no denominador → λ por hora de operação fica um pouco maior (conservador). A resposta de confiabilidade DEVE trazer `failures_outside_production` (n das falhas cujo `failed_at` cai fora do tempo produtivo — pausa ou fora do turno; no exemplo F2, F3 e F4 = 3) para o analista separar |
+| 7 | §2.3 "só falhas que pararam a produção (com `DowntimeEvent`) entram no MTTR" | — | **conflito de texto, resolvido**: vale S4-10 (domain.md): entram no MTTR todas as falhas `critical`/`degraded` **com `restored_at`**; F3/F4 têm `restored_at` e entram. A frase de §2.3 deve ser lida como "falha achada em inspeção sem restabelecimento não entra" |
+| 8 | PMP (§3.1) | EN 15341 | a OS emergencial de F3/F4 é `corrective` `emergency` → horas não planejadas, mesmo sem perda de produção (consistente: foi trabalho não programado) |
+| 9 | Escalonamento > 2 × MTTR | — | vale para falha sem evento (S5-1); F4 fora do turno escalona para o plantão, não para o supervisor de produção (não há turno) |
+
+**Nota de nomenclatura**: "S5-1" aqui (falha na pausa) e "S5-1" em domain.md "Esclarecimentos Sprint 5"
+(gatilho de condição) são itens diferentes. Citar como **kpis S5-1** e **domain S5-1**.
+
+```json kpi-s5-cases
+[
+  {"id": "break_fault_shift", "kpi": "break_fault",
+   "input": {"shift": ["06:00", "14:00"], "breaks": [["10:00", "10:15"], ["12:00", "12:30"]],
+             "ideal_cycle_time_s": 30, "produced": 760, "good": 745, "micro_stop_threshold_s": 120,
+             "faults": [{"id": "F1", "fault": ["08:00", "08:20"], "run_zero": ["08:00", "08:20"]},
+                        {"id": "F2", "fault": ["10:05", "10:40"], "run_zero": ["10:00", "10:40"]},
+                        {"id": "F3", "fault": ["12:10", "12:20"], "run_zero": ["12:00", "12:30"]},
+                        {"id": "F4", "fault": ["14:30", "15:00"], "run_zero": ["14:00", "15:00"]}]},
+   "expected": {"pot_min": 480, "pdot_min": 45, "pbt_min": 435, "adot_min": 45, "apt_min": 390,
+                "events": [["F1", "08:00", "08:20"], ["F2", "10:15", "10:40"]],
+                "restored": {"F1": "08:20", "F2": "10:40", "F3": "12:20", "F4": "15:00"},
+                "availability": 0.896552, "performance": 0.974359, "quality": 0.980263, "oee": 0.856322,
+                "ao": 0.896552, "n": 4, "operating_h": 6.5, "mtbf_h": 1.625, "mttr_min": 23.75,
+                "failures_outside_production": 3},
+   "wrong_answers": {"sprint4_mttr_min": 22.5, "sprint4_mtbf_h": 3.25, "break_as_adot_availability": 0.873563,
+                     "mttr_by_event_min": 21.25, "mttr_restored_next_shift_min": 248.75}},
+  {"id": "break_short_fault", "kpi": "break_fault",
+   "input": {"shift": ["06:00", "14:00"], "breaks": [["10:00", "10:30"]], "micro_stop_threshold_s": 120,
+             "faults_s": [{"id": "short", "start": "10:05:00", "end": "10:05:20"},
+                          {"id": "limit", "start": "10:05:00", "end": "10:07:00"}]},
+   "expected": {"short": {"failure": false, "short_fault": true},
+                "limit": {"failure": true, "restored": "10:07:00", "mttr_min": 2.0}}}
+]
+```

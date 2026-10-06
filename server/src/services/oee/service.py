@@ -166,6 +166,8 @@ def oee_payload(sc: Scope, c: kpi.Components, start: datetime, stop: datetime, g
 async def oee_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, group_by: str, now: datetime) -> dict:
     units = await load_units(db, sc, start, stop, now)
     points, parts = [], []
+    if group_by == "shift_name":
+        return _by_shift_name(sc, units, start, stop, now)
     if group_by != "none":
         for w in windows(sc.cal, sc.tz, start, stop, group_by):
             wc = kpi.Components()
@@ -224,3 +226,42 @@ def day_components(units: list[Unit], insts: list[ShiftInstance], now: datetime)
         for i in insts:
             c.add(components(u.md, i.start, i.end, now, u.pri))
     return c
+
+
+def _by_shift_name(sc: Scope, units: list[Unit], start: datetime, stop: datetime, now: datetime) -> dict:
+    """group_by=shift_name (ai_assistant.md / S3-8): every instance of the same shift in the period is summed
+    (components, never a mean of percentages) — one point per shift name ("Turno A", "Turno C", …)."""
+    groups: dict[str, list[kpi.Components]] = {}
+    bounds: dict[str, tuple[datetime, datetime]] = {}
+    for w in windows(sc.cal, sc.tz, start, stop, "shift"):
+        wc = kpi.Components()
+        for u in units:
+            wc.add(window_components(u.md, w, now, u.pri))
+        name = w.instances[0].name if w.instances else w.label
+        groups.setdefault(name, []).append(wc)
+        a, b = bounds.get(name, (w.start, w.end))
+        bounds[name] = (min(a, w.start), max(b, w.end))
+    points, parts = [], []
+    for name in sorted(groups, key=lambda n: bounds[n][0].astimezone(sc.tz).timetz()):
+        c = kpi.total(groups[name])
+        parts.append(c)
+        r = kpi.oee(c)
+        points.append({"t": bounds[name][0], "end": bounds[name][1], "label": name, "availability": r["availability"],
+                       "performance": r["performance"], "quality": r["quality"], "oee": r["oee"], "teep": r["teep"],
+                       "pbt_s": r["pbt_s"], "good": c.good, "scrap": c.scrap, "instances": len(groups[name])})
+    c = kpi.total(parts)
+    c.calendar_s = max((min(stop, now) - start).total_seconds(), 0.0) * max(1, len(units))
+    out = oee_payload(sc, c, start, stop, "shift_name")
+    out["points"] = points
+    return out
+
+
+def oee_delta(cur: dict, prev: dict) -> dict:
+    """compare_to=previous_period: differences computed by the server (the assistant never subtracts)."""
+    out = {}
+    for k in ("oee", "availability", "performance", "quality", "teep"):
+        a, b = cur.get(k), prev.get(k)
+        out[k] = (a - b) if a is not None and b is not None else None
+    for k in ("good", "scrap", "adot_s", "pbt_s"):
+        out[k] = (cur.get(k) or 0.0) - (prev.get(k) or 0.0)
+    return out

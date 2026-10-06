@@ -247,7 +247,14 @@ export type Capability =
   | "maintenance.execute"   // technician actions (start/pause/complete, labor, tasks, replacement)
   | "maintenance.close"     // completed → closed
   | "maintenance.request"   // "Chamar manutenção" / request a WO
-  | "maintenance.failures"; // failures screen
+  | "maintenance.failures"  // failures screen
+  | "predictive.view"       // condition alerts, charts (predictive.md P-8 read roles)
+  | "predictive.configure"  // monitors, rules, limits, rebaseline
+  | "predictive.decide"     // close alerts / generate the predictive WO
+  | "predictive.ack"        // acknowledge an alert
+  | "predictive.evaluate"   // P-10 performance metrics
+  | "gateways.view"         // field gateways fleet (manager+)
+  | "gateways.admin";       // create / enroll / assign tags (admin)
 
 const CAPS: Record<Capability, string[]> = {
   "maintenance.view": [...PLANNERS, "production_supervisor", "technician"],
@@ -257,6 +264,13 @@ const CAPS: Record<Capability, string[]> = {
   "maintenance.close": ["production_supervisor", "manager", "admin", "superadmin"],
   "maintenance.request": ["production_supervisor", "operator", ...PLANNERS, "technician"],
   "maintenance.failures": [...PLANNERS, "production_supervisor", "technician"],
+  "predictive.view": [...PLANNERS, "production_supervisor", "technician"],
+  "predictive.configure": PLANNERS,
+  "predictive.decide": PLANNERS,
+  "predictive.ack": [...PLANNERS, "technician"],
+  "predictive.evaluate": PLANNERS,
+  "gateways.view": ["manager", "admin", "superadmin"],
+  "gateways.admin": ["admin", "superadmin"],
 };
 
 export function can(u: RoleCarrier | null | undefined, cap: Capability): boolean {

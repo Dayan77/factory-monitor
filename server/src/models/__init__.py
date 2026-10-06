@@ -15,6 +15,10 @@ from .production import (Shift, CalendarException, Product, MachineProduct, Prod
                          DowntimeDetectorSnapshot)
 from .maintenance import (MaintenancePlan, WorkOrder, WorkOrderHistory, WorkOrderLabor, WorkOrderReplacement,
                           MaintenanceSettings, MaintenanceAbsence)
+from .gateway import Gateway
+from .ai import AiConversation, AiMessage, AiToolCall, AiUsage
+from .predictive import (PredictiveMonitor, PredictiveRule, ConditionBaseline, ConditionFeature, PredictiveAlert,
+                         PredictiveAlertEvent, ProductionPlanDay)
 from .notification import (Notification, NotificationPreference, PushSubscription, ApiToken, Webhook,
                            WebhookDelivery)
 
@@ -33,5 +37,8 @@ __all__ = [
     "DowntimeEvent", "FailureRecord", "MicroStopBucket", "MachineDataSpan", "DowntimeDetectorState", "DowntimeDetectorSnapshot",
     "MaintenancePlan", "WorkOrder", "WorkOrderHistory", "WorkOrderLabor", "WorkOrderReplacement",
     "MaintenanceSettings", "MaintenanceAbsence",
+    "Gateway", "AiConversation", "AiMessage", "AiToolCall", "AiUsage",
+    "PredictiveMonitor", "PredictiveRule", "ConditionBaseline", "ConditionFeature", "PredictiveAlert",
+    "PredictiveAlertEvent", "ProductionPlanDay",
     "Notification", "NotificationPreference", "PushSubscription", "ApiToken", "Webhook", "WebhookDelivery",
 ]

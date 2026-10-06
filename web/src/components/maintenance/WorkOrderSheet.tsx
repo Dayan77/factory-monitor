@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import WoPredictiveBlock from "@/components/predictive/WoPredictiveBlock";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import Sheet from "@/components/ui/Sheet";
@@ -294,6 +295,12 @@ export function WorkOrderBody({ wo }: { wo: WorkOrder }) {
         </div>
         {est > 0 && <Progress value={wo.labor_hours / est} label="Horas apontadas sobre as estimadas" fillClassName={wo.labor_hours > est ? "bg-warn-solid" : "bg-accent"} size="sm" />}
       </Section>
+
+      {wo.source_alert_id && (
+        <Section title={`Alerta preditivo de origem${wo.finding ? ` · achado: ${wo.finding === "defect_confirmed" ? "defeito confirmado" : "sem defeito"}` : ""}`}>
+          <WoPredictiveBlock alertId={wo.source_alert_id} showLink />
+        </Section>
+      )}
 
       {wo.description && (
         <Section title="Descrição"><p className="whitespace-pre-line text-body text-fg">{wo.description}</p></Section>
