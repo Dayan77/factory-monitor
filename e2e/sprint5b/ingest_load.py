@@ -213,6 +213,21 @@ class Api:
         return call
 
 
+def recompute_full(api: "Api", monitor_id: str, timeout_s: float = 1800) -> dict:
+    """reextract_all recompute as a background job (202 + poll): a full re-extraction takes minutes."""
+    job = api.post("/api/predictive/recompute", expect=(202,),
+                   json={"monitor_id": monitor_id, "reextract_all": True, "background": True})
+    t_end = time.time() + timeout_s
+    while True:
+        j = api.get(f"/api/predictive/recompute/jobs/{job['job_id']}")
+        if j["status"] != "running" or time.time() > t_end:
+            break
+        time.sleep(2)
+    if j["status"] != "done":
+        raise RuntimeError(f"recompute job {j['status']}: {j.get('error')}")
+    return j["result"]
+
+
 def setup(api: Api, installed: datetime) -> dict:
     stamp = uuid.uuid4().hex[:8]
     email = f"qa-load-{stamp}@qa-factoryconnect.com.br"
@@ -512,7 +527,7 @@ def full_f1_checks(api: Api, ids: dict) -> None:
             elif got != v:
                 diffs.append((k, got, v))
         check(not diffs, f"F1: RUL checkpoint window {cp['window']}", diffs)
-    rc = api.post("/api/predictive/recompute", json={"monitor_id": ids["fast"]["mon"], "reextract_all": True})
+    rc = recompute_full(api, ids["fast"]["mon"])
     check(rc["same"] and rc["monitors"][0]["windows_reextracted"] == 0,
           "F1: full recompute from Influx (reextract_all) gives identical blocks and alerts", rc["monitors"][0].get("differences"))
 
@@ -573,7 +588,7 @@ async def main() -> int:
             us = api.get(f"/api/positions/{ids['slow']['pos']}")["usage"]["cycles_total"]
             report["usage"] = {"fast": uf, "slow": us}
             check(uf == us == W * N, f"usage cycles FAST == SLOW == {W * N}", (uf, us), W * N)
-            rc = api.post("/api/predictive/recompute", json={"monitor_id": ids["fast"]["mon"], "reextract_all": True})
+            rc = recompute_full(api, ids["fast"]["mon"])
             check(rc["same"] and rc["monitors"][0]["windows_reextracted"] == 0,
                   "full recompute from Influx (reextract_all) reproduces blocks and alerts", rc["monitors"][0].get(
                       "differences"), [])

@@ -37,6 +37,18 @@ class EdgeSettings(BaseSettings):
     modbus_tags: list = []
 
     buffer_db_path: str = "/tmp/edge_buffer.db"
+    # Nível do log (debug | info | warning | error). debug registra cada leitura enviada — só para diagnóstico:
+    # a 230 leituras/s isso sozinho ocupa boa parte da CPU do gateway.
+    log_level: str = "info"
+    # Envio (edge/src/gateway.py `_sender_loop`): fila em memória limitada entre a leitura e o broker. Cheia, a
+    # leitura espera (contrapressão até o driver) — a memória do gateway nunca cresce sem limite.
+    outbox_max: int = 20000
+    publish_window: int = 200          # publicações QoS 1 em voo ao mesmo tempo (uma ida e volta por janela)
+    spill_batch: int = 1000            # leituras gravadas no SQLite por transação (offline / com fila pendente)
+    spill_max_age_s: float = 1.0       # uma leitura não fica mais que isso só na memória com o broker fora
+    # OPC UA: fila por item monitorado no servidor (mudanças entre dois publish) e fila local de notificações
+    opcua_queue_size: int = 4096
+    opcua_max_pending: int = 50000
     deadband_pct: float = 0.5   # ignore changes < 0.5%
     # Heartbeat: re-publish an unchanged value after this many seconds of silence.
     # Must stay well below the server's MACHINE_OFFLINE_TIMEOUT_S (60 s), otherwise

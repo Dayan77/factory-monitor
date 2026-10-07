@@ -1,8 +1,9 @@
 """Sprint 5b — MQTT ingestion as a bounded pipeline (QA: data loss + no backpressure under F1 at 500×).
 
 * OrderedPipeline: per-key FIFO order with parallel keys, fixed worker pool, bounded readings in flight
-  (put() blocks), acknowledgements in receive order and only once a reading is finished (its write included),
-  a delivery of an old connection is never acknowledged on the new one;
+  (put() blocks), acknowledgements in receive order PER TAG and only once a reading is finished (its write
+  included) — a stuck reading of one tenant never holds back the acknowledgements of the others —, a delivery of an
+  old connection is never acknowledged on the new one;
 * no silent drops: a valid reading that still fails after the retries is a dead letter (table + metric), and
   replaying it stores it; an Influx outage is retried as a batch (backpressure) and nothing is lost;
 * persistent session (real broker): readings published while the server is down are delivered when it comes back
@@ -27,7 +28,7 @@ def _item(key, n, **kw):
                 received_at=datetime.now(timezone.utc), **kw)
 
 
-async def test_pipeline_orders_per_key_bounds_inflight_and_acks_in_receive_order():
+async def test_pipeline_orders_per_key_bounds_inflight_and_acks_in_receive_order_per_key():
     from src.services.ingest.pipeline import OrderedPipeline
     seen: dict[str, list[int]] = {}
     active = {"n": 0, "max": 0, "keys": set(), "max_keys": 0}
@@ -65,7 +66,9 @@ async def test_pipeline_orders_per_key_bounds_inflight_and_acks_in_receive_order
     assert all(v == list(range(100)) for v in seen.values()) and len(seen) == 5
     assert active["max"] <= 3                           # fixed worker pool
     assert max_inflight <= 16                           # bounded: put() waited for room
-    assert acks == order                                # every delivery acknowledged once, in receive order
+    assert sorted(acks) == sorted(order)                # every delivery acknowledged once
+    for key in ("a", "b", "c", "d", "e"):               # ... in receive order within each tag
+        assert [m for k, m in acks if k == key] == [m for k, m in order if k == key]
 
 
 async def test_pipeline_does_not_ack_before_the_write_finishes_nor_on_a_new_connection():
@@ -82,16 +85,57 @@ async def test_pipeline_does_not_ack_before_the_write_finishes_nor_on_a_new_conn
     pl.start()
     g1 = pl.new_connection()
     await pl.put(_item("slow", 1, mid=1, qos=1, gen=g1))
+    await pl.put(_item("slow", 2, mid=3, qos=1, gen=g1))
     await pl.put(_item("fast", 1, mid=2, qos=1, gen=g1))
     await asyncio.sleep(0.05)
-    assert acks == []                     # 2 is done but 1 (received first) is still writing: in-order PUBACK
-    g2 = pl.new_connection()              # reconnect: 1 and 2 belong to the old session (broker redelivers)
+    # 1 is still writing: neither it nor the later reading of the SAME tag (3) is acknowledged; the other tag is
+    assert acks == [2]
+    g2 = pl.new_connection()              # reconnect: 1 and 3 belong to the old session (broker redelivers)
     await pl.put(_item("fast", 2, mid=1, qos=1, gen=g2))
     release.set()
     assert await pl.drain(timeout=5)
     await pl.stop()
-    assert acks == [1]                    # only the delivery of the current connection
-    assert pl.processed == 3
+    assert acks == [2, 1]                 # the old-session readings are never acknowledged on the new connection
+    assert pl.processed == 4 and pl.unacked == 0
+
+
+async def test_one_stuck_tenant_does_not_stop_the_acknowledgements_of_the_others():
+    """Review (Sprint 5b): tenant A's reading waits (usage lock held by a recompute, or a transient retry of up to
+    MQTT_TRANSIENT_RETRY_S). Tenant B keeps being processed AND acknowledged — with a global receive-order gate
+    its PUBACKs waited behind A, the broker's in-flight window (100) filled and ingestion stopped for everyone."""
+    from src.services.ingest.pipeline import OrderedPipeline
+    stuck = asyncio.Event()
+    acks: list[tuple[str, int]] = []
+    by_tag: dict = {}
+
+    async def process(item):
+        if item.key[0] == "A":
+            await stuck.wait()
+        return None
+
+    def acker(it):
+        acks.append((it.key[0], it.mid))
+        by_tag.setdefault(it.key, []).append(it.mid)
+
+    pl = OrderedPipeline(process, capacity=200, workers=4, acker=acker)
+    pl.start()
+    gen = pl.new_connection()
+    await pl.put(_item(("A", "tag"), 0, mid=1, qos=1, gen=gen))
+    await pl.put(_item(("A", "tag"), 1, mid=2, qos=1, gen=gen))
+    for n in range(150):                      # more than the broker's in-flight window
+        await pl.put(_item(("B", f"tag{n % 3}"), n, mid=10 + n, qos=1, gen=gen))
+    for _ in range(200):
+        if len(acks) >= 150:
+            break
+        await asyncio.sleep(0.01)
+    assert sorted(m for k, m in acks if k == "B") == [10 + n for n in range(150)]
+    for j in range(3):                        # in receive order within each tag
+        assert by_tag[("B", f"tag{j}")] == [10 + n for n in range(150) if n % 3 == j]
+    assert not [a for a in acks if a[0] == "A"] and pl.unacked == 2
+    stuck.set()
+    assert await pl.drain(timeout=5)
+    await pl.stop()
+    assert [m for k, m in acks if k == "A"] == [1, 2] and pl.unacked == 0
 
 
 async def test_reading_that_keeps_failing_becomes_a_dead_letter_and_replays(client, tenants, monkeypatch):

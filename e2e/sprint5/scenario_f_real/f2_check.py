@@ -3,7 +3,7 @@ import json, os, sys
 from datetime import datetime, timedelta, date
 sys.path.insert(0, os.path.dirname(__file__))
 os.environ.setdefault("API", "http://127.0.0.1:8163")
-from api import call, login
+from api import call, login, recompute
 
 SHIFT = 182
 DOC = json.load(open("/home/user/factory-monitor/docs/scenarios/scenario_f_predictive.json"))
@@ -80,6 +80,6 @@ for cp in X["rul_checkpoints"]:
         elif got != v:
             diffs.append((k, got, v))
     check(not diffs, f"RUL checkpoint window {cp['window']} (rul_days {cp.get('rul_days')}, band {cp.get('rul_days_low')}–{cp.get('rul_days_high')})", diffs)
-s, rc = call("POST", "/api/predictive/recompute", {"monitor_id": st["m2"]}, t)
+s, rc = recompute({"monitor_id": st["m2"]}, t)
 check(rc.get("same") is True, "recompute reproduces identical alerts", rc)
 print(f"{sum(res)}/{len(res)} passed")

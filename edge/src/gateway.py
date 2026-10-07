@@ -31,6 +31,18 @@ Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
 Timestamps: one clock per device (plant map `sources[].timestamps`, default `gateway`); see
 edge/src/clock.py for the policy table, skew detection (> max_clock_skew_s, default 2 s) and demotion.
 
+Sending (store-and-forward, Sprint 5b QA (d)): a reading goes to a bounded in-memory outbox (`outbox_max`; full =
+the driver waits — backpressure, bounded memory) drained by ONE sender task (`_sender_loop`):
+- broker up and SQLite buffer empty → published directly, `publish_window` QoS 1 publishes in flight at once
+  (in order on the wire; a failure moves the failed readings and everything after them to the buffer, in order);
+- broker down → the outbox is spilled to SQLite in batches (`spill_batch` rows per transaction, at least every
+  `spill_max_age_s`);
+- broker back with a backlog → the BUFFER is flushed first (oldest first, windowed); new readings wait in the outbox
+  and are spilled behind the backlog, so FIFO order holds and the flush always progresses faster than new data
+  arrives (the old path did COUNT(*) + INSERT + COMMIT per reading on the same SQLite queue the flush needed, and
+  never drained).
+The row count of the buffer is kept in memory (LocalBuffer.rows). On stop the outbox is written to SQLite.
+
 Predictive inputs (docs/predictive.md P-1 — window features are computed by the SERVER): `stroke_time` is one
 reading per cycle (OPC UA: every notification; Modbus: when the position's counter advances), never deduplicated;
 `aggregate` tags publish one RMS/peak/mean value per window from the raw samples (edge/src/plant_map.py).
@@ -163,6 +175,18 @@ class EdgeGateway:
         self._reload_lock: Optional[asyncio.Lock] = None
         self._started_at = time.monotonic()
         self._running = False
+        # sender (see module docstring): outbox of (topic, payload, enqueued_at monotonic)
+        self._outbox: deque[tuple[str, dict, float]] = deque()
+        self._outbox_max = max(1, int(settings.outbox_max))
+        self._window = max(1, int(settings.publish_window))
+        self._spill_batch = max(1, int(settings.spill_batch))
+        self._spill_age_s = max(0.0, float(settings.spill_max_age_s))
+        self._sender_task: Optional[asyncio.Task] = None
+        self._wake: Optional[asyncio.Event] = None
+        self._space: Optional[asyncio.Event] = None
+        self._pump_lock: Optional[asyncio.Lock] = None
+        self.sent_direct = 0
+        self._inflight_n = 0                               # readings of the window being published
 
     def _make_publisher(self, username: str, password: str) -> MqttPublisher:
         port = effective_port(settings.mqtt_broker_port, self.tls.enabled)
@@ -175,6 +199,8 @@ class EdgeGateway:
             password=password,
             encryption_key=settings.encryption_key,
             tls_config=self.tls,
+            max_inflight=min(100, settings.publish_window),
+            pending_warn=settings.publish_window + 100,
         )
 
     # ── configuration ───────────────────────────────────────────────────
@@ -264,7 +290,8 @@ class EdgeGateway:
                     continue
                 drv = OpcUaDriver(src.endpoint, tags, on_reading=self._handle_reading,
                                   publishing_interval_ms=src.publishing_interval_ms, source_timestamps=True,
-                                  notify_on_timestamp=src.device_heartbeat)
+                                  notify_on_timestamp=src.device_heartbeat, queue_size=settings.opcua_queue_size,
+                                  max_pending=settings.opcua_max_pending)
                 for t in tags:
                     if t.tag_id not in self._stroke and t.tag_id not in self._aggregates:
                         self._refresh_tags[t.tag_id] = drv
@@ -393,7 +420,7 @@ class EdgeGateway:
         return errs + list(self._errors)
 
     async def fleet_heartbeat_body(self) -> dict:
-        return heartbeat_body(__version__, time.monotonic() - self._started_at, await self.buffer.count(),
+        return heartbeat_body(__version__, time.monotonic() - self._started_at, self.buffer_depth(),
                               self.current_errors(), self.config_version)
 
     async def fleet_heartbeat_once(self) -> bool:
@@ -476,6 +503,7 @@ class EdgeGateway:
 
         self._running = True
         self._started_at = time.monotonic()
+        self.start_sender()
         self._start_drivers()
         await asyncio.gather(
             self._flush_buffer_loop(),
@@ -536,10 +564,154 @@ class EdgeGateway:
     async def _publish(self, tag_id: str, value: float, ts: datetime) -> None:
         topic = self.publisher.build_topic(self.tenant_id, tag_id)
         payload = self.publisher.build_payload(value, self._units.get(tag_id), ts)
-        # Keep FIFO order: while there is a backlog, new readings go to the buffer too.
-        if await self.buffer.count() == 0 and await self.publisher.publish_payload(topic, payload):
+        await self._enqueue(topic, payload)
+
+    # ── sender: outbox → broker / SQLite buffer (module docstring) ──────
+    def buffer_depth(self) -> int:
+        """Readings not yet delivered: SQLite rows + the in-memory outbox + the window being published."""
+        return self.buffer.rows + len(self._outbox) + self._inflight_n
+
+    def _sender_running(self) -> bool:
+        return self._sender_task is not None and not self._sender_task.done()
+
+    def _lock(self) -> asyncio.Lock:
+        if self._pump_lock is None:
+            self._pump_lock = asyncio.Lock()
+        return self._pump_lock
+
+    async def _enqueue(self, topic: str, payload: dict) -> None:
+        if not self._sender_running():
+            # no sender task (tests, tools, a sender that died): the same step, inline — nothing is ever stranded
+            self._outbox.append((topic, payload, time.monotonic()))
+            await self._pump(flush=False, force_spill=True)
             return
-        await self.buffer.store(topic, payload)
+        while len(self._outbox) >= self._outbox_max and self._sender_running():
+            self._space.clear()
+            try:
+                await asyncio.wait_for(self._space.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                pass
+        self._outbox.append((topic, payload, time.monotonic()))
+        self._wake.set()
+
+    def _spill_due(self) -> bool:
+        if not self._outbox:
+            return False
+        return (len(self._outbox) >= self._spill_batch
+                or time.monotonic() - self._outbox[0][2] >= self._spill_age_s)
+
+    async def _spill(self) -> int:
+        """Writes the whole outbox to the SQLite buffer in one transaction (behind the rows already there)."""
+        if not self._outbox:
+            return 0
+        items = list(self._outbox)
+        self._outbox.clear()
+        try:
+            await self.buffer.store_many([(t, p) for t, p, _ in items])
+        except BaseException as e:
+            # put them back in front (older than whatever arrived meanwhile); bounded by outbox_max
+            self._outbox.extendleft(reversed(items))
+            if not isinstance(e, asyncio.CancelledError):
+                log.warning("edge_gateway.spill_failed", error=str(e)[:200], count=len(items))
+            raise
+        finally:
+            self._notify_space()
+        return len(items)
+
+    async def _publish_window(self, batch: list[tuple[str, dict, float]]) -> Optional[int]:
+        """Publishes a window at once (wire order = list order). Index of the first failure, or None."""
+        if len(batch) == 1:
+            results = [await self.publisher.publish_payload(batch[0][0], batch[0][1])]
+        else:
+            results = await asyncio.gather(*(self.publisher.publish_payload(t, p) for t, p, _ in batch))
+        for i, ok in enumerate(results):
+            if not ok:
+                return i
+        return None
+
+    def _notify_space(self) -> None:
+        if self._space is not None and len(self._outbox) < self._outbox_max:
+            self._space.set()
+
+    async def _pump(self, *, flush: bool, force_spill: bool = False) -> int:
+        """One step of the sender. Returns how many readings it moved (sent or stored)."""
+        async with self._lock():
+            connected = self.publisher.is_connected
+            if self._outbox and self.buffer.rows == 0 and connected:
+                n = min(len(self._outbox), self._window)
+                batch = [self._outbox.popleft() for _ in range(n)]
+                self._notify_space()
+                self._inflight_n = n
+                try:
+                    failed = await self._publish_window(batch)
+                except BaseException:
+                    self._outbox.extendleft(reversed(batch))   # cancelled mid-window: resent later (idempotent)
+                    raise
+                finally:
+                    self._inflight_n = 0
+                if failed is None:
+                    self.sent_direct += n
+                    return n
+                # the failed reading and everything after it are the oldest unsent: back in front, then to SQLite
+                self._outbox.extendleft(reversed(batch[failed:]))
+                await self._spill()
+                return n
+            if self.buffer.rows > 0 and connected and flush:
+                # backlog first: new readings wait in memory and are spilled behind it
+                if force_spill or self._spill_due():
+                    await self._spill()
+                return await self.buffer.flush_to(self.publisher.publish_payload, batch_size=500,
+                                                  window=self._window, max_batches=1)
+            if self._outbox and (force_spill or self._spill_due()):
+                return await self._spill()
+            return 0
+
+    def start_sender(self) -> None:
+        if self._sender_running():
+            return
+        self._wake = asyncio.Event()
+        self._space = asyncio.Event()
+        self._space.set()
+        self._sender_task = asyncio.create_task(self._sender_loop(), name="edge_sender")
+
+    async def _sender_loop(self) -> None:
+        while True:
+            try:
+                moved = await self._pump(flush=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 — never kill the sender
+                log.warning("edge_gateway.sender_error", error=str(e)[:200], error_type=type(e).__name__)
+                moved = 0
+                await asyncio.sleep(0.5)
+            if moved:
+                await asyncio.sleep(0)               # let the drivers run between steps
+                continue
+            # idle: until a new reading, the spill deadline of the oldest one, or 1 s (reconnect / backlog)
+            timeout = 1.0
+            if self._outbox:
+                timeout = max(0.01, min(timeout, self._spill_age_s - (time.monotonic() - self._outbox[0][2])))
+            self._wake.clear()
+            if self._outbox and self.publisher.is_connected and self.buffer.rows == 0:
+                continue                             # raced with a new reading: send it now
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+
+    async def _stop_sender(self) -> None:
+        """Stops the sender and writes whatever is still in memory to the SQLite buffer (never lost on stop)."""
+        task, self._sender_task = self._sender_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self._outbox:
+            try:
+                await asyncio.wait_for(self._spill(), timeout=10.0)
+            except BaseException as e:  # noqa: BLE001
+                log.error("edge_gateway.final_spill_failed", error=str(e)[:200], lost=len(self._outbox))
+        if self._space is not None:
+            self._space.set()                        # producers still waiting go inline
 
     async def refresh_once(self) -> int:
         """Re-offers the last value of OPC UA tags (subscriptions only notify changes) so the
@@ -595,7 +767,7 @@ class EdgeGateway:
 
     async def publish_heartbeat(self) -> bool:
         payload = self.heartbeat_payload()
-        payload["buffered"] = await self.buffer.count()
+        payload["buffered"] = self.buffer_depth()
         return await self.publisher.publish_payload(self.heartbeat_topic(), payload)
 
     def touch_health(self) -> None:
@@ -618,15 +790,21 @@ class EdgeGateway:
             await asyncio.sleep(self.heartbeat_s)
 
     async def flush_once(self) -> int:
-        """Reconnects if needed and re-sends the buffer in order. Returns rows sent."""
+        """Reconnects if needed and re-sends the buffer in order. Returns rows sent here (0 while the sender task
+        runs: it drains the buffer itself, interleaved with new readings)."""
         if not self.publisher.is_connected:
             await self.publisher.connect()
         if not self.publisher.is_connected:
             return 0
-        return await self.buffer.flush_to(self.publisher.publish_payload)
+        if self._sender_running():
+            self._wake.set()
+            return 0
+        async with self._lock():
+            await self._spill()
+            return await self.buffer.flush_to(self.publisher.publish_payload, window=self._window)
 
     async def _flush_buffer_loop(self) -> None:
-        """Retry buffered readings when connection is restored."""
+        """Reconnects to the broker when it was lost (the sender then flushes the buffer)."""
         while self._running:
             await asyncio.sleep(self.flush_interval_s)
             try:
@@ -636,7 +814,8 @@ class EdgeGateway:
 
     async def stop(self) -> None:
         self._running = False
-        await self._stop_drivers()
+        await self._stop_drivers()                   # drivers hand their queued readings to the outbox first
+        await self._stop_sender()
         if self.fleet is not None:
             await self.fleet.close()
         await self.publisher.disconnect()
@@ -647,7 +826,15 @@ class EdgeGateway:
         log.info("edge_gateway.stopped")
 
 
+def configure_logging(level: str) -> None:
+    """structlog without configuration logs every level (one debug line per reading sent)."""
+    import logging
+    lvl = getattr(logging, str(level or "info").upper(), logging.INFO)
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(lvl))
+
+
 async def main() -> None:
+    configure_logging(settings.log_level)
     try:
         gateway = EdgeGateway()
     except ValueError as e:              # e.g. MQTT TLS settings (missing CA file)
@@ -658,9 +845,13 @@ async def main() -> None:
     main_task = asyncio.current_task()
 
     async def _shutdown() -> None:
-        await gateway.stop()
-        if main_task is not None:
-            main_task.cancel()
+        try:
+            await asyncio.wait_for(gateway.stop(), timeout=30.0)
+        except BaseException as e:  # noqa: BLE001 — a stuck stop never blocks SIGTERM
+            log.error("edge_gateway.stop_timeout", error=str(e)[:200])
+        finally:
+            if main_task is not None:
+                main_task.cancel()
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))

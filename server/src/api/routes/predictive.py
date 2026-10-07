@@ -10,6 +10,8 @@ Predictive maintenance API (Sprint 5 — docs/predictive.md P-12). Mounted at /a
   POST /alerts/{id}/transition · POST /alerts/{id}/convert                 lifecycle (P-8), predictive WO (P-9)
   GET  /evaluation?start&stop&line_id                                       P-10 metrics
   POST /recompute                                                          admin: recompute since the last baseline
+                                                                           (background=true → 202 + job id)
+  GET  /recompute/jobs/{job_id}                                            admin: state / result of a background job
   GET  /badges?machine_id                                                  condition badge (any role, the operator too)
   PUT/GET /production-plan                                                 daily production plan (P-7)
   POST /condition-plans                                                    condition-based maintenance plan (P-9)
@@ -23,6 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
@@ -34,6 +37,7 @@ from ...models import (Component, ConditionBaseline, ConditionFeature, Line, Mac
                        Position, PredictiveAlert, PredictiveMonitor, PredictiveRule, ProductionPlanDay, Tag, User)
 from ...services import clock
 from ...services.predictive import engine as pe
+from ...services.predictive import recompute_jobs as rj
 from ...services.predictive import service as ps
 from ...services.predictive.defaults import DEFAULT_UNIT, DEFAULTS, FEATURE_LABEL, SEV_RANK
 from ...services.predictive.evaluation import evaluate_tenant
@@ -170,6 +174,9 @@ class RecomputeIn(BaseModel):
     # full recompute: extract every window / cycle block of the segment again from Influx (P-12: must equal the
     # incremental result)
     reextract_all: bool = False
+    # run as a job: 202 + job id at once, poll GET /recompute/jobs/{job_id} (a full re-extraction takes minutes —
+    # longer than the proxy timeout). Also accepted as the query parameter ?background=true.
+    background: bool = False
 
 
 class PlanDayIn(BaseModel):
@@ -637,18 +644,55 @@ async def evaluation(user: CurrentUser, db: DB, start: Optional[datetime] = None
     return await evaluate_tenant(db, user.tenant_id, start, stop, now, line_id)
 
 
-@router.post("/recompute", dependencies=[Depends(require_any("admin"))])
-async def recompute(body: RecomputeIn, user: CurrentUser, db: DB):
-    """P-12: recompute since the last baseline of each monitor (or one) — must reproduce the same alerts."""
-    if body.monitor_id:
-        ms_ = [await _get(db, PredictiveMonitor, body.monitor_id, user.tenant_id, "Monitor", lock=True)]
+async def _recompute(db: AsyncSession, tenant_id: str, monitor_id: Optional[str], reextract_invalid: bool,
+                     reextract_all: bool) -> dict:
+    if monitor_id:
+        ms_ = [await _get(db, PredictiveMonitor, monitor_id, tenant_id, "Monitor", lock=True)]
     else:
         ms_ = list((await db.execute(select(PredictiveMonitor).where(
-            PredictiveMonitor.tenant_id == user.tenant_id))).scalars().all())
-    out = [await pe.recompute(db, m, clock.now(), reextract_invalid=body.reextract_invalid,
-                              reextract_all=body.reextract_all) for m in ms_]
+            PredictiveMonitor.tenant_id == tenant_id))).scalars().all())
+    out = [await pe.recompute(db, m, clock.now(), reextract_invalid=reextract_invalid,
+                              reextract_all=reextract_all) for m in ms_]
     await _commit(db)
     return {"monitors": out, "same": all(r["same"] for r in out)}
+
+
+def _busy(e: rj.RecomputeBusy) -> HTTPException:
+    return HTTPException(status_code=409, detail={"message": "Já existe um recálculo preditivo em andamento para "
+                                                             "este tenant.",
+                                                  "job_id": None if str(e) == "sync" else str(e)})
+
+
+@router.post("/recompute", dependencies=[Depends(require_any("admin"))])
+async def recompute(body: RecomputeIn, user: CurrentUser, db: DB, background: bool = False):
+    """P-12: recompute since the last baseline of each monitor (or one) — must reproduce the same alerts.
+    background=true (body or query; recommended with reextract_all) answers 202 with a job id at once — poll
+    GET /api/predictive/recompute/jobs/{job_id}. One predictive recompute per tenant at a time (409)."""
+    tenant_id = user.tenant_id
+    if body.monitor_id:
+        await _get(db, PredictiveMonitor, body.monitor_id, tenant_id, "Monitor")   # 404 now, not inside the job
+    if background or body.background:
+        await db.rollback()                    # the job uses its own session; release this one's snapshot
+        try:
+            job = rj.start_job(tenant_id, body.monitor_id, body.reextract_invalid, body.reextract_all,
+                               lambda s: _recompute(s, tenant_id, body.monitor_id, body.reextract_invalid,
+                                                    body.reextract_all))
+        except rj.RecomputeBusy as e:
+            raise _busy(e) from None
+        return JSONResponse(status_code=202, content=job.out())
+    try:
+        with rj.tenant_slot(tenant_id):
+            return await _recompute(db, tenant_id, body.monitor_id, body.reextract_invalid, body.reextract_all)
+    except rj.RecomputeBusy as e:
+        raise _busy(e) from None
+
+
+@router.get("/recompute/jobs/{job_id}", dependencies=[Depends(require_any("admin"))])
+async def recompute_job(job_id: str, user: CurrentUser):
+    job = rj.get_job(job_id, user.tenant_id)
+    if job is None:
+        raise _404("Recálculo")
+    return job.out()
 
 
 @router.get("/badges")

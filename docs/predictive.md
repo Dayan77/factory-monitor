@@ -369,7 +369,10 @@ virtual (`edge/virtual_plant/`) roda **até a falha**, com seed, e é a régua d
   * as marcas ficam no Postgres (sobrevivem a reinício e funcionam com o motor em outro processo).
     `POST /api/predictive/recompute` com `reextract_all = true` reextrai todo o segmento do Influx e informa
     `windows_reextracted` (blocos/janelas diferentes do armazenado) e `same` (alertas, inclusive instante, motivo e
-    origem do fechamento — `closed_by`).
+    origem do fechamento — `closed_by`). Leva minutos num monitor longo (F1, 70 blocos: 94–352 s): usar
+    `background = true` (corpo ou `?background=true`) → `202 {job_id}` e consultar
+    `GET /api/predictive/recompute/jobs/{job_id}` (`running`/`done`/`failed`, `result` = o mesmo corpo do modo
+    síncrono; só o admin do tenant vê o job). Um recálculo preditivo por tenant por vez (`409` com o `job_id`).
   * Uso e paradas: o processamento de uso é por leitura, idempotente e ignora leitura fora de ordem (o contador é
     cumulativo, nada se perde); o detector de paradas já retrocede (`downtime_detector_states.late_from`).
 - **Falhas e alertas** (Sprint 5b): registrar ou editar uma falha (`failed_at`, severidade, posição) reavalia na
@@ -380,12 +383,14 @@ virtual (`edge/virtual_plant/`) roda **até a falha**, com seed, e é a régua d
   *pool* fixo de workers (`MQTT_MAX_CONCURRENCY`), escrita no Influx em lote com repetição do lote inteiro em falha
   transitória, no máximo `MQTT_MAX_INFLIGHT` leituras dentro do servidor. O servidor assina com QoS 1 numa **sessão
   persistente** (`clean_session = false`, `MQTT_CLIENT_ID` estável, padrão `fm-server-<POSTGRES_DB>`) e só confirma
-  (PUBACK, na ordem de recebimento) a leitura **concluída** (gravada, ou em dead letter): cheio, o broker para na
+  (PUBACK, na ordem de recebimento **de cada tag** — uma leitura presa de um tenant não segura as confirmações dos
+  outros) a leitura **concluída** (gravada, ou em dead letter): cheio, o broker para na
   janela `max_inflight_messages` e guarda o resto (`max_queued_messages`/`max_queued_bytes`), também durante um
   reinício do servidor; o que foi recebido e não concluído é reentregue (processamento idempotente). Falha
   transitória (timeout, Postgres/Influx fora) é repetida por até `MQTT_TRANSIENT_RETRY_S`; depois disso — ou erro
   não transitório — a leitura vai para `ingest_dead_letters` (métrica `fm_ingest_dead_letters_total`, log
-  `ingest.dead_letter`; reprocessar com `python -m src.services.ingest.dead_letter --replay`). Só tag inexistente /
+  `ingest.dead_letter`; reprocessar com `python -m src.services.ingest.dead_letter --replay`, que ao terminar grava
+  as marcas de dado atrasado das leituras reprocessadas — o motor reextrai as janelas/blocos). Só tag inexistente /
   gateway revogado / payload inválido é recusado (`fm_mqtt_messages_total{result}`). `fm_ingest_dropped_total`
   tem de ser 0. Prova: `e2e/sprint5b/ingest_load.py` (100 mil leituras do F1 publicadas na velocidade máxima ==
   contagem no Influx == replay lento, blocos == F1, latência ao vivo com o motor rodando).

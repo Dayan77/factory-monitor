@@ -146,8 +146,12 @@ async def test_uvicorn_exits_on_sigterm_with_pending_readings(tmp_path):
     import sys
     from pathlib import Path
     server = Path(__file__).resolve().parent.parent
+    import socket
     env = {**os.environ, "MQTT_BROKER_HOST": "127.0.0.1", "SHUTDOWN_TIMEOUT_S": "2"}
-    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "src.main:app", "--port", "8187", "--log-level", "info",
+    with socket.socket() as sk:                  # a free port (a fixed one collided with QA servers)
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+    proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "src.main:app", "--port", str(port), "--log-level", "info",
                              "--no-proxy-headers"], cwd=server, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     try:
@@ -156,7 +160,7 @@ async def test_uvicorn_exits_on_sigterm_with_pending_readings(tmp_path):
             await asyncio.sleep(0.2)
             try:
                 async with httpx.AsyncClient() as c:
-                    if (await c.get("http://127.0.0.1:8187/api/health")).status_code == 200:
+                    if (await c.get(f"http://127.0.0.1:{port}/api/health")).status_code == 200:
                         ok = True
                         break
             except httpx.HTTPError:

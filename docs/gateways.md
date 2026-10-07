@@ -82,3 +82,26 @@ A inclusão da linha no broker continua sendo um passo do operador (devops) — 
 mesmo motivo, ao **revogar** a remoção da linha também é manual (a resposta de `revoke` e a tela dizem qual); enquanto
 isso o servidor descarta as leituras das tags do gateway revogado. Limitação: depois de **remover** o gateway as tags
 perdem a atribuição e esse filtro deixa de valer — por isso a remoção exige revogar antes.
+
+## Store-and-forward sob carga (Sprint 5b)
+
+Leitura → fila em memória limitada (`OUTBOX_MAX`, 20 000; cheia, o driver espera — contrapressão, memória
+limitada) → uma tarefa de envio:
+
+- broker no ar e buffer vazio: publica direto, `PUBLISH_WINDOW` (200) publicações QoS 1 em voo (em ordem no fio);
+- broker fora: grava no SQLite em lote (`SPILL_BATCH` = 1000 linhas por transação, no máximo `SPILL_MAX_AGE_S` = 1 s
+  só em memória), WAL + `synchronous=NORMAL`;
+- broker de volta: esvazia **primeiro** o buffer (do mais antigo, em janelas); as leituras novas esperam na memória
+  e entram atrás do buffer — ordem FIFO por tag mantida, e o esvaziamento é mais rápido que a chegada.
+- parada (SIGTERM): os drivers entregam o que já receberam, a memória vai para o SQLite, e a parada tem limite de
+  30 s.
+
+OPC UA: fila no servidor por item `OPCUA_QUEUE_SIZE` (4096 — antes 64, que estourava após ~0,55 s de pausa a 116
+cursos/s) e fila local `OPCUA_MAX_PENDING` (50 000) servida por uma única tarefa, em ordem; cheia, a leitura é
+descartada e contada (`opcua.readings_dropped` no log, com o total). `LOG_LEVEL` (padrão `info`; `debug` registra
+cada leitura enviada).
+
+Medido (`aiomqtt` real → proxy TCP → Mosquitto, 4 tags): a 500 leituras/s, queda de 45 s (24,7 mil linhas no
+buffer) esvaziada em ~20 s com as leituras novas chegando; a 1500/s, queda de 30 s (52 mil linhas) esvaziada em
+~55 s; nenhuma leitura perdida, ordem por tag mantida, memória ≤ 90 MB (antes: 4,4 GB e nenhum `buffer.flushed`
+em 54 min a ~230/s).

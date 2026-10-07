@@ -9,6 +9,7 @@ When an encryption key is configured (ENCRYPTION_KEY), the payload above is wrap
 AES-256-GCM envelope — see edge/src/security/payload_crypto.py for the exact format.
 """
 
+import asyncio
 import json
 import os
 import ssl
@@ -118,6 +119,8 @@ class MqttPublisher:
         tls: bool = False,
         ca_cert: str = "",
         tls_config: Optional[MqttTlsConfig] = None,
+        max_inflight: int = 100,
+        pending_warn: int = 1000,
     ) -> None:
         self._host = host
         self._port = port
@@ -132,6 +135,11 @@ class MqttPublisher:
         self._cipher: Optional[PayloadCipher] = PayloadCipher.from_setting(encryption_key)
         self._client: Optional[aiomqtt.Client] = None
         self.is_connected: bool = False
+        # The gateway pipelines its publishes (edge/src/gateway.py `publish_window`): up to `max_inflight` QoS 1
+        # messages on the wire unacknowledged (paho queues the rest); aiomqtt warns per call above
+        # `pending_warn` pending publishes (its default of 10 logged >1 M warnings per QA run).
+        self._max_inflight = max(1, int(max_inflight))
+        self._pending_warn = max(10, int(pending_warn))
 
     @property
     def encryption_enabled(self) -> bool:
@@ -146,7 +154,9 @@ class MqttPublisher:
                 username=self._username,
                 password=self._password,
                 tls_context=self._tls_context,
+                max_inflight_messages=self._max_inflight,
             )
+            self._client.pending_calls_threshold = self._pending_warn
             await self._client.__aenter__()
             self.is_connected = True
             log.info(
@@ -161,6 +171,11 @@ class MqttPublisher:
 
     async def disconnect(self) -> None:
         if self._client:
+            # an unexpected disconnect leaves aiomqtt's `_disconnected` future with an exception nobody awaits
+            # ("Future exception was never retrieved" on every uplink cut): retrieve it before dropping the client
+            fut = getattr(self._client, "_disconnected", None)
+            if isinstance(fut, asyncio.Future) and fut.done() and not fut.cancelled():
+                fut.exception()
             try:
                 await self._client.__aexit__(None, None, None)
             except Exception:  # noqa: BLE001

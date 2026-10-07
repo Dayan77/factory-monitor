@@ -208,23 +208,31 @@ async def run_subscriber() -> None:
         monitor.cancel()
         flusher.cancel()
         await asyncio.gather(monitor, flusher, return_exceptions=True)
-        try:
-            await asyncio.wait_for(watermarks.flush_now(), timeout=3.0)
-        except BaseException as e:  # noqa: BLE001 — late marks lost: /recompute re-extracts
-            log.warning("ingest.watermarks.final_flush_failed", error=str(e)[:200])
-        try:                                # the downtime detector's late notes too (restart: not lost)
-            from .oee import detector as downtime_detector
-            from .oee.detector import flush_late as downtime_flush_late
-
-            async def _flush_downtime():
-                if not downtime_detector._late:   # noqa: SLF001
-                    return
-                async with AsyncSessionLocal() as db:
-                    await downtime_flush_late(db, datetime.now(timezone.utc))
-            await asyncio.wait_for(_flush_downtime(), timeout=3.0)
-        except BaseException as e:  # noqa: BLE001
-            log.warning("downtime.late_final_flush_failed", error=str(e)[:200])
+        await flush_late_marks(timeout=3.0)
         await pl.stop()
+
+
+async def flush_late_marks(timeout: float = 3.0) -> None:
+    """Writes the in-memory late-data marks to Postgres: watermarks (`ingest_watermarks` → predictive_dirty) and the
+    downtime detector's late notes. The subscriber does it on shutdown; any other process that runs readings through
+    `_handle_message` (the dead-letter replay CLI) must do it before exiting, or the late readings it stored are
+    never re-extracted. Failures are logged, never raised."""
+    try:
+        await asyncio.wait_for(watermarks.flush_now(), timeout=timeout)
+    except BaseException as e:  # noqa: BLE001 — late marks lost: /recompute re-extracts
+        log.warning("ingest.watermarks.final_flush_failed", error=str(e)[:200])
+    try:                                # the downtime detector's late notes too (restart: not lost)
+        from .oee import detector as downtime_detector
+        from .oee.detector import flush_late as downtime_flush_late
+
+        async def _flush_downtime():
+            if not downtime_detector._late:   # noqa: SLF001
+                return
+            async with AsyncSessionLocal() as db:
+                await downtime_flush_late(db, datetime.now(timezone.utc))
+        await asyncio.wait_for(_flush_downtime(), timeout=timeout)
+    except BaseException as e:  # noqa: BLE001
+        log.warning("downtime.late_final_flush_failed", error=str(e)[:200])
 
 
 async def _backlog_monitor(pl: OrderedPipeline) -> None:

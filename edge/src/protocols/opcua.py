@@ -9,10 +9,18 @@ With `source_timestamps=True` the callback receives a third argument: the DataVa
 notification of each monitored item after (re)subscribing, whose SourceTimestamp is the value's last
 change (possibly hours old), not a delivery-time sample (edge/src/clock.py). `connected` is True while
 the session and subscription are up (the gateway only refreshes heartbeats of connected sources).
-Monitored items are created with a queue (`queue_size`, default 64): intermediate changes are kept.
+Monitored items are created with a server-side queue (`queue_size`, default 4096): intermediate changes are kept,
+also through a pause of the gateway (at 116 strokes/s per tag, 64 overflowed after ~0.55 s — Sprint 5b QA).
+
+Notifications are delivered in order by ONE consumer task per driver from a bounded local queue (`max_pending`):
+asyncua calls the handler in a task per notification, and the handler used to start one more coroutine per reading
+(unbounded: 4 GB of pending readings when the uplink was slow). When the local queue is full the reading is dropped
+and counted (`dropped`, warning `opcua.readings_dropped` with the total) — never an unbounded heap.
 """
 
 import asyncio
+import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional
@@ -38,7 +46,7 @@ class _SubscriptionHandler:
     """Implements asyncua's DataChangeNotificationHandler protocol (asyncua>=2 has no SubHandler base)."""
 
     def __init__(self, tag_map: dict[ua.NodeId, OpcTagConfig], on_reading: Optional[OnReading],
-                 source_timestamps: bool = False) -> None:
+                 source_timestamps: bool = False, sink: Optional[Callable[[tuple], None]] = None) -> None:
         # Keyed by NodeId object: str(NodeId) is a repr ("NodeId(Identifier=...)"),
         # not "ns=2;i=1001", so string keys never matched the notifications.
         self._tag_map = tag_map
@@ -46,6 +54,8 @@ class _SubscriptionHandler:
         self._source_ts = source_timestamps
         self._loop = asyncio.get_running_loop()
         self._seen: set = set()            # monitored items already notified since (re)subscribing
+        # sink(item): the driver's bounded, ordered queue; item = (tag_id, value, ts, initial) or (tag_id, value)
+        self._sink = sink
 
     def status_change_notification(self, status) -> None:
         # subscription re-created / transferred by asyncua: the next values are initial again
@@ -64,10 +74,19 @@ class _SubscriptionHandler:
             ts = _source_timestamp(data)
             initial = node.nodeid not in self._seen
             self._seen.add(node.nodeid)
-            coro = self._on_reading(cfg.tag_id, value, ts, initial=initial)
+            item = (cfg.tag_id, value, ts, initial)
         else:
-            coro = self._on_reading(cfg.tag_id, value)
-        asyncio.run_coroutine_threadsafe(coro, self._loop)
+            item = (cfg.tag_id, value)
+        if self._sink is None:
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._loop:
+            self._sink(item)
+        else:                                   # called from another thread: hand over to the loop, in order
+            self._loop.call_soon_threadsafe(self._sink, item)
 
 
 def _source_timestamp(data) -> Optional[datetime]:
@@ -90,8 +109,9 @@ class OpcUaDriver:
         publishing_interval_ms: int = 500,
         reconnect_delay_s: float = 5.0,
         source_timestamps: bool = False,
-        queue_size: int = 64,
+        queue_size: int = 4096,
         notify_on_timestamp: bool = False,
+        max_pending: int = 50000,
     ) -> None:
         self._endpoint = endpoint
         # Server-side queue per monitored item: every change between two publishes is delivered
@@ -109,11 +129,71 @@ class OpcUaDriver:
         self._source_ts = source_timestamps
         self._running = False
         self.connected = False
+        # local queue: notifications waiting for on_reading (one consumer, in order, bounded)
+        self._max_pending = max(1, int(max_pending))
+        self._pending: deque = deque()
+        self._pending_evt: Optional[asyncio.Event] = None
+        self.dropped = 0
+        self._dropped_logged = 0
+        self._drop_log_at = 0.0
+
+    @property
+    def pending(self) -> int:
+        return len(self._pending)
+
+    def _push(self, item: tuple) -> None:
+        if len(self._pending) >= self._max_pending:
+            self.dropped += 1
+            now = time.monotonic()
+            if now - self._drop_log_at >= 10.0:
+                log.warning("opcua.readings_dropped", endpoint=self._endpoint, total=self.dropped,
+                            since_last=self.dropped - self._dropped_logged, max_pending=self._max_pending,
+                            hint="o gateway não acompanha a taxa de leituras (CPU/uplink)")
+                self._drop_log_at, self._dropped_logged = now, self.dropped
+            return
+        self._pending.append(item)
+        if self._pending_evt is not None:
+            self._pending_evt.set()
+
+    async def _consume(self) -> None:
+        """Delivers queued notifications to on_reading one at a time, in arrival order. on_reading may wait
+        (gateway outbox full): the local queue absorbs it up to `max_pending`."""
+        assert self._pending_evt is not None
+        while True:
+            await self._pending_evt.wait()
+            self._pending_evt.clear()
+            while self._pending:
+                item = self._pending.popleft()
+                if self._on_reading is None:
+                    continue
+                try:
+                    if len(item) == 4:
+                        await self._on_reading(item[0], item[1], item[2], initial=item[3])
+                    else:
+                        await self._on_reading(item[0], item[1])
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001 — one bad reading never stops the consumer
+                    log.warning("opcua.reading_failed", tag_id=item[0], error=str(e)[:200])
 
     async def run(self) -> None:
         self._running = True
-        log.info("opcua.starting", endpoint=self._endpoint, tags=len(self._tags))
+        log.info("opcua.starting", endpoint=self._endpoint, tags=len(self._tags), queue_size=self._queue_size)
+        self._pending_evt = asyncio.Event()
+        if self._pending:
+            self._pending_evt.set()
+        consumer = asyncio.create_task(self._consume(), name="opcua_consumer")
+        try:
+            await self._run_sessions()
+        finally:
+            # deliver what was already received (a stop/reload must not lose queued strokes), then stop
+            deadline = time.monotonic() + 5.0
+            while self._pending and time.monotonic() < deadline and not consumer.done():
+                await asyncio.sleep(0.01)
+            consumer.cancel()
+            await asyncio.gather(consumer, return_exceptions=True)
 
+    async def _run_sessions(self) -> None:
         while self._running:
             try:
                 async with Client(url=self._endpoint) as client:
@@ -126,7 +206,7 @@ class OpcUaDriver:
                         tag_map[node.nodeid] = cfg
                         nodes.append(node)
 
-                    handler = _SubscriptionHandler(tag_map, self._on_reading, self._source_ts)
+                    handler = _SubscriptionHandler(tag_map, self._on_reading, self._source_ts, sink=self._push)
                     sub = await client.create_subscription(self._publishing_interval, handler)
                     if self._notify_on_timestamp:
                         mfilter = ua.DataChangeFilter(Trigger=ua.DataChangeTrigger.StatusValueTimestamp)

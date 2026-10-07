@@ -1,8 +1,15 @@
 """
 Local SQLite buffer — stores sensor payloads when MQTT broker is unreachable.
 Flushes automatically when connection is restored.
+
+Throughput (Sprint 5b QA: a gateway at ~230 readings/s never recovered after an uplink outage, because every
+reading was one INSERT + COMMIT with fsync and one COUNT(*) on the whole table, all on the single aiosqlite queue the
+flush also needs): writes are batched (`store_many`, one transaction per batch), the database runs in WAL mode with
+synchronous=NORMAL (a power cut may lose the last committed batches, never corrupts the file) and the gateway keeps
+the row count in memory (`initialize()` / `rows`) instead of counting the table per reading.
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -17,9 +24,12 @@ class LocalBuffer:
     def __init__(self, db_path: str = "/tmp/edge_buffer.db") -> None:
         self._path = db_path
         self._db: aiosqlite.Connection | None = None
+        self.rows = 0                      # rows in the table (kept in memory; set by initialize)
 
     async def initialize(self) -> None:
         self._db = await aiosqlite.connect(self._path)
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS buffer (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,17 +39,25 @@ class LocalBuffer:
             )
         """)
         await self._db.commit()
-        log.info("buffer.initialized", path=self._path)
+        self.rows = await self.count()
+        log.info("buffer.initialized", path=self._path, rows=self.rows)
 
     async def store(self, topic: str, payload: dict) -> None:
-        if self._db is None:
-            return
-        await self._db.execute(
+        await self.store_many([(topic, payload)])
+
+    async def store_many(self, items: list[tuple[str, dict]]) -> int:
+        """Appends (topic, payload) rows in order, in ONE transaction. Returns how many were stored."""
+        if self._db is None or not items:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.executemany(
             "INSERT INTO buffer (topic, payload, stored_at) VALUES (?, ?, ?)",
-            (topic, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+            [(t, json.dumps(p), now) for t, p in items],
         )
         await self._db.commit()
-        log.debug("buffer.stored", topic=topic)
+        self.rows += len(items)
+        log.debug("buffer.stored", count=len(items))
+        return len(items)
 
     async def peek(self, limit: int = 500) -> list[tuple[int, str, dict]]:
         """Oldest-first (id, topic, payload) rows, without removing them."""
@@ -55,43 +73,64 @@ class LocalBuffer:
         if self._db is None or not ids:
             return
         placeholders = ",".join("?" * len(ids))
-        await self._db.execute(f"DELETE FROM buffer WHERE id IN ({placeholders})", ids)
+        cur = await self._db.execute(f"DELETE FROM buffer WHERE id IN ({placeholders})", ids)
         await self._db.commit()
+        self.rows = max(0, self.rows - (cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else len(ids)))
 
     async def flush_to(
         self,
         publish: Callable[[str, dict], Awaitable[bool]],
         batch_size: int = 500,
+        window: int = 1,
+        max_batches: int | None = None,
     ) -> int:
         """Re-sends buffered rows in original (FIFO) order through `publish`.
 
-        A row is deleted only after `publish` returned True. On the first failure the
-        flush stops, so nothing is lost and order is preserved for the next attempt.
+        `window` > 1 starts that many publishes at once (pipelined: they reach the wire in order, their
+        acknowledgements are awaited together — one round trip per window instead of per reading). A row is
+        deleted only after `publish` returned True, and only the leading run of successes of a window: on the
+        first failure the flush stops, so nothing is lost and order is preserved for the next attempt (a later
+        row of the same window that did go through is sent again — the server's processing is idempotent).
+        `max_batches` limits the work of one call (the gateway interleaves the flush with new readings).
         Returns how many rows were sent.
         """
         sent = 0
-        while True:
+        batches = 0
+        window = max(1, int(window))
+
+        async def _one(topic: str, payload: dict) -> bool:
+            try:
+                return bool(await publish(topic, payload))
+            except Exception as e:  # noqa: BLE001
+                log.warning("buffer.flush_error", error=str(e))
+                return False
+
+        while max_batches is None or batches < max_batches:
             rows = await self.peek(batch_size)
             if not rows:
                 break
+            batches += 1
             done: list[int] = []
             failed = False
-            for row_id, topic, payload in rows:
-                try:
-                    ok = await publish(topic, payload)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("buffer.flush_error", error=str(e))
-                    ok = False
-                if not ok:
-                    failed = True
+            for i in range(0, len(rows), window):
+                chunk = rows[i:i + window]
+                if len(chunk) == 1:
+                    results = [await _one(chunk[0][1], chunk[0][2])]
+                else:
+                    results = await asyncio.gather(*(_one(t, p) for _, t, p in chunk))
+                for (row_id, _, _), ok in zip(chunk, results):
+                    if not ok:
+                        failed = True
+                        break
+                    done.append(row_id)
+                if failed:
                     break
-                done.append(row_id)
             await self.delete(done)
             sent += len(done)
             if failed:
                 break
         if sent:
-            log.info("buffer.flushed", count=sent)
+            log.info("buffer.flushed", count=sent, remaining=self.rows)
         return sent
 
     async def flush(self) -> list[tuple[str, dict]]:
@@ -113,6 +152,7 @@ class LocalBuffer:
         placeholders = ",".join("?" * len(ids))
         await self._db.execute(f"DELETE FROM buffer WHERE id IN ({placeholders})", ids)
         await self._db.commit()
+        self.rows = 0
 
         log.info("buffer.flushed", count=len(rows))
         return [(r[1], json.loads(r[2])) for r in rows]

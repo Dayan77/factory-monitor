@@ -3,16 +3,23 @@
     broker ──► receive loop ──► per-tag FIFO queues ──► fixed worker pool ──► process(reading)
                    │  (blocks when `capacity` readings are in flight)          │ returns the Influx write
                    │                                                          ▼
-                   └──────────── acknowledge in receive order ◄──── reading finished (stored / dead-lettered)
+                   └──── acknowledge in receive order PER TAG ◄──── reading finished (stored / dead-lettered)
 
 * **Order per tag**: one queue per key (tenant, tag); a key is served by at most one worker at a time, so the
   readings of a tag are processed one after the other, in arrival order. Different tags run in parallel.
 * **Fixed concurrency**: `workers` tasks, created once (no task per message).
 * **Bounded memory / backpressure**: at most `capacity` readings are inside the pipeline (queued, processing or
   waiting for their Influx write). When full, `put()` waits — the receive loop stops reading. QoS 1 deliveries are
-  acknowledged (PUBACK) only when the reading is *finished*, in receive order (MQTT 3.1.1 §4.6), so the broker never
-  has more than its `max_inflight_messages` unacknowledged deliveries to this client and keeps the backlog in its
-  own queue (persistent session: also across a server restart).
+  acknowledged (PUBACK) only when the reading is *finished*, so the broker never has more than its
+  `max_inflight_messages` unacknowledged deliveries to this client and keeps the backlog in its own queue
+  (persistent session: also across a server restart).
+* **Acknowledgement order = per key (tenant, tag)**, not global: a reading is acknowledged as soon as it and every
+  earlier reading OF THE SAME TAG are finished. A global receive-order gate let one stuck reading (a tenant's usage
+  transaction waiting on a recompute lock, a retry of up to MQTT_TRANSIENT_RETRY_S) hold back the PUBACK of every
+  later reading of every tenant until the broker's in-flight window filled and ingestion stopped for all tenants
+  (Sprint 5b review). Mosquitto and paho match a PUBACK by packet id, so out-of-order acknowledgements across tags are
+  accepted (MQTT 3.1.1 §4.6 asks for receive order; we keep it within each tag, which is what redelivery after a
+  crash needs: a tag's unacknowledged readings are always a suffix of its stream, redelivered in order).
 * **At-least-once**: a reading acknowledged is stored (or in the dead-letter table). After a crash the broker
   redelivers the unacknowledged ones; processing is idempotent (same Influx point; usage ignores duplicates).
 """
@@ -66,7 +73,9 @@ class OrderedPipeline:
         self._queues: dict[Hashable, deque[Item]] = {}
         self._ready: asyncio.Queue = asyncio.Queue()
         self._scheduled: set[Hashable] = set()          # keys in _ready or being served
-        self._order: deque[Item] = deque()              # receive order, for in-order acknowledgement
+        # receive order per key, for in-order acknowledgement within a tag (independent across tags/tenants)
+        self._order: dict[Hashable, deque[Item]] = {}
+        self.unacked = 0
         self._finishing: set[asyncio.Task] = set()
         self._workers: list[asyncio.Task] = []
         self.inflight = 0
@@ -104,8 +113,12 @@ class OrderedPipeline:
         self.inflight += 1
         INGEST_QUEUE_DEPTH.set(self.inflight)
         item.t0 = item.t0 or asyncio.get_running_loop().time()
-        self._order.append(item)
-        INGEST_UNACKED.set(len(self._order))
+        order = self._order.get(item.key)
+        if order is None:
+            order = self._order[item.key] = deque()
+        order.append(item)
+        self.unacked += 1
+        INGEST_UNACKED.set(self.unacked)
         q = self._queues.get(item.key)
         if q is None:
             q = self._queues[item.key] = deque()
@@ -202,11 +215,15 @@ class OrderedPipeline:
         INGEST_QUEUE_DEPTH.set(self.inflight)
         INGEST_LATENCY.observe(max(0.0, asyncio.get_running_loop().time() - item.t0))
         self._slots.release()
-        while self._order and self._order[0].done:
-            it = self._order.popleft()
+        order = self._order.get(item.key)
+        while order and order[0].done:
+            it = order.popleft()
+            self.unacked -= 1
             if self._acker is not None and it.qos and it.gen == self.gen:
                 try:
                     self._acker(it)
                 except Exception as e:  # noqa: BLE001 — connection gone: the broker redelivers it
                     log.warning("ingest.ack_failed", error=str(e)[:200])
-        INGEST_UNACKED.set(len(self._order))
+        if order is not None and not order:
+            self._order.pop(item.key, None)
+        INGEST_UNACKED.set(self.unacked)

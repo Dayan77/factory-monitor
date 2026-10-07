@@ -163,3 +163,36 @@ async def test_source_timestamps_flag_the_initial_notification_of_each_item(opc_
             await asyncio.wait_for(task, 5)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             task.cancel()
+
+
+async def test_burst_between_two_publishes_is_delivered_complete_and_in_order(opc_server):
+    """F1 at 500×: ~58 strokes per tag per 500 ms publish (QA (b)). With the old queue of 64 a pause of the gateway
+    overflowed the server-side queue; the default queue (4096) keeps a burst of 1500 changes between two publishes."""
+    got: list[float] = []
+
+    async def on_reading(tag_id, value, ts=None, initial=False):
+        got.append(value)
+
+    d = OpcUaDriver(opc_server["endpoint"], [OpcTagConfig("t", f"ns={opc_server['idx']};i=1001")], on_reading,
+                    publishing_interval_ms=2000, reconnect_delay_s=0.2, source_timestamps=True)
+    task = asyncio.create_task(d.run())
+    try:
+        for _ in range(200):
+            if got:
+                break
+            await asyncio.sleep(0.05)
+        assert got == [20.0]
+        for i in range(1500):                                # all inside one publishing interval
+            await opc_server["temp"].write_value(float(1000 + i))
+        for _ in range(200):
+            if len(got) >= 1501:
+                break
+            await asyncio.sleep(0.05)
+        assert got[1:] == [float(1000 + i) for i in range(1500)]
+        assert d.dropped == 0
+    finally:
+        await d.stop()
+        try:
+            await asyncio.wait_for(task, 5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            task.cancel()

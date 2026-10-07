@@ -8,7 +8,7 @@ docs/scenarios/scenario_f_predictive.json (clock shifted SHIFT days), then POST 
 import json, os, sys
 from datetime import datetime, timedelta, date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from api import call, login  # noqa: E402
+from api import call, login, recompute  # noqa: E402
 
 SHIFT = int(os.environ.get("SHIFT_DAYS", "182"))
 DOC = json.load(open("/home/user/factory-monitor/docs/scenarios/scenario_f_predictive.json"))
@@ -96,7 +96,7 @@ for cp in X["rul_checkpoints"]:
         elif got != v:
             diffs.append((k, got, v))
     check(not diffs, f"RUL checkpoint window {cp['window']}: {cp['rul_days']} d ({cp['rul_days_low']}–{cp['rul_days_high']}) → {shd(cp['projected_date'])}", diffs)
-s, rc = call("POST", "/api/predictive/recompute", {"monitor_id": st["m1"]}, t)
+s, rc = recompute({"monitor_id": st["m1"]}, t)
 check(s == 200 and rc.get("same") is True, "recompute reproduces identical alerts", rc)
 print(f"{sum(res)}/{len(res)} passed")
 sys.exit(0 if all(res) else 1)

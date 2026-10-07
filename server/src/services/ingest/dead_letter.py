@@ -6,7 +6,8 @@ retry budget, the delivery is appended to a JSON-lines file (settings.ingest_dea
 fails is the reading counted in `fm_ingest_dropped` (must stay 0).
 
 `replay()` feeds stored dead letters back through the normal reading processor (idempotent) — for the operator
-after the cause is fixed (`python -m src.services.ingest.dead_letter --replay`).
+after the cause is fixed (`python -m src.services.ingest.dead_letter --replay`, i.e. `replay_and_flush()`, which also
+writes the late-data marks of the replayed readings before the process exits).
 """
 from __future__ import annotations
 
@@ -97,6 +98,18 @@ async def replay(handle: Callable[[str, bytes, datetime], Awaitable[None]], tena
     return n
 
 
+async def replay_and_flush(tenant_id: Optional[str] = None, limit: int = 10_000) -> int:
+    """Operator replay: re-processes the dead letters through the normal reading processor, then writes the late-data
+    marks those readings left in THIS process's memory (watermarks → `ingest_watermarks` → `predictive_dirty`, and
+    the downtime detector's late notes). A replayed dead letter is old by definition — exactly the late reading the
+    engine must rewind for; without the flush the CLI exited with the marks in memory and no block was re-cut."""
+    from ..mqtt_subscriber import _handle_message, flush_late_marks
+    try:
+        return await replay(lambda t, p, r: _handle_message(t, p, received_at=r), tenant_id, limit)
+    finally:
+        await flush_late_marks(timeout=30.0)
+
+
 if __name__ == "__main__":  # pragma: no cover — operator tool
     import argparse
 
@@ -105,5 +118,4 @@ if __name__ == "__main__":  # pragma: no cover — operator tool
     ap.add_argument("--tenant")
     a = ap.parse_args()
     if a.replay:
-        from ..mqtt_subscriber import _handle_message
-        print(asyncio.run(replay(lambda t, p, r: _handle_message(t, p, received_at=r), a.tenant)))
+        print(asyncio.run(replay_and_flush(a.tenant)))

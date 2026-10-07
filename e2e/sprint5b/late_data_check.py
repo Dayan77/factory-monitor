@@ -4,7 +4,7 @@
 import json, os, sys
 from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sprint5", "scenario_f_real"))
-from api import call, login
+from api import call, login, recompute
 DOC = json.load(open("/home/user/factory-monitor/docs/scenarios/scenario_f_predictive.json"))
 C1 = DOC["cases"]["F1"]; SHIFT = 182
 st = json.load(open(os.environ["STATE"])); t = login(); res = []
@@ -25,11 +25,9 @@ check(all(pts.get(i) and P(pts[i]["end_at"]) == inst + timedelta(hours=12 * i) f
 s, pos = call("GET", f"/api/positions/{st['pos1']}", t=t)
 u = (pos.get("usage") or {}).get("cycles_total")
 check(u == truth, f"usage cycles_total == plant truth ({truth})", u)
-import httpx, time as _t
+import time as _t
 _t0 = _t.time()
-_r = httpx.post(os.environ["API"] + "/api/predictive/recompute", json={"monitor_id": st["m1"], "reextract_all": True},
-               headers={"Authorization": "Bearer " + t}, timeout=1800, trust_env=False)
-s, rc = _r.status_code, _r.json()
+s, rc = recompute({"monitor_id": st["m1"], "reextract_all": True}, t)     # background job (202 + poll)
 print(f"recompute took {_t.time() - _t0:.0f} s", flush=True)
 check(s == 200 and rc.get("same") is True and all(m.get("windows_reextracted", 0) == 0 for m in rc.get("monitors", [])),
       "recompute reextract_all: same alerts, 0 windows differ", rc)
