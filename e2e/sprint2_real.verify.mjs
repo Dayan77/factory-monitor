@@ -56,7 +56,7 @@ for (const theme of ["light", "dark"]) {
     check((await page.evaluate(() => document.documentElement.dataset.theme)) === theme, `theme follows OS (${theme})`);
 
     // Fábrica -> Linha -> Máquina drill-down
-    await page.goto(`${BASE}/factory`);
+    await page.goto(`${BASE}/factory/list`);   // Sprint 6: /factory is the plant map; the line cards moved to /factory/list
     await page.getByTestId("line-card").first().waitFor();
     // The dev stack may also hold the legacy simulator's "Linha Demo (Simulador)", which LineCreate puts in the
     // tenant's first plant (Planta Manaus) — so require both virtual-plant lines rather than exactly 2 cards.
