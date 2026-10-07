@@ -43,6 +43,9 @@ os.environ["APP_ENV"] = "test"
 # reading for a client id that never comes back); tests of the persistent session use their own ids and clean up.
 os.environ.setdefault("MQTT_PERSISTENT_SESSION", "false")
 os.environ["APP_SECRET_KEY"] = "test-secret-key-not-used-anywhere-else"
+# Sprint 7: production access tokens last 15 min; the session-scoped fixtures mint their tokens once and the suite
+# runs longer than that. Tests of the token lifetime read settings.jwt_access_token_expire_minutes.
+os.environ.setdefault("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "480")
 os.environ["SENDGRID_API_KEY"] = ""
 os.environ["TELEGRAM_BOT_TOKEN"] = ""
 os.environ["OPENAI_API_KEY"] = ""

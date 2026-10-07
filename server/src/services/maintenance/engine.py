@@ -211,20 +211,43 @@ async def escalations(db: AsyncSession, tenant_id: str, now: datetime) -> int:
     return n
 
 
-async def run_maintenance_engine() -> None:
+MAINTENANCE_TENANT_TIMEOUT_S = 120.0
+
+
+async def run_maintenance_tick(now: Optional[datetime] = None, tenant_ids: Optional[set[str]] = None) -> dict:
+    """One engine pass over the active tenants, with bounded concurrency (settings.detector_concurrency) and a
+    per-tenant timeout (Sprint 7): a tenant whose plan recompute is slow (many plans, a backlog of usage) never delays
+    the emergency calls and escalations of the other tenants. Returns {tenant_id: outcome}."""
     from ...db import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        tenants = (await db.execute(select(Tenant.id).where(Tenant.is_active.is_(True)))).scalars().all()
+    if tenant_ids is not None:
+        tenants = [t for t in tenants if t in tenant_ids]
+    sem = asyncio.Semaphore(max(1, int(settings.detector_concurrency)))
+    out: dict[str, dict] = {}
+
+    async def one(tid: str) -> None:
+        async with sem:
+            try:
+                async with AsyncSessionLocal() as db:
+                    out[tid] = await asyncio.wait_for(tick_tenant(db, tid, now), timeout=MAINTENANCE_TENANT_TIMEOUT_S)
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                out[tid] = {"error": "timeout"}
+                log.error("maintenance.engine.tenant_timeout", tenant_id=tid[:8], timeout_s=MAINTENANCE_TENANT_TIMEOUT_S)
+            except Exception as e:  # noqa: BLE001
+                out[tid] = {"error": type(e).__name__}
+                log.error("maintenance.engine.tenant_error", tenant_id=tid[:8], error=f"{type(e).__name__}: {e}"[:300])
+
+    await asyncio.gather(*(one(t) for t in tenants))
+    return out
+
+
+async def run_maintenance_engine() -> None:
     while True:
         try:
-            async with AsyncSessionLocal() as db:
-                tenants = (await db.execute(select(Tenant.id).where(Tenant.is_active.is_(True)))).scalars().all()
-            for tid in tenants:
-                try:
-                    async with AsyncSessionLocal() as db:
-                        await tick_tenant(db, tid)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    log.error("maintenance.engine.tenant_error", tenant_id=tid[:8], error=f"{type(e).__name__}: {e}"[:300])
+            await run_maintenance_tick()
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

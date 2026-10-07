@@ -53,9 +53,9 @@ def register(label):
     stamp = f"{int(time.time())}{uuid.uuid4().hex[:4]}"
     email = f"qa-iso3-{label}-{stamp}@qa-factoryconnect.com.br"
     r = httpx.post(f"{API}/api/auth/register", json={"company_name": f"QA Iso3 {label} {stamp}", "admin_name": "QA",
-                                                     "admin_email": email, "admin_password": "QaIso#2026x"})
+                                                     "admin_email": email, "admin_password": "QaIsola#2026x"})
     r.raise_for_status()
-    c = client(login(email, "QaIso#2026x"))
+    c = client(login(email, "QaIsola#2026x"))
     return c, c.get("/api/auth/me").json()["tenant_id"]
 
 

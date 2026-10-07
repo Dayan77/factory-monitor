@@ -525,7 +525,8 @@ async def fold(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseline)
     plan_fn = None
     if wins:
         hourly = await hourly_usage(db, m, wins[0].end - timedelta(days=15), wins[-1].end + timedelta(hours=1))
-        rate_fn = core.make_rate_fn(hourly)
+        from ..usage.queries import data_since
+        rate_fn = core.make_rate_fn(hourly, data_since=await data_since(db, m.tenant_id, m.position_id, m.machine_id))
         plan_fn = await plan_fn_for(db, m)
     res = core.fold_segment(cfg, wins, warmup=reset.warmup, tz=tz, rate_fn=rate_fn, plan_fn=plan_fn, events=evs,
                             carry=carry, snooze=snooze)
@@ -871,25 +872,45 @@ async def run_once(now: Optional[datetime] = None) -> int:
     async with AsyncSessionLocal() as db:
         ids = [(i, t) for i, t in (await db.execute(select(PredictiveMonitor.id, PredictiveMonitor.tenant_id).where(
             PredictiveMonitor.enabled.is_(True)))).all()]
-    n = 0
+    # Sprint 7: monitors run with bounded concurrency and a per-monitor timeout — a monitor catching up a backlog
+    # (bounded by MAX_WINDOWS_PER_RUN per run, resumed from its cursor next tick) never delays the other monitors /
+    # tenants; interleaved by tenant so one big tenant does not take every slot first.
+    by_t: dict[str, list[str]] = {}
     for mid, tid in ids:
-        async with AsyncSessionLocal() as db:
-            try:
-                # same row lock as POST /monitors/{id}/process: one pipeline run per monitor at a time
-                m = (await db.execute(select(PredictiveMonitor).where(
-                    PredictiveMonitor.id == mid, PredictiveMonitor.tenant_id == tid).with_for_update())
-                     ).scalar_one_or_none()
-                if m is None:
-                    continue
-                await process_monitor(db, m, now, transfer=False)
-                await db.commit()
-                await ps.deliver(db)
-                n += 1
-            except Exception:  # noqa: BLE001 — one monitor never stops the others
-                await db.rollback()
-                ps.discard_pending(db)
-                log.exception("predictive.monitor_failed", monitor_id=mid)
-    return n
+        by_t.setdefault(tid, []).append(mid)
+    order: list[tuple[str, str]] = []
+    while any(by_t.values()):
+        for tid, q in by_t.items():
+            if q:
+                order.append((q.pop(0), tid))
+    sem = asyncio.Semaphore(max(1, int(getattr(settings, "detector_concurrency", 4))))
+    timeout = float(getattr(settings, "predictive_monitor_timeout_s", 240.0))
+
+    async def one(mid: str, tid: str) -> int:
+        async with sem:
+            async with AsyncSessionLocal() as db:
+                try:
+                    async def work() -> int:
+                        # same row lock as POST /monitors/{id}/process: one pipeline run per monitor at a time
+                        m = (await db.execute(select(PredictiveMonitor).where(
+                            PredictiveMonitor.id == mid, PredictiveMonitor.tenant_id == tid).with_for_update())
+                             ).scalar_one_or_none()
+                        if m is None:
+                            return 0
+                        await process_monitor(db, m, now, transfer=False)
+                        await db.commit()
+                        await ps.deliver(db)
+                        return 1
+                    return await asyncio.wait_for(work(), timeout=timeout)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 — one monitor never stops the others (timeout: resumed next tick)
+                    await db.rollback()
+                    ps.discard_pending(db)
+                    log.exception("predictive.monitor_failed", monitor_id=mid)
+                    return 0
+
+    return sum(await asyncio.gather(*(one(mid, tid) for mid, tid in order)))
 
 
 async def run_predictive_engine() -> None:

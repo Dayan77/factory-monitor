@@ -387,6 +387,8 @@ class OeeOut(BaseModel):
     availability_operational: Optional[float] = None
     data_coverage: Optional[float]
     product_unknown: bool
+    # Sprint 7 (audit A-13): line PRI of some product taken from the output machine (none at the bottleneck)
+    line_pri_fallback: bool = False
     # S3-7: parts counted outside every shift instance (not in P/Q/OEE/TEEP)
     produced_outside_schedule: ProducedOutside = Field(default_factory=lambda: ProducedOutside())
     # D7: some hourly count bucket was only partly inside the window/schedule (counted pro rata)
@@ -426,6 +428,11 @@ class ReliabilityOut(BaseModel):
     availability_inherent: Optional[float]
     failure_rate_per_h: Optional[float] = None
     reason: Optional[str] = None
+    # Sprint 7: kpis S5-1c item 6 (audit A-6) and MART, §2.3 (audit A-20)
+    failures_outside_production: int = 0
+    mart_s: Optional[float] = None
+    mart_reason: Optional[str] = None
+    repairs_timed: int = 0
 
 
 class MachineProduction(BaseModel):

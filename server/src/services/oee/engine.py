@@ -111,11 +111,13 @@ async def run_source(db: AsyncSession, tenant_id: str, machine_id: str) -> tuple
 
 
 async def operating_seconds(db: AsyncSession, tenant_id: str, machine_ids: Iterable[str],
-                            start: datetime, stop: datetime) -> float:
+                            start: datetime, stop: datetime, now: Optional[datetime] = None) -> float:
     """Σ run_state = 1 (C23) from the hourly usage buckets. Hours fully inside [start, stop) count
     whole (exact for hour-aligned windows such as shifts); a partially covered hour at either edge
-    counts pro rata (its operation is assumed uniform inside the hour)."""
+    counts pro rata (its operation is assumed uniform inside the hour). The current hour holds only the operation
+    up to `now` (audit A-16: the caller's clock — services.clock / the engine's `now`, never the wall clock)."""
     tot = 0.0
+    now = now or datetime.now(timezone.utc)
     first = start.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
     for mid in machine_ids:
         scope, eid = await run_source(db, tenant_id, mid)
@@ -125,7 +127,6 @@ async def operating_seconds(db: AsyncSession, tenant_id: str, machine_ids: Itera
                 UsageBucket.measure == "operating_seconds", UsageBucket.bucket_start >= first,
                 UsageBucket.bucket_start < stop)
         )).all()
-        now = datetime.now(timezone.utc)
         for b, v in rows:
             bucket_end = min(b + timedelta(hours=1), max(now, b + timedelta(seconds=1)))  # current hour: so far
             ov = (min(bucket_end, stop) - max(b, start)).total_seconds()
@@ -164,6 +165,9 @@ class ProductPri:
     pri: dict[str, Optional[float]] = field(default_factory=dict)      # product_id -> s per part
     default_product: Optional[str] = None
     fallback_pri: Optional[float] = None                                # machine.ideal_cycle_time_s
+    # line PRI (audit A-13): products whose PRI came from the output machine (none at the bottleneck); None key =
+    # the fallback PRI itself came from the output machine
+    fallback_ids: frozenset = frozenset()
 
     def lookup(self, product_id: Optional[str]) -> Optional[float]:
         if product_id is None:
@@ -184,67 +188,92 @@ class MachineData:
 
 
 async def product_pri(db: AsyncSession, tenant_id: str, info: MachineInfo) -> ProductPri:
+    return (await products_pri(db, tenant_id, {info.id: info}))[info.id]
+
+
+async def products_pri(db: AsyncSession, tenant_id: str, infos: dict[str, MachineInfo]) -> dict[str, ProductPri]:
+    """ProductPri of several machines in one query."""
+    out = {mid: ProductPri(fallback_pri=i.ideal_cycle_time_s) for mid, i in infos.items()}
+    if not infos:
+        return out
     rows = (await db.execute(
-        select(MachineProduct).where(MachineProduct.tenant_id == tenant_id, MachineProduct.machine_id == info.id)
+        select(MachineProduct).where(MachineProduct.tenant_id == tenant_id, MachineProduct.machine_id.in_(list(infos)))
     )).scalars().all()
-    p = ProductPri(fallback_pri=info.ideal_cycle_time_s)
     for r in rows:
+        p = out[r.machine_id]
         p.pri[r.product_id] = r.ideal_cycle_time_s / max(1, r.parts_per_cycle or 1)
         if r.is_default:
             p.default_product = r.product_id
-    if p.default_product is not None:
-        p.fallback_pri = p.pri[p.default_product]
-    return p
+    for p in out.values():
+        if p.default_product is not None:
+            p.fallback_pri = p.pri[p.default_product]
+    return out
 
 
 async def load_machine_data(db: AsyncSession, info: MachineInfo, cal: Calendar, start: datetime,
                             stop: datetime, now: datetime) -> MachineData:
-    tid, mid = info.tenant_id, info.id
-    evs = (await db.execute(
-        select(DowntimeEvent).where(
-            DowntimeEvent.tenant_id == tid, DowntimeEvent.machine_id == mid, DowntimeEvent.start < stop,
-            or_(DowntimeEvent.end.is_(None), DowntimeEvent.end > start))
-        .order_by(DowntimeEvent.start)
-    )).scalars().all()
-    events = [EventLite(e.id, e.start, e.end, effective_reason(e), bool(e.planned)) for e in evs]
-    span_rows = (await db.execute(
-        select(MachineDataSpan.start, MachineDataSpan.end).where(
-            MachineDataSpan.tenant_id == tid, MachineDataSpan.machine_id == mid,
-            MachineDataSpan.start < stop, MachineDataSpan.end > start)
-    )).all()
-    spans = [(a, b) for a, b in span_rows]
-    det = (await db.execute(select(DowntimeDetectorState).where(
-        DowntimeDetectorState.tenant_id == tid, DowntimeDetectorState.machine_id == mid))).scalar_one_or_none()
-    if det is not None and det.covered_until is not None:
-        last = (det.state or {}).get("last_data")
-        if last:
-            live_until = min(now, datetime.fromisoformat(last) + timedelta(seconds=settings.machine_offline_timeout_s))
-            if live_until > det.covered_until:
-                spans.append((det.covered_until, live_until))
-    spans = normalize(spans)
-    micro = [(r.piece_start if r.piece_start else r.bucket_start, r.count, r.loss_s, r.short_faults)
-             for r in (await db.execute(select(MicroStopBucket).where(
-                 MicroStopBucket.tenant_id == tid, MicroStopBucket.machine_id == mid,
-                 MicroStopBucket.bucket_start >= start - timedelta(hours=1), MicroStopBucket.bucket_start < stop)
-             )).scalars().all()]
-    has_good = await uq.machine_has_good_tag(db, tid, mid)
-    prod_rows = (await db.execute(
-        select(UsageBucket.bucket_start, UsageBucket.measure, UsageBucket.value).where(
-            UsageBucket.tenant_id == tid, UsageBucket.scope == "machine", UsageBucket.entity_id == mid,
-            UsageBucket.measure.in_(("good", "scrap", "total")),
-            UsageBucket.bucket_start >= start - timedelta(hours=1), UsageBucket.bucket_start < stop)
-    )).all()
-    raw: dict[datetime, dict[str, float]] = defaultdict(dict)
-    for b, m, v in prod_rows:
-        raw[b][m] = float(v)
-    production = {b: uq.production(v, has_good) for b, v in raw.items()}
-    run_rows = (await db.execute(
-        select(ProductionRun.product_id, ProductionRun.started_at, ProductionRun.ended_at).where(
-            ProductionRun.tenant_id == tid, ProductionRun.machine_id == mid, ProductionRun.started_at < stop,
-            or_(ProductionRun.ended_at.is_(None), ProductionRun.ended_at > start - timedelta(hours=1)))
-    )).all()
-    runs = [(p, a, b) for p, a, b in run_rows]
-    return MachineData(info, cal, events, spans, micro, production, runs, await product_pri(db, tid, info))
+    return (await load_machines_data(db, {info.id: info}, cal, start, stop, now))[info.id]
+
+
+async def load_machines_data(db: AsyncSession, infos: dict[str, MachineInfo], cal: Calendar, start: datetime,
+                             stop: datetime, now: datetime) -> dict[str, MachineData]:
+    """MachineData of every machine in `infos` (same tenant, same calendar) — one query per table for all of them
+    (Sprint 7, scale: /api/overview loaded each machine with ~9 queries). Every query filters tenant_id."""
+    if not infos:
+        return {}
+    tid = next(iter(infos.values())).tenant_id
+    ids = list(infos)
+    events: dict[str, list[EventLite]] = defaultdict(list)
+    for e in (await db.execute(
+            select(DowntimeEvent).where(
+                DowntimeEvent.tenant_id == tid, DowntimeEvent.machine_id.in_(ids), DowntimeEvent.start < stop,
+                or_(DowntimeEvent.end.is_(None), DowntimeEvent.end > start))
+            .order_by(DowntimeEvent.start))).scalars().all():
+        events[e.machine_id].append(EventLite(e.id, e.start, e.end, effective_reason(e), bool(e.planned)))
+    spans: dict[str, list[Interval]] = defaultdict(list)
+    for mid, a, b in (await db.execute(
+            select(MachineDataSpan.machine_id, MachineDataSpan.start, MachineDataSpan.end).where(
+                MachineDataSpan.tenant_id == tid, MachineDataSpan.machine_id.in_(ids),
+                MachineDataSpan.start < stop, MachineDataSpan.end > start))).all():
+        spans[mid].append((a, b))
+    for det in (await db.execute(select(DowntimeDetectorState).where(
+            DowntimeDetectorState.tenant_id == tid, DowntimeDetectorState.machine_id.in_(ids)))).scalars().all():
+        if det.covered_until is not None:
+            last = (det.state or {}).get("last_data")
+            if last:
+                live_until = min(now, datetime.fromisoformat(last) + timedelta(seconds=settings.machine_offline_timeout_s))
+                if live_until > det.covered_until:
+                    spans[det.machine_id].append((det.covered_until, live_until))
+    micro: dict[str, list] = defaultdict(list)
+    for r in (await db.execute(select(MicroStopBucket).where(
+            MicroStopBucket.tenant_id == tid, MicroStopBucket.machine_id.in_(ids),
+            MicroStopBucket.bucket_start >= start - timedelta(hours=1), MicroStopBucket.bucket_start < stop)
+            )).scalars().all():
+        micro[r.machine_id].append((r.piece_start if r.piece_start else r.bucket_start, r.count, r.loss_s,
+                                    r.short_faults))
+    good_tag = set((await db.execute(select(Tag.machine_id).where(
+        Tag.tenant_id == tid, Tag.machine_id.in_(ids), Tag.is_active.is_(True),
+        Tag.semantic_role == SemanticRole.part_counter_good).distinct())).scalars().all())
+    raw: dict[str, dict[datetime, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
+    for eid, b, m, v in (await db.execute(
+            select(UsageBucket.entity_id, UsageBucket.bucket_start, UsageBucket.measure, UsageBucket.value).where(
+                UsageBucket.tenant_id == tid, UsageBucket.scope == "machine", UsageBucket.entity_id.in_(ids),
+                UsageBucket.measure.in_(("good", "scrap", "total")),
+                UsageBucket.bucket_start >= start - timedelta(hours=1), UsageBucket.bucket_start < stop))).all():
+        raw[eid][b][m] = float(v)
+    runs: dict[str, list] = defaultdict(list)
+    for mid, pid, a, b in (await db.execute(
+            select(ProductionRun.machine_id, ProductionRun.product_id, ProductionRun.started_at, ProductionRun.ended_at)
+            .where(ProductionRun.tenant_id == tid, ProductionRun.machine_id.in_(ids), ProductionRun.started_at < stop,
+                   or_(ProductionRun.ended_at.is_(None), ProductionRun.ended_at > start - timedelta(hours=1))))).all():
+        runs[mid].append((pid, a, b))
+    pris = await products_pri(db, tid, infos)
+    out = {}
+    for mid, info in infos.items():
+        production = {b: uq.production(v, mid in good_tag) for b, v in raw.get(mid, {}).items()}
+        out[mid] = MachineData(info, cal, events.get(mid, []), normalize(spans.get(mid, [])), micro.get(mid, []),
+                               production, runs.get(mid, []), pris[mid])
+    return out
 
 
 # ── components ──────────────────────────────────────────────────────────────
@@ -300,15 +329,17 @@ def components(md: MachineData, ws: datetime, we: datetime, now: datetime,
 
     # §2.6 Ao parts
     c.ao_excluded_s = sum(total_s(intersect(v, pot)) for k, v in brk_by.items() if k in AO_EXCLUDED)
-    for e, iv in planned_ivs:
-        if e.reason in AO_EXCLUDED:
-            c.ao_excluded_s += total_s(intersect([iv], sched))
+    excl_planned = intersect(normalize(iv for e, iv in planned_ivs if e.reason in AO_EXCLUDED), sched)
+    c.ao_excluded_s += total_s(excl_planned)
     # D_eq (kpis.md §2.6): EQP-* failures + PLN-03/MNT-02 maintenance. The preventive scheduled in the calendar
     # (planned_stop PLN-03, S3-4) is a break of the instance — it is PDOT for the OEE but still equipment downtime
     # for Ao (audit A-1, R6). Union of intervals: an event declared over that window is not counted twice.
     eq_brk = intersect(normalize(iv for k, v in brk_by.items() if is_equipment(k) for iv in v), pot)
     eq = [iv for e, iv in planned_ivs + unplanned if is_equipment(e.reason)]
-    c.ao_equipment_s = total_s(normalize(intersect(normalize(eq), normalize(list(sched) + eq_brk)) + eq_brk))
+    # audit A-14 (S3-4): the part of a failure under a declared PLN-01/02/04/05 stop is outside T_req — it is not
+    # equipment downtime too (otherwise it would be removed from T_req and still counted in D_eq)
+    req_sched = subtract(sched, excl_planned)
+    c.ao_equipment_s = total_s(normalize(intersect(normalize(eq), normalize(list(req_sched) + eq_brk)) + eq_brk))
 
     for piece_start, n, loss, short in md.micro:
         if ws <= piece_start < we:
@@ -378,6 +409,8 @@ def _production(c: Components, md: MachineData, ws: datetime, end: datetime, now
             if p is None:
                 c.pri_missing = True
                 continue
+            if pid in pri.fallback_ids:
+                c.pri_fallback = True
             c.ideal_produced_s += p * total * f
             c.ideal_good_s += p * good * f
 
@@ -435,14 +468,54 @@ def window_components(md: MachineData, w: Window, now: datetime, pri: Optional[P
 
 async def failures(db: AsyncSession, tenant_id: str, machine_ids: list[str], start: datetime, stop: datetime
                    ) -> list[tuple[str, Optional[float]]]:
+    return [(sev, dur) for sev, dur, *_ in await failure_rows(db, tenant_id, machine_ids, start, stop)]
+
+
+async def failure_rows(db: AsyncSession, tenant_id: str, machine_ids: list[str], start: datetime, stop: datetime
+                       ) -> list[tuple[str, Optional[float], Optional[float], str, datetime, str]]:
+    """(severity, restore_s, active_repair_s, machine_id, failed_at, id) of the failures in [start, stop)."""
     if not machine_ids:
         return []
     rows = (await db.execute(
-        select(FailureRecord.severity, FailureRecord.failed_at, FailureRecord.restored_at).where(
+        select(FailureRecord.severity, FailureRecord.failed_at, FailureRecord.restored_at,
+               FailureRecord.repair_started_at, FailureRecord.repair_finished_at, FailureRecord.machine_id,
+               FailureRecord.id).where(
             FailureRecord.tenant_id == tenant_id, FailureRecord.machine_id.in_(machine_ids),
             FailureRecord.failed_at >= start, FailureRecord.failed_at < stop)
     )).all()
-    return [(sev, (rest - failed).total_seconds() if rest else None) for sev, failed, rest in rows]
+    return [(sev, (rest - failed).total_seconds() if rest else None,
+             (rf - rs).total_seconds() if rs and rf and rf >= rs else None, mid, failed, fid)
+            for sev, failed, rest, rs, rf, mid, fid in rows]
+
+
+async def outside_production(db: AsyncSession, tenant_id: str, items: list[tuple[str, str, datetime]]) -> set[str]:
+    """kpis S5-1c item 6 (audit A-6): ids of the failures (id, machine_id, failed_at) whose failed_at is not planned
+    production time of their machine — off-shift, in a calendar break / planned stop, or inside a declared planned
+    DowntimeEvent (PLN-*). Calendar of the machine's plant (detection.productive_at)."""
+    from .detection import productive_at
+    if not items:
+        return set()
+    infos = await machine_infos(db, tenant_id, {m for _, m, _ in items})
+    cals: dict[str, Calendar] = {}
+    planned: dict[str, list[Interval]] = defaultdict(list)
+    lo, hi = min(t for _, _, t in items), max(t for _, _, t in items)
+    for mid, a, z in (await db.execute(
+            select(DowntimeEvent.machine_id, DowntimeEvent.start, DowntimeEvent.end).where(
+                DowntimeEvent.tenant_id == tenant_id, DowntimeEvent.machine_id.in_(list(infos)),
+                DowntimeEvent.planned.is_(True), DowntimeEvent.start <= hi,
+                or_(DowntimeEvent.end.is_(None), DowntimeEvent.end > lo)))).all():
+        planned[mid].append((a, z))
+    out = set()
+    for fid, mid, ts in items:
+        info = infos.get(mid)
+        if info is None:
+            continue
+        if info.plant_id not in cals:
+            cals[info.plant_id] = await load_calendar(db, tenant_id, info.plant_id, info.tz)
+        if not productive_at(cals[info.plant_id], ts) or any(a <= ts and (z is None or ts < z)
+                                                             for a, z in planned.get(mid, ())):
+            out.add(fid)
+    return out
 
 
 async def short_faults(db: AsyncSession, tenant_id: str, machine_ids: list[str], start: datetime, stop: datetime) -> int:

@@ -36,6 +36,7 @@ BLOCKED_PREFIXES = (
     "/api/maintenance/settings", "/api/maintenance/absences", "/api/notifications/preferences", "/api/push",
     "/api/ai/audit", "/api/ai/conversations", "/api/onboarding", "/api/usage/recompute", "/api/predictive/recompute", "/api/auth/register",
     "/api/report-schedules", "/api/reports/settings", "/api/reports/external-recipients", "/api/settings",
+    "/api/account", "/api/auth/logout-all",       # Sprint 7: the shared demo account has no personal area
 )
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 HIDDEN = "(oculto)"

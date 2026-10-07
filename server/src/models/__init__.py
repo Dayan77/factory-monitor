@@ -28,6 +28,8 @@ from .audit import AuditEvent, ClientAction
 from .demo import DemoSession
 from .reports import (ReportSchedule, ReportDispatch, ReportRun, ReportFile, ReportDelivery, ReportUnsubscribe,
                       ReportSettings, ReportExternalRecipient, LineTarget)
+from .security import (AuthSession, RefreshToken, AuthThrottle, RateCounter, PasswordHistory, PasswordResetToken,
+                       UserInvitation, MfaRecoveryCode, TenantSecuritySettings)
 
 __all__ = [
     "Base", "TimestampMixin",
@@ -52,4 +54,6 @@ __all__ = [
     "PlantLayout", "LayoutMarker", "OnboardingProgress", "GatewayCommand", "AuditEvent", "ClientAction", "DemoSession",
     "ReportSchedule", "ReportDispatch", "ReportRun", "ReportFile", "ReportDelivery", "ReportUnsubscribe",
     "ReportSettings", "ReportExternalRecipient", "LineTarget",
+    "AuthSession", "RefreshToken", "AuthThrottle", "RateCounter", "PasswordHistory", "PasswordResetToken",
+    "UserInvitation", "MfaRecoveryCode", "TenantSecuritySettings",
 ]

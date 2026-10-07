@@ -1,0 +1,245 @@
+{
+ "config": {
+  "tenants": 5,
+  "lines": 4,
+  "machines": 10,
+  "history_days": 30,
+  "duration_s": 180.0,
+  "speed": 1.0,
+  "publishers": 4,
+  "api_conc": 4,
+  "ingest": "process",
+  "shards": 2,
+  "broker_conf": "mosquitto.conf",
+  "machines_total": 200,
+  "readings_per_s": 2600.0
+ },
+ "seed": {
+  "seconds": 32.0,
+  "usage_buckets": 500400,
+  "usage_totals": 800,
+  "downtime_events": 20880,
+  "micro_stop_buckets": 28987,
+  "machine_data_spans": 200,
+  "failure_records": 2787
+ },
+ "api_idle": {
+  "overview": {
+   "n": 35,
+   "p50_ms": 111,
+   "p95_ms": 304
+  },
+  "oee_30d": {
+   "n": 35,
+   "p50_ms": 96,
+   "p95_ms": 226
+  },
+  "pareto_30d": {
+   "n": 34,
+   "p50_ms": 67,
+   "p95_ms": 157
+  },
+  "plans_status": {
+   "n": 34,
+   "p50_ms": 106,
+   "p95_ms": 1324
+  }
+ },
+ "load": {
+  "published": 468000,
+  "wall_s": 188.0,
+  "rate_published": 2489,
+  "processed_ok": 138806,
+  "influx_points": 138901,
+  "drain_after_end_s": 602.1,
+  "dropped": 0.0,
+  "dead_letters": 0.0,
+  "samples": [
+   {
+    "t": 26,
+    "published": 67600,
+    "inflight": 2655.0,
+    "processed_ok": 4374.0,
+    "detector_lag_max_s": 0.0
+   },
+   {
+    "t": 37,
+    "published": 96200,
+    "inflight": 2714.0,
+    "processed_ok": 6070.0,
+    "detector_lag_max_s": 65.083701
+   },
+   {
+    "t": 48,
+    "published": 124800,
+    "inflight": 2472.0,
+    "processed_ok": 7810.0,
+    "detector_lag_max_s": 65.083701
+   },
+   {
+    "t": 59,
+    "published": 153400,
+    "inflight": 2865.0,
+    "processed_ok": 9483.0,
+    "detector_lag_max_s": 65.083701
+   },
+   {
+    "t": 70,
+    "published": 182000,
+    "inflight": 2106.0,
+    "processed_ok": 11368.0,
+    "detector_lag_max_s": 66.083701
+   },
+   {
+    "t": 80,
+    "published": 210600,
+    "inflight": 1434.0,
+    "processed_ok": 12889.0,
+    "detector_lag_max_s": 66.083701
+   },
+   {
+    "t": 92,
+    "published": 239200,
+    "inflight": 1606.0,
+    "processed_ok": 14146.0,
+    "detector_lag_max_s": 66.083701
+   },
+   {
+    "t": 102,
+    "published": 267800,
+    "inflight": 1174.0,
+    "processed_ok": 15459.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 113,
+    "published": 293800,
+    "inflight": 1449.0,
+    "processed_ok": 16610.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 124,
+    "published": 322400,
+    "inflight": 1437.0,
+    "processed_ok": 18151.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 134,
+    "published": 351000,
+    "inflight": 1669.0,
+    "processed_ok": 19438.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 145,
+    "published": 379600,
+    "inflight": 2565.0,
+    "processed_ok": 21481.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 156,
+    "published": 405600,
+    "inflight": 1984.0,
+    "processed_ok": 23774.0,
+    "detector_lag_max_s": 67.083701
+   },
+   {
+    "t": 167,
+    "published": 434200,
+    "inflight": 1698.0,
+    "processed_ok": 25758.0,
+    "detector_lag_max_s": 6.0
+   },
+   {
+    "t": 177,
+    "published": 462800,
+    "inflight": 1527.0,
+    "processed_ok": 27409.0,
+    "detector_lag_max_s": 6.0
+   },
+   {
+    "t": 188,
+    "published": 468000,
+    "inflight": 1167.0,
+    "processed_ok": 28552.0,
+    "detector_lag_max_s": 6.0
+   }
+  ]
+ },
+ "ingestion_lag": {
+  "ws_n": 3575,
+  "ws_p50_s": 57.046062,
+  "ws_p95_s": 120.832982,
+  "ws_p99_s": 123.240125,
+  "ws_max_s": 123.94751,
+  "server_p95_s_bucket": 300.0,
+  "server_p50_s_bucket": 60.0,
+  "ingest_latency_p95_s_bucket": 30.0
+ },
+ "api_load": {
+  "oee_30d": {
+   "n": 195,
+   "p50_ms": 698,
+   "p95_ms": 1408,
+   "max_ms": 2343,
+   "mean_ms": 767
+  },
+  "overview": {
+   "n": 197,
+   "p50_ms": 1160,
+   "p95_ms": 2152,
+   "max_ms": 2440,
+   "mean_ms": 1227
+  },
+  "pareto_30d": {
+   "n": 194,
+   "p50_ms": 650,
+   "p95_ms": 1460,
+   "max_ms": 2007,
+   "mean_ms": 717
+  },
+  "plans_status": {
+   "n": 194,
+   "p50_ms": 736,
+   "p95_ms": 1594,
+   "max_ms": 2498,
+   "mean_ms": 826
+  },
+  "report_daily_production": {
+   "n": 1,
+   "p50_ms": 19257,
+   "p95_ms": 19257,
+   "max_ms": 19257,
+   "mean_ms": 19257
+  },
+  "report_monthly_maintenance": {
+   "n": 1,
+   "p50_ms": 93889,
+   "p95_ms": 93889,
+   "max_ms": 93889,
+   "mean_ms": 93889
+  },
+  "report_weekly_oee": {
+   "n": 1,
+   "p50_ms": 57701,
+   "p95_ms": 57701,
+   "max_ms": 57701,
+   "mean_ms": 57701
+  }
+ },
+ "detectors": {
+  "downtime_lag_max_s": 8.0,
+  "downtime_lagging": 0.0
+ },
+ "targets": {
+  "ingestion_lag_p95_lt_2s": false,
+  "no_loss": false,
+  "overview_p95_lt_500ms": false,
+  "oee_30d_p95_lt_500ms": false,
+  "pareto_30d_p95_lt_500ms": false,
+  "plans_status_p95_lt_500ms": false
+ }
+}

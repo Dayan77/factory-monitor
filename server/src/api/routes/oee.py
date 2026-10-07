@@ -17,9 +17,10 @@ from ...models import (Component, DowntimeEvent, FailureRecord, Line, Machine, M
 from ...services.oee import kpi
 from ...services.oee.detector import ensure_failure, event_message
 from ...services.oee.engine import (UNJUSTIFIED, components as machine_components, effective_reason, load_calendar,
-                                    load_machine_data, machine_infos, reason_meta)
+                                    load_machines_data, machine_infos, reason_meta)
 from ...services.oee.service import (oee_delta, day_components, instances_of_day, load_units, oee_for, oee_payload,
-                                     pareto_for, parse_window, productive_today, reliability_for, resolve_scope)
+                                     pareto_for, parse_window, productive_today, reliability_for, resolve_scope,
+                                     _line_scope)
 from ...services import operator_scope as opscope
 from ...services.drilldown import resolve_period
 from ...services.usage import queries as uq
@@ -363,10 +364,11 @@ async def shift_report(user: CurrentUser, db: DB, line_id: str = Query(...), pro
     names = await _names(db, user.tenant_id, sc.machine_ids)
     out.downtime = [_out(e, names) for e in sorted(evs, key=lambda e: e.start)]
     infos = await machine_infos(db, user.tenant_id, sc.machine_ids)
+    mds = await load_machines_data(db, infos, sc.cal, ps, pe, now)
     for mid in sc.machine_ids:
         if mid not in infos:
             continue
-        md = await load_machine_data(db, infos[mid], sc.cal, ps, pe, now)
+        md = mds[mid]
         mc = kpi.Components()
         for i in insts:
             mc.add(machine_components(md, i.start, i.end, now))
@@ -424,9 +426,11 @@ async def overview(user: CurrentUser, db: DB, plant_id: Optional[str] = None):
         or_(DowntimeEvent.reason_code.is_(None), DowntimeEvent.reason_code == UNJUSTIFIED))
         .group_by(DowntimeEvent.machine_id))).all()
     unj_by_m = dict(unj_rows)
+    # Sprint 7 (scale): every machine of the plant loaded at once (one query per table), reused by the lines
+    mds = await load_machines_data(db, infos, cal, ws, max(we, now), now)
     for ln in lines:
-        sc = await resolve_scope(db, tid, "line", ln.id)
-        units = await load_units(db, sc, ws, max(we, now), now)
+        sc = await _line_scope(db, tid, ln, cal, tz)          # the plant's calendar, not reloaded per line
+        units = await load_units(db, sc, ws, max(we, now), now, mds=mds)
         c = day_components(units, today_insts, now)
         plant_c.add(c)
         r = kpi.oee(c)
@@ -436,7 +440,7 @@ async def overview(user: CurrentUser, db: DB, plant_id: Optional[str] = None):
             cur_oee = kpi.oee(cc)["oee"]
         worst = None
         for m in by_line.get(ln.id, []):
-            md = await load_machine_data(db, infos[m.id], cal, ws, max(we, now), now)
+            md = mds[m.id]
             mc = kpi.Components()
             for i in today_insts:
                 mc.add(machine_components(md, i.start, i.end, now))

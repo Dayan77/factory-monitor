@@ -105,6 +105,22 @@ class ServerSettings(BaseSettings):
     # must never share it (the broker disconnects the older one).
     mqtt_client_id: str = ""
     mqtt_persistent_session: bool = True
+    # Sprint 7 — where MQTT ingestion runs: inline = in the API process (default, dev/tests); process = N child
+    # processes started and supervised by the app (python -m src.ingest_worker, MQTT_INGEST_SHARDS of them);
+    # external = run `python -m src.ingest_worker` yourself (one per shard, MQTT_SHARD_INDEX/MQTT_SHARD_COUNT).
+    # Each shard processes the tags with crc32(tag_id) % count == index (order per tag kept: a tag has one shard),
+    # acknowledges the others at once, and uses its own client id (<client id>-s<index>). Live WebSocket messages
+    # reach the app through Postgres NOTIFY (websocket/relay.py, batched).
+    mqtt_ingest: str = "inline"
+    # Prometheus metrics of the worker processes (they have no HTTP API): ingestion shard k listens on
+    # WORKER_METRICS_PORT + k, the detector/predictive worker on WORKER_METRICS_PORT + 100. 0 = off.
+    worker_metrics_port: int = 0
+    # TTL of the tag/topology/alert-rule caches inside the ingestion processes: changes made by the API process are
+    # pushed to them (Postgres NOTIFY, usage/cache.py), so the TTL only bounds a lost notification.
+    ingest_cache_ttl_s: float = 300.0
+    mqtt_ingest_shards: int = 1
+    mqtt_shard_index: int = 0
+    mqtt_shard_count: int = 1
     # Valid readings that still fail after the retries go to the table ingest_dead_letters; if even the database
     # is unavailable, to this JSON-lines file (relative to the working directory).
     ingest_dead_letter_file: str = "data/ingest_dead_letters.jsonl"
@@ -134,6 +150,18 @@ class ServerSettings(BaseSettings):
     # older than the horizon is stored but not re-detected (logged).
     downtime_snapshot_interval_s: float = 900.0
     downtime_rewind_horizon_h: float = 168.0
+    # Sprint 7 — catch-up after long outages (QA: 40 h without data never caught up): a pass reads at most this many
+    # readings per tag (a bounded slice that advances the checkpoint); a machine keeps passing slices for at most
+    # downtime_catchup_budget_s per tick, then yields to the others (resumes next tick). Detectors run with this many
+    # machines in parallel, so one machine with a backlog never delays the other machines / tenants.
+    downtime_slice_readings: int = 20000
+    downtime_catchup_budget_s: float = 20.0
+    detector_concurrency: int = 4
+    # Per-machine detector lag (latest reading seen − checkpoint) above this → log warning + metric alert
+    detector_lag_alert_s: float = 900.0
+    # Sprint 7: the downtime detector and the maintenance (plan) engine run in the worker process (src/worker.py)
+    # together with the predictive engine whenever PREDICTIVE_WORKER is process/external; false keeps them inline.
+    detectors_in_worker: bool = True
     # Lifespan shutdown waits at most this long for background / in-flight MQTT tasks.
     shutdown_timeout_s: float = 5.0
 
@@ -219,8 +247,42 @@ class ServerSettings(BaseSettings):
     reports_catchup_days: int = 7
 
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 60
+    # Sprint 7 (backend B, docs/security.md): short access tokens; the refresh token (rotated on every use, reuse
+    # = the whole session is revoked) keeps the user signed in.
+    jwt_access_token_expire_minutes: int = 15
     jwt_refresh_token_expire_days: int = 7
+    # Key rotation: "kid1:secret1,kid2:secret2" (the active one signs, all verify). Empty = APP_SECRET_KEY (kid k0).
+    jwt_keys: str = ""
+    jwt_active_kid: str = ""
+    jwt_leeway_s: int = 30                     # clock skew tolerated on exp/nbf/iat
+    # a refresh token presented again within this window (two tabs refreshing at once) is not treated as theft
+    refresh_reuse_grace_s: float = 10.0
+    # WebSocket: the session behind the token is re-checked at this interval (revoked → close 4401)
+    ws_revalidate_s: float = 60.0
+    # Password policy and hashing
+    password_min_length: int = 12
+    password_history: int = 5
+    bcrypt_rounds: int = 12
+    password_blocklist_file: str = ""          # optional extra list (one password per line), e.g. from HIBP
+    # Brute force: per account / per IP failures within the window → temporary lock with exponential backoff
+    login_window_s: float = 900.0
+    login_max_failures_account: int = 5
+    login_max_failures_ip: int = 20
+    login_lock_base_s: float = 30.0
+    login_lock_max_s: float = 3600.0
+    login_rate_per_ip_per_min: int = 30
+    password_reset_ttl_min: int = 15
+    password_reset_per_ip_per_hour: int = 10
+    password_reset_per_email_per_hour: int = 3
+    invite_ttl_hours: float = 168.0
+    mfa_issuer: str = "FactoryConnect"
+    mfa_encryption_key: str = ""               # empty = derived from APP_SECRET_KEY
+    # HTTP hardening
+    max_body_bytes: int = 1024 * 1024          # per request; uploads have their own limit (layout_image_max_bytes)
+    # LGPD (docs/privacy.md)
+    lead_retention_days: int = 365
+    audit_retention_days: int = 1825
+    privacy_janitor_interval_s: float = 3600.0
 
     # Comma-separated. Read from CORS_ORIGINS (the name used in .env.example / .env.prod.example;
     # the old field name CORS_ORIGINS_RAW is still accepted).

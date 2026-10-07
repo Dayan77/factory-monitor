@@ -95,9 +95,9 @@ print(f"tenant A {a_tenant[:8]}: monitor {a_mon['id'][:8]}, alert {a_alert['id']
 # ── tenant B ───────────────────────────────────────────────────────────────
 b_admin_email = f"qa-s5-b-{stamp}@qa-factoryconnect.com.br"
 r = httpx.post(f"{API}/api/auth/register", trust_env=False, json={
-    "company_name": f"QA S5 B {stamp}", "admin_name": "QA B", "admin_email": b_admin_email, "admin_password": "QaIso#2026x"})
+    "company_name": f"QA S5 B {stamp}", "admin_name": "QA B", "admin_email": b_admin_email, "admin_password": "QaIsola#2026x"})
 r.raise_for_status()
-B = {"admin": C(login(b_admin_email, "QaIso#2026x"))}
+B = {"admin": C(login(b_admin_email, "QaIsola#2026x"))}
 b_tenant = B["admin"].get("/api/auth/me").json()["tenant_id"]
 check(b_tenant != a_tenant, "tenant B registered")
 SUPER.patch(f"/api/admin/tenants/{b_tenant}", json={"max_users": 20}).raise_for_status()
@@ -177,7 +177,7 @@ r2 = httpx.post(f"{API}/api/gateways/{GW}/heartbeat", headers=hdr, json={"versio
                                                                         "errors": []}, trust_env=False)
 check(r1.status_code in (401, 403, 404) and r2.status_code in (401, 403, 404), "B device token on A's gateway → refused",
       (r1.status_code, r2.status_code))
-r3 = httpx.get(f"{API}/api/gateways/{GW}/config", headers={"Authorization": f"Bearer {login(b_admin_email, 'QaIso#2026x')}"},
+r3 = httpx.get(f"{API}/api/gateways/{GW}/config", headers={"Authorization": f"Bearer {login(b_admin_email, 'QaIsola#2026x')}"},
                trust_env=False)
 check(r3.status_code in (401, 403, 404), "user JWT is not a gateway token", r3.status_code)
 r4 = httpx.get(f"{API}/api/gateways/{GW}/config", headers={"Authorization": f"Gateway {a_dev['token']}"}, trust_env=False)

@@ -93,8 +93,8 @@ def build(api: Api) -> dict:
     stamp = int(time.time())
     email = f"qa-scd-{stamp}@qa-factoryconnect.com.br"
     api.post("/api/auth/register", json={"company_name": f"QA Cenario D {stamp}", "admin_name": "QA",
-                                         "admin_email": email, "admin_password": "QaGolden#2026"})
-    api.login(email, "QaGolden#2026")
+                                         "admin_email": email, "admin_password": "QaOuro#Teste2026"})
+    api.login(email, "QaOuro#Teste2026")
     tenant = api.get("/api/auth/me")["tenant_id"]
     plant = api.post("/api/plants/", json={"name": D["plant"]["name"], "timezone": D["plant"]["timezone"]})
     line = api.post("/api/lines/", json={"name": D["line"]["name"], "plant_id": plant["id"]})
@@ -139,7 +139,7 @@ def build(api: Api) -> dict:
             run = api.post("/api/production-runs/", json={"machine_id": mach[name], "product_id": prods[r["product"]],
                                                          "started_at": ts(r["from_utc"]).isoformat()})
             api.post(f"/api/production-runs/{run['id']}/stop", json={"ended_at": ts(r["to_utc"]).isoformat()})
-    print(f"tenant {tenant}  login {email} / QaGolden#2026  line {line['id']}")
+    print(f"tenant {tenant}  login {email} / QaOuro#Teste2026  line {line['id']}")
     return {"tenant": tenant, "plant": plant["id"], "line": line["id"], "machines": mach, "tags": tags, "email": email}
 
 
@@ -342,7 +342,7 @@ def main() -> int:
     api = Api()
     if os.getenv("VERIFY_IDS"):                      # verify an earlier run again (no build/publish)
         ids = json.load(open(os.environ["VERIFY_IDS"]))
-        api.login(ids["email"], "QaGolden#2026")
+        api.login(ids["email"], "QaOuro#Teste2026")
     else:
         ids = build(api)
         n = publish(ids)

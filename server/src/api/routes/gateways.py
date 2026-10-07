@@ -262,6 +262,8 @@ async def enroll_token(gateway_id: str, user: CurrentUser, db: DB):
     now = datetime.now(timezone.utc)
     gw.enroll_code_hash = gs.sha256(gs.normalize_code(code))
     gw.enroll_expires_at = gs.enroll_expiry(now)
+    from ...services.security.notify import audit          # Sprint 7: credential creation is audited
+    await audit(db, user.tenant_id, user.id, "gateway.enroll_code_created", "gateway", gw.id)
     await db.commit()
     return {"gateway_id": gw.id, "code": code, "expires_at": gw.enroll_expires_at.isoformat(),
             "enroll_url": "/api/gateways/enroll"}
@@ -274,6 +276,8 @@ async def revoke(gateway_id: str, user: CurrentUser, db: DB):
     gw.enroll_code_hash = gw.enroll_expires_at = None
     gw.mqtt_password_hash = None       # the MQTT credential dies too: readings of its tags are discarded
     gw.status = "pending"
+    from ...services.security.notify import audit
+    await audit(db, user.tenant_id, user.id, "gateway.revoked", "gateway", gw.id)
     await db.commit()
     topology_cache.invalidate()        # the MQTT hot path sees the revocation at the next reading
     await db.refresh(gw)
@@ -422,6 +426,8 @@ async def enroll(body: EnrollIn, request: Request, db: DB):
     password = gs.secrets.token_urlsafe(24)
     gw.mqtt_username = gw.mqtt_username or f"gw-{gw.id[:8]}-{gw.id[-4:]}"
     gw.mqtt_password_hash = gs.mosquitto_hash(password)
+    from ...services.security.notify import audit
+    await audit(db, gw.tenant_id, None, "gateway.enrolled", "gateway", gw.id, request=request)
     await db.commit()
     topology_cache.invalidate()
     return {"gateway_id": gw.id, "tenant_id": gw.tenant_id, "token": token,

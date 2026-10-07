@@ -12,9 +12,10 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import LayoutMarker, Line, Machine, Plant, PlantLayout
+from ...models import LayoutMarker, Line, Machine, Plant, PlantLayout, Tag
+from ...models.tag import PART_ROLES
 from ..oee import kpi
-from ..oee.engine import components as machine_components, load_calendar, load_machine_data, machine_infos
+from ..oee.engine import components as machine_components, load_calendar, load_machines_data, machine_infos
 from ..oee.service import day_components, load_units, resolve_scope, total_components
 from ..usage import queries as uq
 from .state import describe, load_facts
@@ -61,15 +62,80 @@ OUTSIDE_WINDOW_H = 12                 # §1.2 selo "peças fora do calendário" 
 COVERAGE_BADGE_BELOW = 0.95           # §1.2 selo "dados incompletos": data_coverage do turno < 0,95
 
 
-def _kpi_entry(r: dict, c: kpi.Components, live: kpi.Components, reason: Optional[str]) -> dict:
+LIVE_LOOKBACK_MIN = 10                # baseline reading searched up to 10 min before the 15-min window
+
+
+async def live_parts(tenant_id: str, machine_ids: list[str], tags: list[tuple[str, str, str, Optional[int]]],
+                     now: datetime, fetch=None) -> dict[str, float]:
+    """kpis.md §1.9 / audit A-19: parts of the last LIVE_CADENCE_MIN minutes per machine from the **raw counter
+    readings** (InfluxDB), not from the hourly buckets — a bucket cannot tell the last 15 min from the rest of the
+    hour. `tags`: (tag_id, machine_id, role, counter_max) of the part counters; parts = part_counter_total, else
+    good + scrap. Delta rules of domain.md §3.3 (rollover/reset) between consecutive readings, from the last reading
+    at or before the window start (or the first inside it). Machines without readings are left out (the caller
+    falls back to the buckets)."""
+    from ..oee.detector import influx_fetch
+    from ..usage.core import counter_delta
+    fetch = fetch or influx_fetch
+    if not tags:
+        return {}
+    w0 = now - timedelta(minutes=LIVE_CADENCE_MIN)
+    rows = await fetch(tenant_id, [t for t, *_ in tags], w0 - timedelta(minutes=LIVE_LOOKBACK_MIN), now)
+    by_tag: dict[str, list[tuple[datetime, float]]] = {}
+    for tag_id, ts, v in rows:
+        by_tag.setdefault(tag_id, []).append((ts, v))
+    per_tag: dict[str, float] = {}
+    for tag_id, *_rest in tags:
+        pts = sorted(by_tag.get(tag_id, []))
+        if not pts:
+            continue
+        cmax = _rest[2]
+        base = [p for p in pts if p[0] <= w0]
+        seq = ([base[-1]] if base else []) + [p for p in pts if p[0] > w0]
+        tot = 0.0
+        for (_, a), (_, b) in zip(seq, seq[1:]):
+            tot += counter_delta(int(a), int(b), cmax)[0]
+        per_tag[tag_id] = tot
+    out: dict[str, float] = {}
+    for mid in machine_ids:
+        mine = [(t, role) for t, m, role, _ in tags if m == mid and t in per_tag]
+        total = [per_tag[t] for t, role in mine if role == "part_counter_total"]
+        if total:
+            out[mid] = total[0]
+        elif mine:
+            out[mid] = sum(per_tag[t] for t, role in mine if role in ("part_counter_good", "part_counter_scrap"))
+    return out
+
+
+async def part_counter_tags(db: AsyncSession, tenant_id: str, machine_ids: list[str]
+                            ) -> list[tuple[str, str, str, Optional[int]]]:
+    if not machine_ids:
+        return []
+    rows = (await db.execute(select(Tag.id, Tag.machine_id, Tag.semantic_role, Tag.counter_max).where(
+        Tag.tenant_id == tenant_id, Tag.machine_id.in_(machine_ids), Tag.is_active.is_(True),
+        Tag.position_id.is_(None), Tag.semantic_role.in_(list(PART_ROLES))).order_by(Tag.created_at, Tag.id))).all()
+    seen, out = set(), []
+    for tid, mid, role, cmax in rows:
+        r = role.value if hasattr(role, "value") else str(role)
+        if (mid, r) in seen:
+            continue
+        seen.add((mid, r))
+        out.append((tid, mid, r, cmax))
+    return out
+
+
+def _kpi_entry(r: dict, c: kpi.Components, live: kpi.Components, reason: Optional[str],
+               live_counter: Optional[float] = None) -> dict:
     """Marker KPIs of the current shift + live cadence. `cadence_per_hour` is the live cadence (§1.9: parts of the
-    last 15 min × 4 — hourly buckets spread over their covered time, D7), `cadence_shift_per_hour` the realized
-    cadence of the shift (PQ/PBT). `ideal_cycle_time_suspect` (P > 1, S3-2) travels so the UI warns."""
-    live_parts = live.produced + live.out_produced
+    last 15 min × 4) from the raw counter readings (`cadence_source = counter`, audit A-19); without readings the
+    hourly buckets spread over their covered time are the estimate (`cadence_source = buckets`, D7, flagged
+    `cadence_prorated`). `cadence_shift_per_hour` is the realized cadence of the shift (PQ/PBT).
+    `ideal_cycle_time_suspect` (P > 1, S3-2) travels so the UI warns."""
+    live_parts = live.produced + live.out_produced if live_counter is None else live_counter
     return {"oee": r["oee"], "performance": r["performance"],
             "cadence_per_hour": live_parts * (60 / LIVE_CADENCE_MIN),
+            "cadence_source": "counter" if live_counter is not None else "buckets",
             "cadence_shift_per_hour": r["cadence_planned_per_hour"],
-            "cadence_prorated": bool(live.counts_prorated),
+            "cadence_prorated": bool(live.counts_prorated) if live_counter is None else False,
             "good": c.good, "scrap": c.scrap, "reason": reason,
             "ideal_cycle_time_suspect": bool(r["ideal_cycle_time_suspect"]),
             "data_coverage": r["data_coverage"], "counts_prorated": bool(c.counts_prorated)}
@@ -92,10 +158,18 @@ async def shift_kpis(db: AsyncSession, tenant_id: str, plant: Plant, lines: list
     per_m: dict[str, dict] = {}
     badges: dict[str, list] = {}
     infos = await machine_infos(db, tenant_id, [m.id for m in machines])
+    counters: dict[str, float] = {}
+    if inst is not None:
+        try:
+            counters = await live_parts(tenant_id, [m.id for m in machines],
+                                        await part_counter_tags(db, tenant_id, [m.id for m in machines]), now)
+        except Exception:  # noqa: BLE001 — Influx unavailable: hourly-bucket estimate (cadence_source = buckets)
+            counters = {}
+    mds = await load_machines_data(db, infos, cal, load_start, load_stop, now)     # one query per table (Sprint 7)
     for m in machines:
         if m.id not in infos:
             continue
-        md = await load_machine_data(db, infos[m.id], cal, load_start, load_stop, now)
+        md = mds[m.id]
         b = []
         outside = machine_components(md, out_start, now, now).out_produced
         if outside >= 0.5:
@@ -103,7 +177,8 @@ async def shift_kpis(db: AsyncSession, tenant_id: str, plant: Plant, lines: list
         if inst is not None:
             c = machine_components(md, inst.start, inst.end, now)
             r = kpi.oee(c)
-            per_m[m.id] = _kpi_entry(r, c, machine_components(md, live_start, now, now), r.get("reason"))
+            per_m[m.id] = _kpi_entry(r, c, machine_components(md, live_start, now, now), r.get("reason"),
+                                     counters.get(m.id))
             cov = r["data_coverage"]
             if cov is not None and cov < COVERAGE_BADGE_BELOW:
                 b.append({"kind": "data_coverage", "value": cov})
@@ -113,10 +188,12 @@ async def shift_kpis(db: AsyncSession, tenant_id: str, plant: Plant, lines: list
     if inst is not None:
         for ln in lines:
             sc = await resolve_scope(db, tenant_id, "line", ln.id)
-            units = await load_units(db, sc, inst.start, max(inst.end, now), now)
+            # machine data of a window that contains this one (components clip to their window)
+            units = await load_units(db, sc, inst.start, max(inst.end, now), now, mds=mds)
             c = day_components(units, [inst], now)
             r = kpi.oee(c)
-            per_l[ln.id] = _kpi_entry(r, c, total_components(units, live_start, now, now), r.get("reason") or sc.reason)
+            per_l[ln.id] = _kpi_entry(r, c, total_components(units, live_start, now, now), r.get("reason") or sc.reason,
+                                      counters.get(ln.output_machine_id) if ln.output_machine_id else None)
     return shift, per_m, per_l, badges
 
 

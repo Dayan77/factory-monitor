@@ -544,7 +544,7 @@ async def test_users_roles_lines_on_call_and_me(client, m):
     assert me["on_call"] is True and me["line_ids"] == [m.line_id]
     adm = m.h("admin")
     u = await api(client, "POST", "/api/users/", adm, 201, json={
-        "email": f"multi{m.id[:6]}@example.com", "password": "Senha@12345", "name": "Multi",
+        "email": f"multi{m.id[:6]}@example.com", "password": "Girassol!Turbina-9034", "name": "Multi",
         "role": "technician", "roles": ["technician", "production_supervisor"], "line_ids": [m.line2_id]})
     assert u["role"] == "technician" and set(u["roles"]) == {"technician", "production_supervisor"}
     r = await client.patch(f"/api/users/{u['id']}", headers=adm, json={"line_ids": ["00000000-0000-0000-0000-000000000000"]})

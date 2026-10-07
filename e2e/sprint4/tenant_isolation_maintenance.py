@@ -76,9 +76,9 @@ print(f"tenant A {a_tenant[:8]}: plan {a_plan['id'][:8]}, WO {a_wo['number']}, f
 stamp = f"{int(time.time())}{uuid.uuid4().hex[:4]}"
 b_admin_email = f"qa-s4-b-{stamp}@qa-factoryconnect.com.br"
 r = httpx.post(f"{API}/api/auth/register", trust_env=False,
-               json={"company_name": f"QA S4 B {stamp}", "admin_name": "QA B", "admin_email": b_admin_email, "admin_password": "QaIso#2026x"})
+               json={"company_name": f"QA S4 B {stamp}", "admin_name": "QA B", "admin_email": b_admin_email, "admin_password": "QaIsola#2026x"})
 r.raise_for_status()
-B = {"admin": C(login(b_admin_email, "QaIso#2026x"))}
+B = {"admin": C(login(b_admin_email, "QaIsola#2026x"))}
 b_tenant = B["admin"].get("/api/auth/me").json()["tenant_id"]
 check(b_tenant != a_tenant, "tenant B registered")
 # the self-service plan allows 5 users; the superadmin raises it (one user per role + extras)

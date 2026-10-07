@@ -40,7 +40,7 @@ from ..services.usage.broadcaster import usage_broadcaster
 from ..services.usage.processor import process_reading, process_readings  # noqa: F401
 from ..services.usage.cache import topology_cache
 from ..models.tag import COUNTER_ROLES, SemanticRole
-from ..rules.engine import evaluate
+from ..rules.engine import evaluate, note_value, rule_tags
 from ..websocket.manager import manager
 from .ingest import dead_letter, watermarks
 from .ingest.pipeline import Item, OrderedPipeline
@@ -94,6 +94,19 @@ def _ack_item(item: Item) -> None:
     client = _clients.get(item.gen)
     if client is not None:
         client._client.ack(item.mid, item.qos)   # noqa: SLF001 — called in receive order by the pipeline
+
+
+def shard_of(topic: str, count: int) -> int:
+    """Ingestion shard of a reading (Sprint 7): crc32(tag_id) % count — stable, so a tag always has the same shard."""
+    import zlib
+    parts = topic.split("/", 4)
+    tag = parts[3] if len(parts) > 3 else topic
+    return zlib.crc32(tag.encode()) % max(1, count)
+
+
+def client_identifier() -> str:
+    base = settings.mqtt_client_identifier
+    return f"{base}-s{settings.mqtt_shard_index}" if settings.mqtt_shard_count > 1 else base
 
 
 def _shard_key(topic: str) -> tuple[str, str]:
@@ -150,6 +163,7 @@ async def run_subscriber() -> None:
         log.error("mqtt.encryption_key_invalid", error=err)
     pl = _pipeline = _new_pipeline()
     pl.start()
+    shards, my_shard = max(1, settings.mqtt_shard_count), settings.mqtt_shard_index
     flusher = asyncio.create_task(watermarks.run_flusher(), name="ingest_watermarks")
     monitor = asyncio.create_task(_backlog_monitor(pl), name="ingest_backlog_monitor")
     try:
@@ -161,13 +175,14 @@ async def run_subscriber() -> None:
                     port=settings.mqtt_broker_port,
                     username=settings.mqtt_username or None,
                     password=settings.mqtt_password or None,
-                    identifier=settings.mqtt_client_identifier,
+                    identifier=client_identifier(),
                     clean_session=not settings.mqtt_persistent_session,
                 ) as client:
                     gen = pl.new_connection()
                     _clients[gen] = client
                     log.info("mqtt.connected", broker=settings.mqtt_broker_host,
-                             client_id=settings.mqtt_client_identifier,
+                             client_id=client_identifier(), shard=settings.mqtt_shard_index,
+                             shards=settings.mqtt_shard_count,
                              persistent_session=settings.mqtt_persistent_session)
                     manual_ack = _enable_manual_ack(client)
                     # QoS 1 + acknowledge-when-finished = flow control: the broker sends at most its
@@ -183,6 +198,11 @@ async def run_subscriber() -> None:
                         if _cancelling():
                             raise asyncio.CancelledError()
                         topic = str(message.topic)
+                        if shards > 1 and shard_of(topic, shards) != my_shard:
+                            # another shard's tag: acknowledged at once (that shard has its own subscription)
+                            if manual_ack and (getattr(message, "qos", 0) or 0):
+                                client._client.ack(message.mid, message.qos)   # noqa: SLF001
+                            continue
                         # waits while MQTT_MAX_INFLIGHT readings are inside the pipeline (backpressure)
                         await pl.put(Item(key=_shard_key(topic), topic=topic, payload=bytes(message.payload),
                                           received_at=datetime.now(timezone.utc), mid=message.mid,
@@ -312,7 +332,7 @@ async def _finish_write(topic: str, raw: bytes, received_at: datetime, tenant_id
 # mark_seen throttle: machine_id -> (monotonic time of the last call, latest seen_at sent). Within
 # SEEN_THROTTLE_S of a call, a reading of the same machine that would not move last_seen_at by the
 # write interval (machine_last_seen_write_interval_s) is a database no-op — skip the round trip.
-SEEN_THROTTLE_S = 1.0
+SEEN_THROTTLE_S = 1.0       # minimum; the effective throttle is max(this, machine_last_seen_write_interval_s)
 _seen_cache: dict[str, tuple[float, datetime, bool]] = {}
 
 
@@ -332,7 +352,10 @@ def _seen_is_noop(machine_id: Optional[str], seen_at: datetime, received_at: dat
     called, last, was_fresh = c
     if _is_fresh(seen_at, received_at) and not was_fresh:
         return False
-    return (asyncio.get_running_loop().time() - called < SEEN_THROTTLE_S
+    # Sprint 7 (scale): one machine has ~13 tags at 1 Hz; within the write interval last_seen_at would not move, so
+    # skip the UPDATE (it also contended for the machine row with the run_state usage transaction)
+    throttle = max(SEEN_THROTTLE_S, float(settings.machine_last_seen_write_interval_s))
+    return (asyncio.get_running_loop().time() - called < throttle
             and (seen_at - last).total_seconds() < settings.machine_last_seen_write_interval_s)
 
 
@@ -580,9 +603,13 @@ async def _finish(p: _Prep) -> Optional[Awaitable]:
         MQTT_MESSAGES.labels("ok").inc()
         return p.fin
     try:
-        async with AsyncSessionLocal() as db:
-            await asyncio.wait_for(evaluate(db=db, tag_id=p.tag_id, tenant_id=p.tenant_id, value=p.value),
-                                   timeout=5.0)
+        # Sprint 7: no session / query for the (many) tags without an active rule (rules.engine.rule_tags)
+        if await asyncio.wait_for(rule_tags.has_rules(p.tenant_id, p.tag_id), timeout=5.0):
+            async with AsyncSessionLocal() as db:
+                await asyncio.wait_for(evaluate(db=db, tag_id=p.tag_id, tenant_id=p.tenant_id, value=p.value),
+                                       timeout=5.0)
+        else:
+            note_value(p.tenant_id, p.tag_id, p.value)
     except asyncio.TimeoutError:
         log.warning("mqtt.alerts.timeout", topic=p.topic)
     except Exception as e:

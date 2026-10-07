@@ -1,6 +1,6 @@
-"""Predictive worker process (Sprint 5b): runs the predictive engine (Influx extraction, features, detectors,
-alerts) outside the API/ingestion process, so its CPU work never shares the event loop (and the GIL) with MQTT
-ingestion.
+"""Worker process (Sprint 5b; Sprint 7): runs the predictive engine (Influx extraction, features, detectors, alerts)
+and — with DETECTORS_IN_WORKER (default) — the downtime detector and the maintenance plan engine, outside the
+API/ingestion process, so their CPU work never shares the event loop (and the GIL) with MQTT ingestion or the API.
 
     python -m src.worker            (cwd server/, same environment as the app)
 
@@ -26,20 +26,37 @@ log = structlog.get_logger()
 
 async def main() -> None:
     from .services.influx import influx
+    from .services.maintenance.engine import run_maintenance_engine
+    from .services.oee.detector import run_downtime_detector
     from .services.predictive.engine import run_predictive_engine
     from .websocket.relay import enable_publisher
 
+    if settings.worker_metrics_port:
+        from prometheus_client import start_http_server
+        start_http_server(settings.worker_metrics_port + 100, addr="127.0.0.1")
     enable_publisher()
-    task = asyncio.create_task(run_predictive_engine(), name="predictive_engine")
+    coros = {}
+    if settings.predictive_enabled:
+        coros["predictive_engine"] = run_predictive_engine
+    if settings.detectors_in_worker:
+        # Sprint 7: the downtime detector (bounded per-machine concurrency, chunked catch-up) and the plan engine
+        coros["downtime_detector"] = run_downtime_detector
+        coros["maintenance_engine"] = run_maintenance_engine
+    tasks = [asyncio.create_task(fn(), name=name) for name, fn in coros.items()]
+    if not tasks:
+        log.info("worker.nothing_to_run")
+        return
+    gathered = asyncio.gather(*tasks)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, task.cancel)
+            loop.add_signal_handler(sig, gathered.cancel)
         except NotImplementedError:  # pragma: no cover
             pass
-    log.info("worker.started", role="predictive", tick_s=settings.predictive_tick_s)
+    log.info("worker.started", roles=list(coros), tick_s=settings.predictive_tick_s,
+             detector_concurrency=settings.detector_concurrency)
     try:
-        await task
+        await gathered
     except asyncio.CancelledError:
         pass
     finally:

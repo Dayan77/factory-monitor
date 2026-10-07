@@ -38,6 +38,9 @@ class Components:
     ideal_produced_s: float = 0.0          # Σ PRI·PQ
     ideal_good_s: float = 0.0              # Σ PRI·GQ
     pri_missing: bool = False              # production of a product without PRI
+    # audit A-13 (kpis.md "Decisões Sprint 7" S7-4): line PRI of a product taken from the output machine because
+    # the bottleneck has no PRI for it
+    pri_fallback: bool = False
     product_unknown: bool = False          # production without ProductionRun (default product used)
     # S3-7: parts counted outside every shift instance (not in PQ/GQ nor in the TEEP numerator)
     out_produced: float = 0.0
@@ -58,6 +61,7 @@ class Components:
                   "ao_excluded_s", "ao_equipment_s", "out_produced", "out_good", "out_scrap"):
             setattr(self, f, getattr(self, f) + getattr(o, f))
         self.pri_missing |= o.pri_missing
+        self.pri_fallback |= o.pri_fallback
         self.product_unknown |= o.product_unknown
         self.counts_prorated |= o.counts_prorated
         for k, (s, n) in o.losses.items():
@@ -110,6 +114,9 @@ def oee(c: Components) -> dict:
         q = _div(c.ideal_good_s, c.ideal_produced_s)
         if c.produced <= 0 and pbt > 0 and reason is None:
             reason = "no_production"
+        elif p is None and pbt > 0 and reason is None:
+            # audit A-15 (S7-3): planned time entirely lost (APT = 0) but parts were counted — P undefined
+            reason = "no_running_time"
     # OEE = Σ PRI·GQ / PBT (§1.5): defined whenever PBT > 0 and every product has a PRI
     # (no production in planned time is a real 0, not undefined).
     o = None if c.pri_missing else _div(c.ideal_good_s, pbt)
@@ -133,6 +140,7 @@ def oee(c: Components) -> dict:
         "cadence_planned_per_hour": _div(c.produced, pbt / 3600.0),
         "cadence_running_per_hour": _div(c.produced, apt / 3600.0),
         "product_unknown": c.product_unknown,
+        "line_pri_fallback": c.pri_fallback,
         "produced_outside_schedule": {"total": c.out_produced, "good": c.out_good, "scrap": c.out_scrap},
         "counts_prorated": c.counts_prorated,
         "availability_operational": availability_operational(c),
@@ -147,7 +155,10 @@ def availability_operational(c: Components) -> Optional[float]:
 
 def pareto(c: Components, meta: dict[str, tuple[str, str, bool]], by: str = "code") -> list[dict]:
     """§1.10: unplanned stop reasons + micro-stops + speed loss + quality loss, descending.
-    meta: code -> (category, label, planned). by='category' groups reasons by category."""
+    meta: code -> (category, label, planned). by='category' groups reasons by category.
+    S3-1 (audit A-5): no planned busy time (PBT = 0) → empty list, never rows of 0 min with pct = null."""
+    if c.pbt_s <= 0:
+        return []
     rows: dict[str, dict] = {}
     for code, (secs, n) in c.losses.items():
         cat, label, planned = meta.get(code, (code.split("-")[0], code, False))
@@ -179,20 +190,28 @@ def pareto(c: Components, meta: dict[str, tuple[str, str, bool]], by: str = "cod
 COUNTED_SEVERITIES = ("critical", "degraded")
 
 
-def reliability(operating_s: float, failures: Iterable[tuple[str, Optional[float]]], short_faults: int = 0) -> dict:
+def reliability(operating_s: float, failures: Iterable[tuple[str, Optional[float]]], short_faults: int = 0,
+                outside_production: int = 0, repair_s: Iterable[float] = ()) -> dict:
     """failures: (severity, restore_duration_s | None). MTBF uses only critical/degraded (§2.1);
-    MTTR the restored ones (§2.3, clock time C24c); Ai = MTBF / (MTBF + MTTR) (§2.6)."""
+    MTTR the restored ones (§2.3, clock time C24c); Ai = MTBF / (MTBF + MTTR) (§2.6).
+    Audit A-4 (S7-1): failures with no operating time recorded → MTBF/Ai/λ null with reason insufficient_data
+    (the time base is unknown, not "fails all the time"). `outside_production` (kpis S5-1c item 6, audit A-6) and
+    the active repair times for MART (§2.3, audit A-20) are passed through."""
     fl = list(failures)
     counted = [d for sev, d in fl if sev in COUNTED_SEVERITIES]
     n = len(counted)
     incipient = sum(1 for sev, _ in fl if sev == "incipient")
     op_h = operating_s / 3600.0
-    mtbf_h = op_h / n if n else None
+    mtbf_h = op_h / n if n and op_h > 0 else None
     restored = [d for d in counted if d is not None]
     mttr_s = sum(restored) / len(restored) if restored else None
     mttr_h = mttr_s / 3600.0 if mttr_s is not None else None
     ai = mtbf_h / (mtbf_h + mttr_h) if (mtbf_h is not None and mttr_h is not None and mtbf_h + mttr_h > 0) else None
-    reason = None if n else "no_failures"
+    reason = "no_failures" if not n else (None if op_h > 0 else "insufficient_data")
+    reps = [float(r) for r in repair_s if r is not None and r >= 0]
+    mart_s = sum(reps) / len(reps) if reps else None
     return {"failures": n, "incipient": incipient, "short_faults": short_faults, "operating_h": op_h,
             "mtbf_h": mtbf_h, "mttr_s": mttr_s, "mttr_h": mttr_h, "availability_inherent": ai,
-            "failure_rate_per_h": (n / op_h) if op_h > 0 else None, "reason": reason}
+            "failure_rate_per_h": (n / op_h) if op_h > 0 else None, "reason": reason,
+            "failures_outside_production": int(outside_production),
+            "mart_s": mart_s, "mart_reason": None if reps else "no_repair_times", "repairs_timed": len(reps)}

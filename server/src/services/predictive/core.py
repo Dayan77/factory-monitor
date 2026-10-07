@@ -187,10 +187,14 @@ def condition_rul(cfg: MonitorCfg, last: list[WindowIn], ys: list[float], m0: fl
     rh = rem / (b - 2 * se) if b - 2 * se > 0 else None
     out.update(rul_usage=ru, rul_usage_low=rl, rul_usage_high=rh)
     rates = rate_fn(end) if rate_fn else None
+    if rate_fn is not None and rates is None:
+        return {**out, "rul_days": None, "reason": "insufficient_data", "low_confidence": True}
     if not rates or rates[0] <= 0:
         return {**out, "rul_days": None, "reason": "no_usage_rate"}
     r, r_lo, r_hi = rates
-    out.update(rate_per_day=r, rate_low=r_lo, rate_high=r_hi, rate_source="history_14d")
+    wdays = float(getattr(rates, "days", 14.0))
+    out.update(rate_per_day=r, rate_low=r_lo, rate_high=r_hi, rate_source="history_14d", rate_window_days=wdays,
+               low_confidence=wdays < 14)
     d = math.ceil(ru / r - EPS)
     d_lo = math.floor(rl / r_hi + EPS) if r_hi > 0 else None
     d_hi = math.ceil(rh / r_lo - EPS) if (rh is not None and r_lo > 0) else None
@@ -544,29 +548,34 @@ def fold_monitor(cfg: MonitorCfg, windows: list[WindowIn], resets: list[Reset], 
 
 # ── P-7 usage rate from hourly usage ──────────────────────────────────────────
 
-def make_rate_fn(hourly: dict[datetime, float], days: int = 14) -> RateFn:
-    """Rate = usage of the 14 × 24 h ending at the instant ÷ 14; band = the two 7-day halves (min, max). `hourly`
-    maps UTC hour starts to the usage in that hour (usage_buckets); partial hours are prorated."""
+class Rates(tuple):
+    """(rate, rate_low, rate_high) per day + the days of history behind them (`days`)."""
+    days: float = 14.0
+
+
+def make_rate_fn(hourly: dict[datetime, float], days: int = 14, data_since: Optional[datetime] = None) -> RateFn:
+    """Rate = usage of the complete hourly buckets [hour(t) − 14 d, hour(t)) ÷ 14; band = the two 7-day halves (min,
+    max). `hourly` maps UTC hour starts to the usage in that hour (usage_buckets).
+    Sprint 7 (S7-5, audit A-10): whole buckets, the hour still filling at `t` left out — the live evaluation and a
+    recomputation give the same pace (P-12), with the same rule as the nominal RUL. S7-2 (audit A-2): with less than
+    14 days of data (`data_since`) the window starts there and is divided by those days (< 3 → None:
+    insufficient_data; < 14 → low_confidence)."""
+    from ..usage.core import RUL_MIN_DAYS, rate_window
     hours = sorted(hourly)
 
     def between(a: datetime, b: datetime) -> float:
-        tot = 0.0
-        for hs in hours:
-            he = hs + timedelta(hours=1)
-            if he <= a:
-                continue
-            if hs >= b:
-                break
-            ov = (min(he, b) - max(hs, a)).total_seconds()
-            if ov > 0:
-                tot += hourly[hs] * ov / 3600.0
-        return tot
+        return sum(hourly[h] for h in hours if a <= h < b)
 
     def fn(end: datetime):
-        start, mid = end - timedelta(days=days), end - timedelta(days=days / 2)
-        r = between(start, end) / days
-        w1, w2 = between(start, mid) / (days / 2), between(mid, end) / (days / 2)
-        return r, min(w1, w2), max(w1, w2)
+        start, stop, d = rate_window(end, data_since, days=days)
+        if d < RUL_MIN_DAYS:
+            return None
+        mid = stop - timedelta(days=d / 2)
+        r = between(start, stop) / d
+        w1, w2 = between(start, mid) / (d / 2), between(mid, stop) / (d / 2)
+        out = Rates((r, min(w1, w2), max(w1, w2)))
+        out.days = d
+        return out
 
     return fn
 

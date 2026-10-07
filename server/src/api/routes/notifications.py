@@ -143,6 +143,7 @@ class _Unsub(BaseModel):
 
 @push_router.post("/unsubscribe")
 async def unsubscribe(body: _Unsub, user: CurrentUser, db: DB):
+    _human(user)
     s = (await db.execute(select(PushSubscription).where(PushSubscription.endpoint == body.endpoint,
                                                          PushSubscription.user_id == user.id,
                                                          PushSubscription.tenant_id == user.tenant_id))).scalar_one_or_none()

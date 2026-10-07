@@ -661,21 +661,19 @@ async def build_monthly_maintenance(src: ApiSource, ctx: BuildCtx) -> Doc:
         if (e.get("effective_reason_code") or "").startswith("EQP-") and e.get("duration_s"):
             eqp_s[e["machine_id"]] += e["duration_s"]
     modes: dict[str, Counter] = defaultdict(Counter)
-    outside: dict[str, int] = defaultdict(int)
     pos_modes: dict[str, Counter] = defaultdict(Counter)
     for f in fails:
         if f.get("failure_mode"):
             modes[f["machine_id"]][f["failure_mode"]] += 1
             if f.get("position_id"):
                 pos_modes[f["position_id"]][f["failure_mode"]] += 1
-        if f.get("severity") in ("critical", "degraded") and not f.get("downtime_event_id"):
-            outside[f["machine_id"]] += 1
     bad = []
     for r in rel_m.get("rows", []):
         mid = r.get("machine_id")
         bad.append({"machine": r.get("machine_name"), "failures": r.get("n") or 0,
                     "eqp_s": eqp_s.get(mid, 0.0), "mode": (modes[mid].most_common(1)[0][0] if modes[mid] else None),
-                    "failures_outside_production": outside.get(mid, 0),
+                    # kpis S5-1c item 6 (audit A-6): computed by the API from the calendar, not a proxy
+                    "failures_outside_production": r.get("failures_outside_production") or 0,
                     "_reason": {"mode": "no_data"} if not modes[mid] else {}})
     bad = [b for b in bad if b["failures"] or b["eqp_s"]]
     bad.sort(key=lambda b: (-b["failures"], -b["eqp_s"]))

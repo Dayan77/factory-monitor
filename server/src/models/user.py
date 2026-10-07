@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 import enum
 
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Enum as SAEnum, text
+from sqlalchemy import BigInteger, String, Boolean, DateTime, ForeignKey, Enum as SAEnum, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
@@ -37,6 +37,15 @@ class User(Base, TimestampMixin):
     line_ids:      Mapped[list[str]]     = mapped_column(ARRAY(UUID(as_uuid=False)), nullable=False, default=list, server_default=text("'{}'::uuid[]"))
     # Técnico de plantão: recebe o chamado emergencial (push com som) das linhas da sua área.
     on_call:       Mapped[bool]          = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Sprint 7 (backend B, docs/security.md): MFA (TOTP secret AES-GCM encrypted), password age, global token cutoff
+    # ("sair de todos os dispositivos" / password reset) and LGPD anonymization.
+    mfa_secret_enc:      Mapped[Optional[str]]      = mapped_column(String(255), nullable=True)
+    mfa_pending_enc:     Mapped[Optional[str]]      = mapped_column(String(255), nullable=True)
+    mfa_enabled_at:      Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    mfa_last_step:       Mapped[Optional[int]]      = mapped_column(BigInteger, nullable=True)
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    tokens_valid_after:  Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    anonymized_at:       Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def role_set(self) -> set[str]:

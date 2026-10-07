@@ -23,6 +23,7 @@ from ...auth import get_current_user, hash_api_token, require_roles
 from ...db import get_db
 from ...models import ApiToken, User, UserRole, Webhook, WebhookDelivery
 from ...services import clock, webhooks
+from ...services.security.notify import audit
 from ...services.validation import is_uuid
 from ..schemas_maintenance import ApiTokenIn, WebhookIn, WebhookPatch
 
@@ -65,6 +66,9 @@ async def create_token(body: ApiTokenIn, user: Admin, db: DB):
                  expires_at=(body.expires_at if body.expires_at is None or body.expires_at.tzinfo
                              else body.expires_at.replace(tzinfo=timezone.utc)))
     db.add(t)
+    await db.flush()
+    await audit(db, user.tenant_id, user.id, "api_token.created", "api_token", t.id,
+                {"name": t.name, "scopes": list(t.scopes or []), "prefix": t.prefix})
     await db.commit()
     return {**_token_out(t), "token": token}
 
@@ -77,7 +81,16 @@ async def revoke_token(token_id: str, user: Admin, db: DB):
     if t is None:
         raise HTTPException(status_code=404, detail="Token não encontrado.")
     t.revoked_at = t.revoked_at or datetime.now(timezone.utc)
+    await audit(db, user.tenant_id, user.id, "api_token.revoked", "api_token", t.id, {"prefix": t.prefix})
     await db.commit()
+
+
+def webhooks_host(url: Optional[str]) -> Optional[str]:
+    from urllib.parse import urlparse
+    try:
+        return urlparse(url or "").hostname
+    except ValueError:
+        return None
 
 
 def _hook_out(h: Webhook) -> dict:
@@ -135,6 +148,9 @@ async def create_hook(body: WebhookIn, user: Admin, db: DB):
     h = Webhook(tenant_id=user.tenant_id, url=body.url, secret=body.secret, events=sorted(set(body.events)),
                 description=body.description, is_active=body.is_active, created_by=user.id)
     db.add(h)
+    await db.flush()
+    await audit(db, user.tenant_id, user.id, "webhook.created", "webhook", h.id,
+                {"host": webhooks_host(h.url), "events": list(h.events or [])})
     await db.commit()
     return _hook_out(h)
 
@@ -153,6 +169,9 @@ async def patch_hook(hook_id: str, body: WebhookPatch, user: Admin, db: DB):
         if v is None and k != "description":
             continue
         setattr(h, k, sorted(set(v)) if k == "events" else v)
+    await audit(db, user.tenant_id, user.id, "webhook.updated", "webhook", h.id,
+                {"fields": sorted(k for k in body.model_fields_set if k != "secret") +
+                 (["secret"] if "secret" in body.model_fields_set else []), "host": webhooks_host(h.url)})
     await db.commit()
     return _hook_out(h)
 
@@ -161,6 +180,7 @@ async def patch_hook(hook_id: str, body: WebhookPatch, user: Admin, db: DB):
 async def delete_hook(hook_id: str, user: Admin, db: DB):
     _no_token(user)
     h = await _get_hook(db, hook_id, user.tenant_id)
+    await audit(db, user.tenant_id, user.id, "webhook.deleted", "webhook", h.id, {"host": webhooks_host(h.url)})
     await db.delete(h)
     await db.commit()
 

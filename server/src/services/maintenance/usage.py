@@ -68,8 +68,10 @@ async def measures_present(db: AsyncSession, tenant_id: str, scope: str, ids: It
 
 async def rate_window(db: AsyncSession, tenant_id: str, scope: str, ids: Iterable[str], now: datetime
                       ) -> dict[str, dict[str, float]]:
-    """Usage of the last 14 × 24 h ending now (C17)."""
-    return await window(db, tenant_id, scope, ids, now - timedelta(days=RATE_WINDOW_DAYS), now + timedelta(seconds=1))
+    """Usage of the 14 × 24 complete hourly buckets before the current hour (C17 as amended by S7-5, audit A-10:
+    the hour still filling is left out, so live and recomputed paces agree)."""
+    end = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    return await window(db, tenant_id, scope, ids, end - timedelta(days=RATE_WINDOW_DAYS), end)
 
 
 async def data_days(db: AsyncSession, tenant_id: str, scope: str, ids: Iterable[str], now: datetime
@@ -84,10 +86,11 @@ async def data_days(db: AsyncSession, tenant_id: str, scope: str, ids: Iterable[
         .where(UsageBucket.tenant_id == tenant_id, UsageBucket.scope == scope, UsageBucket.entity_id.in_(ids))
         .group_by(UsageBucket.entity_id))).all()
     first = {e: b for e, b in rows}
+    end = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)     # S7-5: complete hours
     out = {}
     for i in ids:
         b = first.get(i)
-        out[i] = 0.0 if b is None else min(float(RATE_WINDOW_DAYS), max((now - b).total_seconds() / 86400.0, 0.0))
+        out[i] = 0.0 if b is None else min(float(RATE_WINDOW_DAYS), max((end - b).total_seconds() / 86400.0, 0.0))
     return out
 
 

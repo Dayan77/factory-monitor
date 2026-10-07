@@ -23,9 +23,9 @@ from ..usage import queries as uq
 from ..validation import is_uuid
 from . import kpi
 from .calendar import Calendar, ShiftInstance
-from .engine import (MachineData, ProductPri, components, failures, load_calendar, load_machine_data,
-                     machine_infos, operating_seconds, product_pri, reason_meta, short_faults, window_components,
-                     windows)
+from .engine import (MachineData, ProductPri, components, failure_rows, load_calendar, load_machines_data,
+                     machine_infos, operating_seconds, outside_production, products_pri, reason_meta, short_faults,
+                     window_components, windows)
 
 MAX_RANGE_DAYS = 400
 MAX_HOUR_POINTS = 24 * 62
@@ -107,20 +107,37 @@ async def _line_scope(db: AsyncSession, tenant_id: str, line: Line, cal: Optiona
     return sc
 
 
-async def load_units(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime) -> list[Unit]:
+async def load_units(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime,
+                     mds: Optional[dict[str, MachineData]] = None) -> list[Unit]:
+    """Production units of the scope. `mds`: machine data already loaded for the same window (overview, map) —
+    reused instead of read again. Batched: one query per table for every unit machine (Sprint 7)."""
     ids = {m for m, _ in sc.units_spec} | {b for _, b in sc.units_spec if b}
     infos = await machine_infos(db, sc.tenant_id, ids)
+    need = {m: infos[m] for m, _ in sc.units_spec if m in infos and not (mds and m in mds)}
+    loaded = {**(mds or {}), **(await load_machines_data(db, need, sc.cal, start, stop, now) if need else {})}
+    botts = {b: infos[b] for m, b in sc.units_spec if b and b != m and b in infos}
+    bpris = await products_pri(db, sc.tenant_id, botts) if botts else {}
     units = []
     for mid, bott in sc.units_spec:
         if mid not in infos:
             continue
-        md = await load_machine_data(db, infos[mid], sc.cal, start, stop, now)
+        md = loaded[mid]
         pri = None
-        if bott and bott != mid and bott in infos:
-            bp = await product_pri(db, sc.tenant_id, infos[bott])
+        if bott in bpris:
+            bp = bpris[bott]
+            # kpis.md §1.6 + S7-4 (audit A-13): line PRI = bottleneck PRI for the product; a product without PRI at
+            # the bottleneck uses the output machine's, flagged (`line_pri_fallback`) instead of silently
+            fb = {p for p, v in md.pri.pri.items() if p not in bp.pri and v is not None}
+            if md.pri.default_product in bp.pri:
+                fallback = bp.pri.get(md.pri.default_product)
+            elif bp.fallback_pri is not None:
+                fallback = bp.fallback_pri
+            else:
+                fallback = md.pri.fallback_pri
+                if fallback is not None:
+                    fb.add(None)
             pri = ProductPri(pri={**md.pri.pri, **bp.pri}, default_product=md.pri.default_product,
-                             fallback_pri=bp.pri.get(md.pri.default_product) if md.pri.default_product in bp.pri
-                             else (bp.fallback_pri or md.pri.fallback_pri))
+                             fallback_pri=fallback, fallback_ids=frozenset(fb))
         units.append(Unit(md, pri, infos[mid].name))
     return units
 
@@ -204,10 +221,13 @@ async def pareto_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetim
 
 async def reliability_for(db: AsyncSession, sc: Scope, start: datetime, stop: datetime, now: datetime) -> dict:
     end = min(stop, now)
-    op = await operating_seconds(db, sc.tenant_id, sc.machine_ids, start, end)
-    fl = await failures(db, sc.tenant_id, sc.machine_ids, start, end)
+    op = await operating_seconds(db, sc.tenant_id, sc.machine_ids, start, end, now)
+    rows = await failure_rows(db, sc.tenant_id, sc.machine_ids, start, end)
     sf = await short_faults(db, sc.tenant_id, sc.machine_ids, start, end)
-    r = kpi.reliability(op, fl, sf)
+    counted = [r for r in rows if r[0] in kpi.COUNTED_SEVERITIES]
+    outside = await outside_production(db, sc.tenant_id, [(r[5], r[3], r[4]) for r in counted])
+    r = kpi.reliability(op, [(sev, d) for sev, d, *_ in rows], sf, outside_production=len(outside),
+                        repair_s=[x[2] for x in counted if x[2] is not None])
     return {"scope": sc.kind, "id": sc.id, "period_start": start, "period_end": stop, **r}
 
 

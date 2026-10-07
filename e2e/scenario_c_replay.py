@@ -98,8 +98,8 @@ def build(api: Api, ts) -> dict:
     stamp = int(time.time())
     email = f"qa-scc-{stamp}@qa-factoryconnect.com.br"
     api.post("/api/auth/register", json={"company_name": f"QA Cenario C {stamp}", "admin_name": "QA",
-                                         "admin_email": email, "admin_password": "QaGolden#2026"})
-    api.login(email, "QaGolden#2026")
+                                         "admin_email": email, "admin_password": "QaOuro#Teste2026"})
+    api.login(email, "QaOuro#Teste2026")
     tenant = api.get("/api/auth/me")["tenant_id"]
     m = C["machine"]
     plant = api.post("/api/plants/", json={"name": C["plant"]["name"], "timezone": C["plant"]["timezone"]})
@@ -124,7 +124,7 @@ def build(api: Api, ts) -> dict:
                                                            "ideal_cycle_time_s": m["ideal_cycle_time_s"], "is_default": True})
     api.post("/api/production-runs/", json={"machine_id": mach["id"], "product_id": prod["id"],
                                             "started_at": ts(C["shift"]["start_utc"]).isoformat()})
-    print(f"tenant {tenant}  login {email} / QaGolden#2026  machine {mach['id']}")
+    print(f"tenant {tenant}  login {email} / QaOuro#Teste2026  machine {mach['id']}")
     return {"tenant": tenant, "machine": mach["id"], "line": line["id"], "plant": plant["id"],
             "shift": shift["id"], "tags": tags, "email": email}
 
@@ -329,7 +329,7 @@ def main() -> int:
         tags = None
         ts = shift_fn(int(os.getenv("SHIFT_DAYS", "2")))
         if os.getenv("TENANT_EMAIL"):
-            api.login(os.environ["TENANT_EMAIL"], os.getenv("TENANT_PASSWORD", "QaGolden#2026"))
+            api.login(os.environ["TENANT_EMAIL"], os.getenv("TENANT_PASSWORD", "QaOuro#Teste2026"))
         else:
             api.login(os.getenv("EMAIL", "admin@factory-monitor.com"), os.getenv("PASSWORD", "Admin@1234"))
         name = os.getenv("MACHINE", C["machine"]["name"])

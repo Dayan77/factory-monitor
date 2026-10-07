@@ -31,25 +31,30 @@ Feita pelo papel `reliability-engineer`, por leitura do código e execução das
 | # | Item | Severidade | Onde | Teste |
 |---|---|---|---|---|
 | A-1 | ✅ **corrigido** — Ao ignorava a preventiva `PLN-03` programada no calendário (não entrava em D_eq) | **Alta** | `server/src/services/oee/engine.py:components` | `test_A1_*` |
-| A-2 | Ritmo da RUL nominal divide pelos dias desde `installed_at`, não pelos dias com dados (componente com data de instalação antiga) | Média (lacuna de spec) | `server/src/services/usage/queries.py:component_usage_detail` | `test_A2_*` |
+| A-2 | ✅ **corrigido (Sprint 7, S7-2)** — Ritmo da RUL nominal dividia pelos dias desde `installed_at`, não pelos dias com dados | Média (lacuna de spec) | `server/src/services/usage/queries.py:component_usage_detail` | `test_A2_rul_rate_uses_the_days_with_data_spec`, `server/tests/test_audit_s7.py::test_A2_nominal_rul_uses_days_with_data` |
 | A-3 | ✅ **corrigido** — Ritmo dos planos sempre ÷ 14, sem a regra "< 14 dias → dias disponíveis + `low_confidence`" | **Alta** | `server/src/services/maintenance/service.py:evaluate_plans` | `test_A3_*` |
-| A-4 | MTBF = 0 h e Ai = 0 quando há falhas mas tempo de operação 0 (deveria ser `null` + `reason`) | Média | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row` | `test_A4_*` |
-| A-5 | Pareto com PBT = 0 devolve 3 linhas de 0 min com `pct = null` (S3-1: lista vazia) | Média | `server/src/services/oee/kpi.py:pareto` | `test_A5_*` |
-| A-6 | `failures_outside_production` (kpis S5-1c item 6, DEVE) ausente das respostas de confiabilidade; o relatório mensal usa um *proxy* | Média | `server/src/services/oee/service.py:reliability_for`, `server/src/services/maintenance/kpis.py:reliability`, `server/src/services/reports/builders.py:build_monthly_maintenance` | `test_A6_*` |
-| A-7 | `estimated` fixo em `false` na confiabilidade por posição, mesmo com ciclos estimados (peças × `cycles_per_part`) | Média | `server/src/services/maintenance/kpis.py:reliability` | leitura |
-| A-8 | Taxa de falha por ciclos (λc, falhas por 10⁶ ciclos, §2.5) não é devolvida | Baixa | `server/src/services/maintenance/core.py:reliability_row` | `test_A8_*` |
-| A-9 | MTTF simples soma falhas com idade 0 (sem uso registrado); o Weibull as exclui | Baixa | `server/src/services/maintenance/core.py:mttf_row` | `test_A9_*` |
-| A-10 | Ritmo da RUL de condição rateia o bucket da hora corrente (ao vivo ≠ recálculo) e usa regra de janela diferente da RUL nominal (C17) | Baixa | `server/src/services/predictive/core.py:make_rate_fn` | `test_A10_*` |
-| A-11 | Cumprimento: OS concluída depois do fim do período conta como "atrasada", a spec diz "não feita" (o índice não muda) | Baixa | `server/src/services/maintenance/core.py:schedule_compliance` | `test_A11_*` |
-| A-12 | Falha no instante exato da troca é atribuída ao componente que vier primeiro na consulta | Baixa | `server/src/services/maintenance/kpis.py:attribute_component` | `test_A12_*` |
-| A-13 | PRI da linha: produto sem PRI no gargalo usa o PRI da máquina de saída, sem aviso | Info | `server/src/services/oee/service.py:load_units` | leitura |
-| A-14 | Ao: falha `EQP-*` sobreposta a uma parada planejada declarada (`PLN-01/02/04/05`) é descontada duas vezes | Baixa | `server/src/services/oee/engine.py:components` | `test_A14_*` |
-| A-15 | Desempenho `null` sem `reason` quando APT = 0 e há produção | Baixa | `server/src/services/oee/kpi.py:oee` | `test_A15_*` |
-| A-16 | Horas de operação da hora corrente usam o relógio de parede, não `services.clock` | Baixa | `server/src/services/oee/engine.py:operating_seconds` | leitura |
-| A-17 | `test_kpi_spec_cases.py` confere os casos da spec contra uma reimplementação dentro do teste, não contra o servidor | Info | `server/tests/test_kpi_spec_cases.py` | resolvido por `test_conformance` |
-| A-18 | Probabilidade condicional (Weibull §2.5): ritmo de componente instalado há < 3 dias aceito sem `low_confidence` | Baixa | `server/src/services/reports/life.py:reliability_life` | leitura |
-| A-19 | Mapa (Sprint 6 §1.2/§1.4) promete "cadência ao vivo" (15 min × 4, kpis §1.9) e mostra PQ/PBT do turno até agora | Média | `server/src/services/layout/service.py:shift_kpis` | leitura |
-| A-20 | MART (tempo ativo de reparo, §2.3, auxiliar) não é calculado, embora `repair_started_at`/`repair_finished_at` existam | Baixa | — | leitura |
+| A-4 | ✅ **corrigido (S7-1)** — MTBF = 0 h e Ai = 0 quando há falhas mas tempo de operação 0 | Média | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row` | `test_A4_mtbf_zero_without_operating_time_spec`, `test_audit_s7.py::test_A6_A20_*` |
+| A-5 | ✅ **corrigido** — Pareto com PBT = 0 devolvia 3 linhas de 0 min com `pct = null` | Média | `server/src/services/oee/kpi.py:pareto` | `test_A5_pareto_without_planned_time_spec` |
+| A-6 | ✅ **corrigido (S7-10)** — `failures_outside_production` ausente das respostas de confiabilidade; relatório usava *proxy* | Média | `server/src/services/oee/service.py:reliability_for`, `server/src/services/maintenance/kpis.py:reliability`, `server/src/services/reports/builders.py:build_monthly_maintenance` | `test_A6_failures_outside_production_in_reliability_spec`, `test_audit_s7.py::test_A6_A20_reliability_apis_outside_production_and_mart` |
+| A-7 | ✅ **corrigido (S7-11)** — `estimated` fixo em `false` com ciclos estimados | Média | `server/src/services/maintenance/kpis.py:reliability` | `test_audit_s7.py::test_A7_estimated_cycles_flag_on_reliability_rows` |
+| A-8 | ✅ **corrigido (S7-12)** — λc (falhas por 10⁶ ciclos) não era devolvido | Baixa | `server/src/services/maintenance/core.py:reliability_row` | `test_A8_failure_rate_per_million_cycles_spec` |
+| A-9 | ✅ **corrigido (S7-6)** — MTTF simples somava falhas com idade 0 | Baixa | `server/src/services/maintenance/core.py:mttf_row` | `test_A9_mttf_excludes_zero_age_failure_spec` |
+| A-10 | ✅ **corrigido (S7-5)** — Ritmo da RUL de condição rateava a hora corrente (ao vivo ≠ recálculo) e usava janela diferente da nominal | Baixa | `server/src/services/predictive/core.py:make_rate_fn` | `test_A10_condition_rate_live_equals_recompute_spec` |
+| A-11 | ✅ **corrigido (S7-8)** — OS concluída depois do fim do período contava como "atrasada" | Baixa | `server/src/services/maintenance/core.py:schedule_compliance` | `test_A11_schedule_compliance_completed_after_period_spec` |
+| A-12 | ✅ **corrigido (S7-7)** — Falha no instante exato da troca dependia da ordem da consulta | Baixa | `server/src/services/maintenance/kpis.py:attribute_component` | `test_A12_failure_at_replacement_instant_spec` |
+| A-13 | ✅ **corrigido (S7-4)** — PRI da linha: produto sem PRI no gargalo usava o PRI da saída sem aviso | Info | `server/src/services/oee/service.py:load_units` | `test_A13_line_pri_fallback_flagged_spec` |
+| A-14 | ✅ **corrigido (S7-9)** — Ao: falha sobreposta a parada planejada declarada descontada duas vezes | Baixa | `server/src/services/oee/engine.py:components` | `test_A14_ao_overlap_counted_twice_spec`, `test_A14_ao_partial_overlap_spec` |
+| A-15 | ✅ **corrigido (S7-3)** — Desempenho `null` sem `reason` quando APT = 0 e há produção | Baixa | `server/src/services/oee/kpi.py:oee` | `test_A15_performance_null_without_reason_spec` |
+| A-16 | ✅ **corrigido (S7-15)** — Horas de operação da hora corrente usavam o relógio de parede | Baixa | `server/src/services/oee/engine.py:operating_seconds` | `test_audit_s7.py::test_A16_operating_seconds_uses_the_given_now` |
+| A-17 | ✅ **resolvido** — `test_kpi_spec_cases.py` conferia os casos contra uma reimplementação | Info | `server/tests/test_kpi_spec_cases.py` | `test_conformance` |
+| A-18 | ✅ **corrigido (S7-2)** — Risco condicional aceitava ritmo de componente instalado há < 3 dias sem `low_confidence` | Baixa | `server/src/services/reports/life.py:reliability_life` | `test_audit_s7.py::test_A18_conditional_risk_pace_needs_three_days` |
+| A-19 | ✅ **corrigido (S7-13)** — Mapa prometia cadência ao vivo e mostrava PQ/PBT do turno / estimativa por buckets | Média | `server/src/services/layout/service.py:shift_kpis` | `test_audit_s7.py::test_A19_live_cadence_from_raw_counter_readings`, `::test_A19_map_marks_cadence_source` |
+| A-20 | ✅ **corrigido (S7-14)** — MART não era calculado | Baixa | `server/src/services/maintenance/core.py:reliability_row`, `server/src/services/oee/kpi.py:reliability` | `test_A20_mart_spec`, `test_audit_s7.py::test_A6_A20_*` |
+
+**Situação após o Sprint 7**: todos os itens fechados. As decisões de especificação que faltavam (A-2, A-10, A-13,
+A-15, A-19, A-20 etc.) estão em [`kpis.md`](kpis.md) "Decisões Sprint 7" (S7-1 … S7-16); os testes `…_code_today`
+foram removidos e os `…_spec` passam sem `xfail` (`docs/scenarios/test_audit_kpis.py`); os casos que precisam de
+banco/InfluxDB estão em `server/tests/test_audit_s7.py`.
 
 Nenhum item crítico (fórmula central errada no caso normal): **todas** as fórmulas de OEE/A/P/Q/TEEP, micro-paradas,
 cadência, Pareto, MTBF/MCBF/MTTR/MTTF, PMP, cumprimento, backlog, % de vida, RUL, "o que vier primeiro", contadores,
@@ -84,7 +89,12 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   `reason_code` é `PLN-03` (e de eventos `PLN-03`/`MNT-02` sobre elas, sem contar duas vezes — união de intervalos).
   O teste unitário atual (`test_oee_core.py`) só passa `ao_equipment_s` pronto para `availability_operational`.
 
-### A-2 — Ritmo da RUL nominal com data de instalação antiga · Média (lacuna da especificação)
+### A-2 — Ritmo da RUL nominal com data de instalação antiga · Média (lacuna da especificação) · ✅ corrigido
+
+> **Corrigido** (Sprint 7, kpis.md S7-2): `server/src/services/usage/queries.py:component_usage_detail` usa
+> `server/src/services/usage/core.py:rate_window` com `installed_at` e o início dos dados (`server/src/services/usage/queries.py:component_data_since`);
+> a mesma regra na RUL de condição (`make_rate_fn(data_since=…)`) e no risco condicional (A-18). Contraexemplo: 70 dias,
+> 14/12/2026, `low_confidence`.
 
 - **Spec**: kpis.md §4.2 — "menos de 14 dias de **histórico** → usar os dias disponíveis (mínimo 3) e
   `low_confidence = true`". O esclarecimento C17 concretiza "histórico" como dias desde `installed_at`.
@@ -128,7 +138,9 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   data 27 dias depois do vencimento real e não programa a troca.
 - **Correção**: passar os dias de dados (mesma regra de A-2, mínimo 3) e expor `low_confidence` no plano.
 
-### A-4 — MTBF = 0 sem tempo de operação · Média
+### A-4 — MTBF = 0 sem tempo de operação · Média · ✅ corrigido
+
+> **Corrigido** (S7-1): MTBF/Ai/λ `null`, `reason = insufficient_data`; MTTR 15 min mantido.
 
 - **Spec**: kpis.md §0 — indefinido → `null` com `reason`, nunca 0 nem infinito; §2.5: tempo = 0 → λ `null`.
   MTBF = tempo/n com tempo desconhecido é indefinido (não "a máquina falha a toda hora").
@@ -141,7 +153,9 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
 - **Onde aparece**: máquina recém-cadastrada sem tag de operação; posição de máquina sem `run_state` próprio na
   tela Confiabilidade.
 
-### A-5 — Pareto vazio quando não há tempo planejado · Média
+### A-5 — Pareto vazio quando não há tempo planejado · Média · ✅ corrigido
+
+> **Corrigido**: `kpi.pareto` devolve `[]` com PBT = 0 (também `by=category`).
 
 - **Spec**: kpis.md S3-1 — "Pareto com PBT = 0: **lista vazia** (sem linhas de 0 min com `pct = null`)".
 - **Código**: `server/src/services/oee/kpi.py:pareto` sempre inclui as três pseudo-perdas (`micro_stops`, `speed_loss`,
@@ -151,7 +165,10 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   esperado `[]`. A UI e o relatório PDF precisam tratar "—" em vez de "sem perdas".
 - **Correção**: em `pareto`, `if c.pbt_s <= 0: return []`.
 
-### A-6 — `failures_outside_production` · Média
+### A-6 — `failures_outside_production` · Média · ✅ corrigido
+
+> **Corrigido** (S7-10): `server/src/services/oee/engine.py:outside_production` (calendário + paradas planejadas
+> declaradas) nas duas APIs; o relatório mensal lê o campo da API (proxy removido).
 
 - **Spec**: kpis.md S5-1c item 6 — "A resposta de confiabilidade **DEVE** trazer `failures_outside_production` (n das
   falhas cujo `failed_at` cai fora do tempo produtivo — pausa ou fora do turno)". No `break_fault_shift`: 3.
@@ -166,7 +183,10 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
 - **Correção**: calcular pelo calendário (`productive_at(cal, failed_at)` de `oee/detection.py`) nas duas APIs e
   reutilizar no relatório.
 
-### A-7 — Ciclos estimados apresentados como medidos · Média
+### A-7 — Ciclos estimados apresentados como medidos · Média · ✅ corrigido
+
+> **Corrigido** (S7-11): `estimated` pela topologia (posição sem tag de ciclo) nas linhas por posição, tipo e
+> fabricante/modelo; `false` explícito por máquina.
 
 - **Spec**: kpis.md §2.2 — ciclos estimados por peças × `cycles_per_part` → `estimated = true`; C14; domain.md §2.
 - **Código**: `server/src/services/usage/topology.py:load_topology` grava ciclos estimados para posições sem tag de ciclo,
@@ -175,13 +195,17 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
 - **Contraexemplo**: garra G1 sem sensor, `cycles_per_part = 2`, 700 peças → 1 400 ciclos estimados; 1 falha →
   MCBF 1 400 ciclos exibido sem o selo "estimado" na tela Confiabilidade e no relatório mensal.
 
-### A-8 — λ por ciclos não exposto · Baixa
+### A-8 — λ por ciclos não exposto · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-12): `failure_rate_per_million_cycles` em `reliability_row`.
 
 - **Spec**: kpis.md §2.5 — `λc = n / ciclos × 10⁶`; caso `failure_rate`: 3 / 2 400 000 → **1,25 por 10⁶ ciclos**.
 - **Código**: `server/src/services/maintenance/core.py:reliability_row` devolve só `failure_rate_per_h`. Como MCBF existe,
   λc = 10⁶ / MCBF pode ser derivado na UI, mas a spec manda o servidor calcular (S3-5: nada recalculado na UI).
 
-### A-9 — MTTF simples com idade 0 · Baixa
+### A-9 — MTTF simples com idade 0 · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-6): idade ≤ 0 excluída, `excluded_no_usage` / `mttf_excluded_no_usage`; contraexemplo 9 400 h.
 
 - **Spec**: kpis.md §2.4 (média das idades na falha). reports.md §2.1 exclui `t ≤ 0` (`no_usage`) do Weibull.
 - **Código**: `server/src/services/maintenance/core.py:mttf_row` usa `usage_since_install.get(m, 0.0)` — componente que
@@ -191,7 +215,10 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   MTTF simples 7 050 e MTTF Weibull ~9 500 no relatório de vida.
 - **Correção**: excluir idade ≤ 0 também no MTTF simples e devolver `excluded_no_usage`.
 
-### A-10 — Ritmo da RUL de condição · Baixa
+### A-10 — Ritmo da RUL de condição · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-5): horas completas `[hora(t) − 14 d, hora(t))` em `make_rate_fn`, na RUL nominal e nos planos
+> (`server/src/services/maintenance/usage.py:rate_window`); ao vivo = recálculo = nominal = 20 000/dia.
 
 - **Spec**: predictive.md P-7 — ritmo "como kpis.md §4.2/C17"; C17: buckets horários com início ≥ hora cheia de
   `agora − 14 d`, ÷ 14. P-12: recalcular dá o mesmo resultado.
@@ -202,7 +229,9 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   nominal **20 029,76/dia** (e o recálculo dessa mesma janela dá 20 000). Diferença ≤ 0,25 %: só muda `ceil` de dias
   em casos de fronteira, mas quebra a igualdade ao vivo × recálculo de P-12 nesses casos.
 
-### A-11 — "Atrasada" × "não feita" · Baixa
+### A-11 — "Atrasada" × "não feita" · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-8): concluída após o fim do período = não feita (`late = 0, not_done = 1`).
 
 - **Spec**: domain.md S4-6 — "concluída depois = atrasada; **não concluída até o fim do período = não feita**".
 - **Código**: `server/src/services/maintenance/core.py:schedule_compliance` classifica pelo `completed_at` atual, mesmo se
@@ -211,7 +240,9 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   em 05/10 → código: `late = 1, not_done = 0`; spec: `late = 0, not_done = 1`. O índice (34/40 etc.) não muda, mas a
   contagem muda conforme o dia em que o relatório é gerado (fere o princípio 4 de reports.md, reprodutibilidade).
 
-### A-12 — Falha no instante da troca · Baixa
+### A-12 — Falha no instante da troca · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-7): intervalo semiaberto, ordem determinística → "new".
 
 - **Spec**: domain.md S4-2/S4-9 — os intervalos de instalação nunca se sobrepõem; a falha vai para o componente
   instalado em `failed_at`.
@@ -220,13 +251,18 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
 - **Contraexemplo** (`test_A12_*`): troca concluída às 10:00 e falha registrada às 10:00 → "old" ou "new" conforme a
   ordem. Proposta: intervalo semiaberto `[installed_at, removed_at)` → "new".
 
-### A-13 — PRI da linha sem o produto no gargalo · Info
+### A-13 — PRI da linha sem o produto no gargalo · Info · ✅ corrigido
+
+> **Corrigido** (S7-4): `line_pri_fallback = true` no OEE da linha/planta quando o PRI veio da saída
+> (`server/src/services/oee/service.py:load_units`).
 
 `server/src/services/oee/service.py:load_units` usa `{**PRI da saída, **PRI do gargalo}`: produto sem PRI cadastrado no
 gargalo usa, sem aviso, o PRI da máquina de saída. kpis.md §1.6 diz "PRI da linha = PRI do gargalo para o produto" e
 não trata a ausência. Recomendação: documentar a regra (fallback = saída) e devolver `line_pri_fallback = true`.
 
-### A-14 — Ao: sobreposição contada duas vezes · Baixa
+### A-14 — Ao: sobreposição contada duas vezes · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-9): D_eq exclui a parte sob parada planejada declarada `PLN-01/02/04/05`; Ao = 1,0.
 
 - **Spec**: S3-4 — parada não planejada sobreposta a uma planejada perde a parte sobreposta (a planejada prevalece);
   §2.6.
@@ -235,13 +271,17 @@ não trata a ausência. Recomendação: documentar a regra (fallback = saída) e
 - **Contraexemplo** (`test_A14_*`): DDS `PLN-02` declarado 10:00–10:30 sobre falha `EQP-03` 10:00–10:20 → código
   **Ao = 430/450 = 0,955556**; spec **1,0** (a falha não ocupou tempo requerido).
 
-### A-15 — `reason` ausente com APT = 0 · Baixa
+### A-15 — `reason` ausente com APT = 0 · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-3): `reason = no_running_time`.
 
 `server/src/services/oee/kpi.py:oee`: PBT 60 min inteiro em ADOT e 10 peças reveladas pelo contador (S3-9) → `performance
 = null`, `reason = null` (`test_A15_*`). kpis.md §0 exige `reason` em todo indefinido; sugerir `no_running_time`
 (acrescentar à lista do §0) ou `insufficient_data`.
 
-### A-16 — Relógio de parede nas horas de operação · Baixa
+### A-16 — Relógio de parede nas horas de operação · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-15): `operating_seconds(..., now)`; `reliability_for` passa o `now` do motor.
 
 `server/src/services/oee/engine.py:operating_seconds` limita o bucket da hora corrente com `datetime.now()`, enquanto o resto
 do motor recebe `now` (e a manutenção usa `services.clock`). Com o relógio congelado (testes de cenário, demo em
@@ -256,13 +296,18 @@ pelos cenários E/F). **Resolvido** nesta auditoria: `docs/scenarios/test_audit_
 22 casos pelas funções do servidor (o 23º, ciclos estimados, vive na topologia de uso e é coberto por `server/tests/test_usage_core.py`) e `test_every_kpi_case_is_audited` falha se um caso novo for acrescentado sem
 verificação.
 
-### A-18 — Risco condicional com instalação muito recente · Baixa
+### A-18 — Risco condicional com instalação muito recente · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-2): < 3 dias → `rate_per_day = null`, `p_reason = insufficient_data`; < 14 → `low_confidence`.
 
 `server/src/services/reports/life.py:reliability_life` usa `days = min(14, desde a instalação)` sem o mínimo de 3 dias de
 kpis.md §4.2 nem `low_confidence`. Um componente instalado há 2 h com a partida rápida da linha entra com o ritmo de
 2 h extrapolado para 30 dias na lista "maior probabilidade de falhar". Aplicar a regra de A-2.
 
-### A-19 — "Cadência ao vivo" no mapa · Média
+### A-19 — "Cadência ao vivo" no mapa · Média · ✅ corrigido
+
+> **Corrigido** (S7-13): `server/src/services/layout/service.py:live_parts` lê as leituras brutas do contador no
+> InfluxDB (`cadence_source = counter`; sem leituras → `buckets`). Contraexemplo: 60 pç/h.
 
 sprint6.md §1.2 (estado `running`: "cadência ao vivo (§1.9 de kpis.md)") e §1.4. kpis.md §1.9: cadência ao vivo =
 peças dos últimos 15 min × 4. `server/src/services/layout/service.py:shift_kpis` devolve `cadence_per_hour =
@@ -271,7 +316,9 @@ cadence_planned_per_hour` = PQ/PBT **do turno até agora**. Contraexemplo: turno
 ao vivo seria **60 pç/h**. A UI rotula só "Cadência" (não engana sobre ser ao vivo), mas não cumpre a spec. Ou
 implementar a janela de 15 min, ou corrigir a spec para "cadência do turno".
 
-### A-20 — MART · Baixa
+### A-20 — MART · Baixa · ✅ corrigido
+
+> **Corrigido** (S7-14): `mart_s`/`mart_min`, `repairs_timed`, `mart_reason` nas duas APIs de confiabilidade.
 
 kpis.md §2.3 define o MART (média de `repair_finished_at − repair_started_at`) como auxiliar "quando apontado". Os
 campos existem (`FailureRecord`), `repair_started_at` é preenchido ao iniciar a OS, mas nenhuma API calcula o MART. Sem
@@ -295,12 +342,12 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | ADOT | eventos não planejados ∩ tempo produtivo | `server/src/services/oee/engine.py:components` (`unplanned_u`) | ✅ (S5-1: só a parte produtiva) | `test_break_fault_s5.py` |
 | APT | `PBT − ADOT` | `server/src/services/oee/kpi.py:Components.apt_s` | ✅ | E1 |
 | A | `APT / PBT`; PBT = 0 → `null` (`no_planned_time` / `insufficient_data`) | `server/src/services/oee/kpi.py:oee` | ✅ S3-1 | E1, E2 |
-| P | `Σ PRI·PQ / APT`, sem truncar, flag `ideal_cycle_time_suspect` | `server/src/services/oee/kpi.py:oee` | ⚠️ A-15 | E1, E2 |
+| P | `Σ PRI·PQ / APT`, sem truncar, flag `ideal_cycle_time_suspect` | `server/src/services/oee/kpi.py:oee` | ✅ (A-15 corrigido) | E1, E2 |
 | Q | `Σ PRI·GQ / Σ PRI·PQ`; PQ = 0 → `null` (`no_production`) | `server/src/services/oee/kpi.py:oee` | ✅ | E1, E2 |
 | OEE | `Σ PRI·GQ / PBT` | `server/src/services/oee/kpi.py:oee` | ✅ (PBT > 0 sem produção → 0 real, Q `null`) | E1, E2 |
 | Agregação | somar componentes, recalcular | `server/src/services/oee/kpi.py:total`, `server/src/services/oee/service.py:oee_for` (S3-8) | ✅ nunca média | E2 (0,836590 ≠ 0,839524) |
 | PRI por produto | `ProductionRun` → produto padrão → PRI da máquina → `insufficient_data` | `server/src/services/oee/engine.py:_production`, `server/src/services/oee/engine.py:product_pri` | ✅ S3-3, D7 | cenário D |
-| OEE da linha / planta | saída da linha + PRI do gargalo; planta = Σ linhas | `server/src/services/oee/service.py:resolve_scope`, `server/src/services/oee/service.py:load_units` | ⚠️ A-13 | `test_drilldown_e2.py` |
+| OEE da linha / planta | saída da linha + PRI do gargalo; planta = Σ linhas | `server/src/services/oee/service.py:resolve_scope`, `server/src/services/oee/service.py:load_units` | ✅ (A-13 corrigido) | `test_drilldown_e2.py` |
 | Produção fora do calendário | fora de PQ/GQ e do TEEP | `server/src/services/oee/engine.py:_production` | ✅ S3-7 | cenário D |
 | Loading / TEEP | `PBT / calendário`; `Σ PRI·GQ / calendário` | `server/src/services/oee/kpi.py:oee`, `server/src/services/oee/service.py:total_components` (D10) | ✅ (feriado: 0; `insufficient_data`: `null`) | E3 |
 | `data_coverage` | (POT com dados ou parada declarada) / POT | `server/src/services/oee/kpi.py:oee`, `server/src/services/oee/engine.py:components` | ✅ D5 | `test_oee_api.py` |
@@ -309,9 +356,9 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | Falha curta | falha < limiar → `short_faults`, sem `FailureRecord` (também fora do tempo produtivo) | `server/src/services/oee/detection.py:micro_pieces`, `server/src/services/oee/detection.py:short_offtime_fault` | ✅ C22, S5-1b | `test_break_fault_s5.py` |
 | Micro-paradas por hora de APT | `n / APT(h)` | `server/src/services/oee/kpi.py:oee` | ✅ | — |
 | Cadência realizada / em operação | `PQ/PBT`, `PQ/APT` | `server/src/services/oee/kpi.py:oee` | ✅ | E5 |
-| Cadência ao vivo | peças dos últimos 15 min × 4 | `server/src/services/layout/service.py:shift_kpis` | ❌ A-19 | — |
+| Cadência ao vivo | peças dos últimos 15 min × 4 | `server/src/services/layout/service.py:shift_kpis` | ✅ (A-19 corrigido) | `test_A19_*` |
 | Cadência de bucket | peças / duração do bucket | `server/src/api/routes/lines.py` (`cadence_per_hour`) | ✅ C21 | cenário B |
-| Pareto de perdas | motivos + micro + velocidade (`APT − Σ PRI·PQ − micro`, ≥ 0) + qualidade (`Σ PRI·SQ`) | `server/src/services/oee/kpi.py:pareto` | ⚠️ A-5 | E6 |
+| Pareto de perdas | motivos + micro + velocidade (`APT − Σ PRI·PQ − micro`, ≥ 0) + qualidade (`Σ PRI·SQ`) | `server/src/services/oee/kpi.py:pareto` | ✅ (A-5 corrigido) | E6 |
 | Motivo efetivo | operador → sugerido `EQP-*` → `UNK-01` | `server/src/services/oee/engine.py:effective_reason` | ✅ D2 | `test_oee_api.py` |
 
 ### Confiabilidade (kpis.md §2)
@@ -319,26 +366,26 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | Indicador | Fórmula da spec | Implementação | Situação | Teste |
 |---|---|---|---|---|
 | n | `critical` + `degraded` por `failed_at`; `incipient` à parte | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row` | ✅ | R1 |
-| Tempo de operação | `Σ run_state = 1` (C23), da posição ou herdado da máquina (C13, D8) | `server/src/services/oee/engine.py:operating_seconds`, `server/src/services/oee/engine.py:run_source`, `server/src/services/usage/core.py:run_step` | ⚠️ A-16 | cenário C (349,5 min) |
-| MTBF | `tempo / n`; n = 0 → `null` + `operating_hours` | idem | ⚠️ A-4 | R1, `mtbf_no_failures` |
-| MCBF | `ciclos / n` | `server/src/services/maintenance/core.py:reliability_row` | ⚠️ A-7 | R2, cenário E |
+| Tempo de operação | `Σ run_state = 1` (C23), da posição ou herdado da máquina (C13, D8) | `server/src/services/oee/engine.py:operating_seconds`, `server/src/services/oee/engine.py:run_source`, `server/src/services/usage/core.py:run_step` | ✅ (A-16 corrigido) | cenário C (349,5 min) |
+| MTBF | `tempo / n`; n = 0 → `null` + `operating_hours` | idem | ✅ (A-4 corrigido) | R1, `mtbf_no_failures` |
+| MCBF | `ciclos / n` | `server/src/services/maintenance/core.py:reliability_row` | ✅ (A-7 corrigido) | R2, cenário E |
 | MTTR | `Σ (restored_at − failed_at) / nº restabelecidas` (relógio, S4-10, S5-1) | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row`, `server/src/services/oee/detection.py:restoration` | ✅ (falha aberta fora; restabelecimento ausente ≠ 0) | R3, `break_fault_shift` (23,75 min) |
-| MART | média `repair_finished_at − repair_started_at` | — | ❌ A-20 | — |
-| MTTF / MCTF | média de `usage_since_install` dos removidos por falha; suspensões à parte | `server/src/services/maintenance/core.py:mttf_row`, `server/src/services/maintenance/core.py:life_measure_of` | ⚠️ A-9 | R4, cenário E |
+| MART | média `repair_finished_at − repair_started_at` | — | ✅ (A-20 corrigido) | `test_A20_mart_spec` |
+| MTTF / MCTF | média de `usage_since_install` dos removidos por falha; suspensões à parte | `server/src/services/maintenance/core.py:mttf_row`, `server/src/services/maintenance/core.py:life_measure_of` | ✅ (A-9 corrigido) | R4, cenário E |
 | Taxa de falha λ | `n / tempo` (n = 0 → 0; tempo = 0 → `null`) | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row` | ✅ | R5 |
-| λc | `n / ciclos × 10⁶` | — | ❌ A-8 | R5 |
-| Ai | `MTBF / (MTBF + MTTR)` | `server/src/services/oee/kpi.py:reliability` | ⚠️ A-4 | R6 |
-| Ao | `(T_req − D_eq) / T_req` | `server/src/services/oee/kpi.py:availability_operational`, `server/src/services/oee/engine.py:components` | ❌ A-1, A-14 (a fórmula confere; as entradas não) | R6 (função pura), `break_fault_shift` |
-| Atribuição a componente | componente instalado em `failed_at` | `server/src/services/maintenance/kpis.py:attribute_component` | ⚠️ A-12 | cenário E |
+| λc | `n / ciclos × 10⁶` | — | ✅ (A-8 corrigido) | R5 |
+| Ai | `MTBF / (MTBF + MTTR)` | `server/src/services/oee/kpi.py:reliability` | ✅ (A-4 corrigido) | R6 |
+| Ao | `(T_req − D_eq) / T_req` | `server/src/services/oee/kpi.py:availability_operational`, `server/src/services/oee/engine.py:components` | ✅ (A-1, A-14 corrigidos) | R6 (função pura), `break_fault_shift` |
+| Atribuição a componente | componente instalado em `failed_at` | `server/src/services/maintenance/kpis.py:attribute_component` | ✅ (A-12 corrigido) | cenário E |
 | Agregação de grupo | Σ uso ÷ Σ falhas | `server/src/services/maintenance/kpis.py:reliability` | ✅ S4-8, S4-9 | cenário E |
-| `failures_outside_production` | n de falhas fora do tempo produtivo | (só no relatório, por proxy) | ❌ A-6 | — |
+| `failures_outside_production` | n de falhas fora do tempo produtivo | (só no relatório, por proxy) | ✅ (A-6 corrigido) | `test_A6_*` |
 
 ### Gestão da manutenção (kpis.md §3)
 
 | Indicador | Fórmula da spec | Implementação | Situação | Teste |
 |---|---|---|---|---|
 | PMP | horas planejadas / horas totais, OS concluídas no período | `server/src/services/maintenance/core.py:pmp`, `server/src/services/maintenance/core.py:is_planned_work` | ✅ (corretiva sem `urgency` conta como não planejada — Info) | M1, `pmp_with_predictive` (0,9375) |
-| Cumprimento | no prazo / programadas (congelamento segunda 00:00, `superseded` fora) | `server/src/services/maintenance/core.py:schedule_compliance` | ⚠️ A-11 | M2, cenário E |
+| Cumprimento | no prazo / programadas (congelamento segunda 00:00, `superseded` fora) | `server/src/services/maintenance/core.py:schedule_compliance` | ✅ (A-11 corrigido) | M2, cenário E |
 | Backlog | Σ horas restantes (approved/scheduled/on_hold/in_progress) / capacidade | `server/src/services/maintenance/core.py:backlog`, `server/src/services/maintenance/kpis.py:crew_capacity`, `server/src/services/maintenance/core.py:remaining_hours` | ✅ S4-5, S4-7 | M3, cenário E |
 | `predictive_no_defect_hours` | horas de OS preditivas concluídas com `no_defect` | `server/src/services/maintenance/kpis.py:management_kpis`, `server/src/services/predictive/evaluation.py:predictive_no_defect_hours` | ✅ P-9 | cenário F |
 
@@ -350,8 +397,8 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | Horas e partidas | `Σ run_state = 1`; partida = 0→1 com 0 ≥ debounce; buraco ≤ timeout | `server/src/services/usage/core.py:run_step` | ✅ C10–C12 | cenário A2 (5 457,2 s) |
 | Ciclos estimados | peças totais × `cycles_per_part` | `server/src/services/usage/topology.py:load_topology` | ✅ C14 (flag: A-7) | `cycles_per_part_estimate` |
 | % de vida | `max_m(uso_m / L_m)`, sem truncar; sem vida → `null` | `server/src/services/usage/core.py:life_consumed` | ✅ | U1, U2 |
-| RUL nominal | `ceil((L − uso) / ritmo14)`, menor data; empate → maior % | `server/src/services/usage/core.py:rul`, `server/src/services/usage/queries.py:component_usage_detail` | ⚠️ A-2 | U3 |
-| Plano "o que vier primeiro" | `consumed = max_i`; estados 0,8/1,0/1+tol; data = mais cedo | `server/src/services/maintenance/core.py:compute_plan_status`, `server/src/services/maintenance/core.py:plan_state` | ⚠️ A-3 | U4, cenário E |
+| RUL nominal | `ceil((L − uso) / ritmo14)`, menor data; empate → maior % | `server/src/services/usage/core.py:rul`, `server/src/services/usage/queries.py:component_usage_detail` | ✅ (A-2 corrigido) | U3 |
+| Plano "o que vier primeiro" | `consumed = max_i`; estados 0,8/1,0/1+tol; data = mais cedo | `server/src/services/maintenance/core.py:compute_plan_status`, `server/src/services/maintenance/core.py:plan_state` | ✅ (A-3 corrigido) | U4, cenário E |
 
 ### Preditiva (predictive.md)
 
@@ -361,8 +408,8 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | z, EWMA, CUSUM | `clip(±4)`, `λ = 0,2`, limite 1,0; `k = 0,5`, `h = 5` | `server/src/services/predictive/core.py:fold_segment`, `server/src/services/predictive/core.py:ewma_limit` | ✅ P-4 | cenário F |
 | z robusto móvel | 20 janelas anteriores, > 3,5, 3 em 10 | `server/src/services/predictive/core.py:fold_segment` | ✅ | cenário F |
 | Tendência | MQO nas últimas 10 janelas; significativa se `b > 0` e `b/SE > 2` | `server/src/services/predictive/core.py:ols` | ✅ P-5 | cenário F |
-| RUL de condição | `(L_f − x̂)/b`, faixa `(L_f − x̂)/(b ± 2SE)`, dias com ritmo alto/baixo | `server/src/services/predictive/core.py:condition_rul` | ✅ P-6 (ritmo: A-10) | F1 bloco 50 (11 dias, 8–16) |
-| Ritmo e faixa | 14 d ÷ 14; metades de 7 d | `server/src/services/predictive/core.py:make_rate_fn` | ⚠️ A-10 | F2 dia 58 |
+| RUL de condição | `(L_f − x̂)/b`, faixa `(L_f − x̂)/(b ± 2SE)`, dias com ritmo alto/baixo | `server/src/services/predictive/core.py:condition_rul` | ✅ P-6 (ritmo: A-10 corrigido) | F1 bloco 50 (11 dias, 8–16) |
+| Ritmo e faixa | 14 d ÷ 14; metades de 7 d | `server/src/services/predictive/core.py:make_rate_fn` | ✅ (A-10 corrigido) | F2 dia 58 |
 | Plano de produção | 1º dia com uso planejado acumulado ≥ restante | `server/src/services/predictive/core.py:project_with_plan` | ✅ P-7 | `production_plan_example` (10/02/2027) |
 | Severidade | estatístico → `watch`; regra → sua; RUL ≤ 30 d → `warning`; `dias_low ≤ 7` → `critical` | `server/src/services/predictive/core.py:severity_of` | ✅ P-8 | cenário F |
 | Antecedência, precisão, FA/posição-ano, detecção, cobertura da faixa | P-10 | `server/src/services/predictive/evaluation.py:evaluate` | ✅ | F (0,5 / 1,0; 4,966/ano) |
@@ -374,7 +421,7 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 | β, η (MLE com censura) | raiz de `g(β)` por bissecção em [0,05; 50]; `η = (Σ t^β / r)^(1/β)`; r < 3 → `insufficient_failures` | `server/src/services/reports/weibull.py:mle`, `server/src/services/reports/weibull.py:g_score` | ✅ | `weibull_cylinders`, `weibull_bearings_r4`, `weibull_insufficient` |
 | IC 90 % (Fisher, log) | Hessiana de §2.3 | `server/src/services/reports/weibull.py:fisher_cov`, `server/src/services/reports/weibull.py:analyze` | ✅ | `weibull_cylinders` |
 | MTTF_W, B10, B10/nominal | `η·Γ(1 + 1/β)`; `η·(−ln 0,9)^(1/β)` | `server/src/services/reports/weibull.py:analyze` | ✅ | idem |
-| Probabilidade condicional | `1 − R(a + u·D)/R(a)` | `server/src/services/reports/weibull.py:conditional_failure` | ✅ (ritmo: A-18) | 0,361250; 0,013788 |
+| Probabilidade condicional | `1 − R(a + u·D)/R(a)` | `server/src/services/reports/weibull.py:conditional_failure` | ✅ (ritmo: A-18 corrigido) | 0,361250; 0,013788 |
 | Papel de Weibull | ranks de Johnson + Bernard | `server/src/services/reports/weibull.py:plot_points` | ✅ | idem |
 | Padrão de β | IC < 1, contém 1, > 1 | `server/src/services/reports/weibull.py:pattern` | ✅ | idem |
 | Comparação entre marcas | IC de η sem sobreposição | `server/src/services/reports/weibull.py:eta_ci_overlap`, `server/src/services/reports/life.py:compare_groups` | ✅ | `test_reports_core.py` |

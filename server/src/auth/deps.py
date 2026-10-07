@@ -18,7 +18,7 @@ a transient service principal of that tenant with the maintenance-planner permis
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Annotated, Iterable
+from typing import Annotated, Iterable, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_db
 from ..models import ApiToken, User, UserRole
-from .security import decode_token
+from ..services.validation import is_uuid
+from .security import decode_token, is_access_claims
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -89,6 +90,44 @@ async def _api_token_user(token: str, request: Request, db: AsyncSession) -> Use
     return principal
 
 
+# Paths an admin without MFA may still use while the tenant requires MFA for admins (enrolment + sign-out).
+MFA_ENROLL_PATHS = ("/api/auth/me", "/api/auth/logout", "/api/auth/logout-all", "/api/account/mfa",
+                    "/api/account/sessions", "/api/account/me")
+MFA_REQUIRED_MSG = "MFA obrigatório para administradores neste tenant: ative a verificação em duas etapas."
+
+
+async def _mfa_enrollment_pending(db: AsyncSession, user: User) -> bool:
+    if user.mfa_enabled_at is not None or not (user.role_set & {"admin", "superadmin"}):
+        return False
+    from ..models import TenantSecuritySettings
+    req = (await db.execute(select(TenantSecuritySettings.require_mfa_admins).where(
+        TenantSecuritySettings.tenant_id == user.tenant_id))).scalar_one_or_none()
+    return bool(req)
+
+
+def _path_allowed_without_mfa(path: str) -> bool:
+    p = path.rstrip("/") or "/"
+    return any(p == a or p.startswith(a + "/") for a in MFA_ENROLL_PATHS)
+
+
+async def user_from_access_token(db: AsyncSession, token: str) -> tuple[Optional[User], dict]:
+    """(active user, claims) for a valid access JWT — signature/kid, expiry with leeway, token kind, session not
+    revoked, global cutoff (tokens_valid_after). (None, {}) otherwise. Shared by HTTP and WebSocket."""
+    from ..services.security.sessions import access_valid
+    try:
+        claims = decode_token(token)
+    except JWTError:
+        return None, {}
+    user_id = claims.get("sub")
+    if not user_id or not is_access_claims(claims) or not is_uuid(str(user_id)):
+        return None, {}
+    user = (await db.execute(select(User).where(User.id == str(user_id), User.is_active.is_(True)))
+            ).scalar_one_or_none()
+    if user is None or not await access_valid(db, user, claims):
+        return None, {}
+    return user, claims
+
+
 async def get_current_user(
     request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -101,24 +140,19 @@ async def get_current_user(
         detail="Token inválido ou expirado.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        payload = decode_token(token)
-        user_id: str = payload.get("sub")
-        if not user_id:
-            raise credentials_exc
-    except JWTError:
+    user, claims = await user_from_access_token(db, token)
+    if user is None:
         raise credentials_exc
-
-    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise credentials_exc
+    user.session_id = claims.get("sid")  # type: ignore[attr-defined]
     if "demo_viewer" in user.role_set:
         # public demo (Sprint 6, services/demo/guard.py): read-only whatever token the account presents
         from ..services.demo.guard import block_reason
         msg = block_reason(request.method, request.url.path)
         if msg:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
+    if not _path_allowed_without_mfa(request.url.path) and await _mfa_enrollment_pending(db, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MFA_REQUIRED_MSG,
+                            headers={"X-Error-Code": "mfa_enrollment_required"})
     return user
 
 

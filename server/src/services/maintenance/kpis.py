@@ -143,11 +143,14 @@ GROUPS = ("position", "machine", "component_type", "manufacturer", "manufacturer
 
 
 def attribute_component(f: FailureRecord, comps_by_pos: dict[str, list[Component]]) -> Optional[str]:
-    """S4-9: the component installed in the position at failed_at."""
+    """S4-9: the component installed in the position at failed_at. Installation periods are half-open
+    [installed_at, removed_at) (audit A-12, S7-7): a failure at the exact instant of a replacement belongs to the
+    component installed then, whatever the row order."""
     if f.component_id:
         return f.component_id
-    for c in comps_by_pos.get(f.position_id or "", []):
-        if c.installed_at is not None and c.installed_at <= f.failed_at and (c.removed_at is None or f.failed_at <= c.removed_at):
+    for c in sorted(comps_by_pos.get(f.position_id or "", []),
+                    key=lambda c: (c.installed_at or datetime.min.replace(tzinfo=timezone.utc), str(c.id))):
+        if c.installed_at is not None and c.installed_at <= f.failed_at and (c.removed_at is None or f.failed_at < c.removed_at):
             return c.id
     return None
 
@@ -176,8 +179,17 @@ async def reliability(db: AsyncSession, tenant_id: str, group_by: str, start: Op
     frs = list((await db.execute(select(FailureRecord).where(
         FailureRecord.tenant_id == tenant_id, FailureRecord.machine_id.in_(mids),
         FailureRecord.failed_at >= start, FailureRecord.failed_at < stop))).scalars().all()) if mids else []
+    from ..oee.engine import outside_production
+    outside = await outside_production(db, tenant_id, [(f.id, f.machine_id, f.failed_at) for f in frs
+                                                       if f.severity in core.COUNTED_SEVERITIES])
     facts = [core.FailureFacts(f.id, f.severity, f.failed_at, f.restored_at, f.position_id,
-                               attribute_component(f, comps_by_pos), f.machine_id) for f in frs]
+                               attribute_component(f, comps_by_pos), f.machine_id,
+                               repair_started_at=f.repair_started_at, repair_finished_at=f.repair_finished_at,
+                               outside_production=f.id in outside) for f in frs]
+    # audit A-7 (kpis.md §2.2, C14): cycles of a position without its own cycle tag are parts × cycles_per_part
+    from ..usage.topology import load_topology
+    topo = await load_topology(db, tenant_id, list(machines)) if machines else None
+    est_pos = {pid for pid, p in (topo.positions.items() if topo else ()) if not p.has_cycle_tag}
 
     rows: list[dict] = []
     if group_by in ("position", "component_type"):
@@ -196,7 +208,8 @@ async def reliability(db: AsyncSession, tenant_id: str, group_by: str, start: Op
                              "machine_id": p.machine_id, "machine_name": getattr(machines.get(p.machine_id), "name", None),
                              "component_type": p.component_type.value,
                              "hours_source": "position" if p.id in own_run else "machine",
-                             "estimated": False, **r, **_mttf_fields(comps_by_pos.get(p.id, []), all_usage)})
+                             "estimated": cyc is not None and p.id in est_pos, **r,
+                             **_mttf_fields(comps_by_pos.get(p.id, []), all_usage)})
         else:
             by_type: dict[str, list[Position]] = defaultdict(list)
             for p in positions:
@@ -208,7 +221,9 @@ async def reliability(db: AsyncSession, tenant_id: str, group_by: str, start: Op
                 cyc = sum(use.get(p.id, {}).get("cycles", 0.0) for p in ps) if has_c else None
                 r = core.reliability_row([f for f in facts if f.position_id in ids], hours, cyc)
                 type_comps = [c for c in comps if c.component_type.value == t]
-                rows.append({"key": t, "label": t, "component_type": t, "positions": len(ps), **r,
+                rows.append({"key": t, "label": t, "component_type": t, "positions": len(ps),
+                             "estimated": cyc is not None and any(p.id in est_pos and "cycles" in present.get(p.id, set())
+                                                                  for p in ps), **r,
                              **_mttf_fields(type_comps, await _comp_usage(db, tenant_id, type_comps))})
     elif group_by == "machine":
         use = await mu.window(db, tenant_id, "machine", list(machines), start, stop)
@@ -219,7 +234,8 @@ async def reliability(db: AsyncSession, tenant_id: str, group_by: str, start: Op
             r = core.reliability_row([f for f in facts if f.machine_id == m.id], u.get("hours", 0.0), cyc)
             mc = [c for c in comps if pos_by_id.get(c.last_position_id) is not None
                   and pos_by_id[c.last_position_id].machine_id == m.id]
-            rows.append({"key": m.id, "label": m.name, "machine_id": m.id, "machine_name": m.name, **r,
+            rows.append({"key": m.id, "label": m.name, "machine_id": m.id, "machine_name": m.name,
+                         "estimated": False, **r,      # machine cycles come only from a machine cycle tag (measured)
                          **_mttf_fields(mc, await _comp_usage(db, tenant_id, mc))})
     elif group_by in ("manufacturer", "manufacturer_model"):
         use = await mu.window(db, tenant_id, "component", list(comp_by_id), start, stop)
@@ -240,7 +256,9 @@ async def reliability(db: AsyncSession, tenant_id: str, group_by: str, start: Op
                      "manufacturer": key[1]} if group_by == "manufacturer" else
                     {"key": f"{key[0]}|{key[1]}", "label": f"{key[0]} {key[1]}", "manufacturer": key[0],
                      "model": key[1], "component_type": cs[0].component_type.value})
-            rows.append({**head, "components": len(cs), **r, **_mttf_fields(cs, totals)})
+            est = cyc is not None and any(c.last_position_id in est_pos and "cycles" in present.get(c.id, set())
+                                          for c in cs)
+            rows.append({**head, "components": len(cs), "estimated": est, **r, **_mttf_fields(cs, totals)})
     else:
         raise ValueError(group_by)
     return {"group_by": group_by, "period_start": clock.iso(start), "period_end": clock.iso(stop), "plant_id": plant_id, "rows": rows}
@@ -258,7 +276,8 @@ def _mttf_fields(cs: list[Component], totals: dict[str, dict]) -> dict:
     m = core.mttf_row(life)
     return {"mttf_measure": m["measure"], "mttf": m["mttf"], "mttf_h": m["mttf_h"], "mctf": m["mctf"],
             "failures_removed": m["failures"], "suspensions": m["suspensions"], "in_service": m["in_service"],
-            "small_sample": m["small_sample"], "mttf_reason": m["reason"]}
+            "small_sample": m["small_sample"], "mttf_reason": m["reason"],
+            "mttf_excluded_no_usage": m["excluded_no_usage"]}
 
 
 # ── components by % of life (S4-12) ──────────────────────────────────────────

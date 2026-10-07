@@ -67,8 +67,8 @@ M = mon["id"]
 b_email = f"qa-5b-b-{stamp}@qa-factoryconnect.com.br"
 httpx.post(f"{API}/api/auth/register", trust_env=False, json={
     "company_name": f"QA 5b B {stamp}", "admin_name": "QA B", "admin_email": b_email,
-    "admin_password": "QaIso#2026x"}).raise_for_status()
-B = {"admin": C(login(b_email, "QaIso#2026x"))}
+    "admin_password": "QaIsola#2026x"}).raise_for_status()
+B = {"admin": C(login(b_email, "QaIsola#2026x"))}
 b_tenant = B["admin"].get("/api/auth/me").json()["tenant_id"]
 SUPER.patch(f"/api/admin/tenants/{b_tenant}", json={"max_users": 20}).raise_for_status()
 for role in ROLES:

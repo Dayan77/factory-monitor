@@ -127,6 +127,10 @@ async def generate(body: GenerateIn, request: Request, user: CurrentUser, db: DB
         raise HTTPException(status_code=422, detail=f"{t} não tem o formato {body.format}")
     if body.scope_id is not None and not is_uuid(body.scope_id):
         raise _404("Escopo")
+    if body.format != "json":                                 # Sprint 7: exports are audited
+        from ...services.security.notify import audit
+        await audit(db, user.tenant_id, user.id, "report.exported", "report", t,
+                    {"format": body.format, "api_token": bool(getattr(user, "api_token_id", None))})
     now = clock.now()
     app = request.app
     if body.mode == "job" and body.format != "json":
@@ -410,6 +414,11 @@ async def download_run(run_id: str, user: CurrentUser, db: DB, link: Optional[st
     f = await db.get(ReportFile, r.id)
     if f is None or f.tenant_id != user.tenant_id:
         raise _404("Arquivo")
+    from ...services.security.notify import audit            # Sprint 7: exports are audited
+    await audit(db, user.tenant_id, user.id,
+                "report.downloaded", "report_run", r.id, {"via_link": link is not None,
+                                                          "api_token": bool(getattr(user, "api_token_id", None))})
+    await db.commit()
     return _file_response(r, f.content)
 
 

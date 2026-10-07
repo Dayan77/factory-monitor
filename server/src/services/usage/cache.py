@@ -116,6 +116,65 @@ def _mark_bulk(state) -> None:
 def _invalidate(session: Session) -> None:
     if session.info.pop("topology_dirty", False):
         topology_cache.invalidate()
+        notify_other_processes()
+
+
+# ── cross-process invalidation (Sprint 7) ────────────────────────────────────
+# MQTT ingestion may run in its own processes (src/ingest_worker.py): an asset or alert-rule change committed by the
+# API process is announced on Postgres channel CHANNEL; the ingestion processes LISTEN and clear their caches at once
+# (their TTL is then only a safety net for a lost notification).
+CHANNEL = "fm_cache_invalidate"
+
+
+def notify_other_processes() -> None:
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_send_notify())
+
+
+async def _send_notify() -> None:
+    from sqlalchemy import text
+    from ...db import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT pg_notify(:ch, '')"), {"ch": CHANNEL})
+            await db.commit()
+    except Exception:  # noqa: BLE001 — the other processes' TTL still bounds the staleness
+        pass
+
+
+async def run_invalidation_listener(on_invalidate) -> None:
+    """Ingestion process: LISTEN CHANNEL and call `on_invalidate()` on every notification (and after a reconnect,
+    since notifications may have been missed)."""
+    import asyncio
+
+    import asyncpg
+    import structlog
+    log = structlog.get_logger()
+    dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+    while True:
+        conn = None
+        try:
+            conn = await asyncpg.connect(dsn)
+            await conn.add_listener(CHANNEL, lambda *_: on_invalidate())
+            on_invalidate()
+            while not conn.is_closed():
+                await asyncio.sleep(5)
+                await conn.execute("SELECT 1")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("cache.invalidation_listener_error", error=str(e)[:200])
+        finally:
+            if conn is not None and not conn.is_closed():
+                try:
+                    await asyncio.wait_for(conn.close(), timeout=2)
+                except BaseException:  # noqa: BLE001
+                    pass
+        await asyncio.sleep(2)
 
 
 @event.listens_for(Session, "after_rollback")

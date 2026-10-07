@@ -889,3 +889,73 @@ MTTR 2 min; falha ainda ativa só vira rascunho ao completar o limiar).
                 "limit": {"failure": true, "restored": "10:07:00", "mttr_min": 2.0}}}
 ]
 ```
+
+## Decisões Sprint 7
+
+Fechamento de todos os itens abertos da auditoria independente ([`audit_kpis.md`](audit_kpis.md), A-2 e A-4…A-20).
+Onde a especificação tinha lacuna, a decisão abaixo é **normativa** a partir deste sprint (no espírito do §0: indefinido
+→ `null` + `reason`, nada recalculado na UI, nenhum número sem aviso). Os contraexemplos da auditoria são testes:
+`docs/scenarios/test_audit_kpis.py` (funções puras) e `server/tests/test_audit_s7.py` (API, banco e InfluxDB).
+Os casos de §6 e os cenários de ouro A–F continuam exatos.
+
+- **S7-1 — Falhas sem tempo de operação (A-4).** Com `n > 0` e tempo de operação 0 ou desconhecido (máquina sem
+  `run_state` nem contador, D8), `MTBF`, `Ai` e `λ` são `null` com `reason = insufficient_data` (não 0 h). `MTTR`,
+  `n` e `failures_outside_production` continuam calculados. `n = 0` segue `reason = no_failures`.
+- **S7-2 — Dias de histórico do ritmo (A-2, A-18; vale também para planos e RUL de condição).** Dias de histórico =
+  `min(14, agora − installed_at, agora − início dos dados)`, onde início dos dados = o mais antigo entre o 1º bucket de
+  uso do componente, o da sua posição, o da máquina e o 1º intervalo com dados (`machine_data_spans`) da máquina.
+  Menos de 3 dias → sem projeção (`reason = insufficient_data`; no risco condicional do Weibull: `p_fail = null`,
+  `p_reason = insufficient_data`); menos de 14 → `low_confidence = true` (RUL nominal, RUL de condição
+  `rate_window_days`, risco condicional `low_confidence`). Planos: dias com dados da âncora (A-3, Sprint 6).
+  Ex. (U3 com instalação antiga): instalado há 400 dias, dados há 5 dias, 100 000 ciclos → 20 000/dia → 70 dias,
+  14/12/2026, `low_confidence` (a regra antiga dava 196 dias sem aviso).
+- **S7-3 — `reason = no_running_time` (A-15).** Acrescentado à lista de §0: PBT > 0 inteiramente perdido (APT = 0) com
+  peças contadas → `performance = null`, `reason = no_running_time` (A = 0 real, OEE pela fórmula de §1.5).
+- **S7-4 — PRI da linha sem o produto no gargalo (A-13).** Regra: PRI da linha = PRI do gargalo para o produto; produto
+  sem PRI no gargalo usa o PRI da **máquina de saída** e a resposta traz `line_pri_fallback = true` (OEE e Pareto da
+  linha/planta). Sem PRI em nenhuma das duas → `insufficient_data` (S3-3, inalterado).
+- **S7-5 — Janela do ritmo: horas completas (A-10; emenda C17).** Para a RUL nominal, os planos, a RUL de condição
+  (P-7) e o risco condicional, a janela são os buckets horários **completos** `[hora(agora) − 14 d, hora(agora))`
+  (336 buckets) divididos por 14 (ou pelos dias de S7-2). A hora corrente, ainda enchendo, fica de fora: avaliar ao vivo
+  e recalcular depois dão o mesmo ritmo (P-12). Ex. (uso uniforme 20 000/dia, avaliação às 10:30): 20 000/dia nos
+  quatro cálculos (antes: condição 19 985,12; nominal 20 029,76). Os exemplos U3/U4 não mudam (dados por dia).
+- **S7-6 — MTTF simples com idade 0 (A-9).** Componente removido por falha sem uso registrado (`t ≤ 0`: importado,
+  removido antes do gateway) fica **fora** da média, como no Weibull (reports.md §2.1), e é contado em
+  `excluded_no_usage` (`mttf_excluded_no_usage` na API). Todos excluídos → `null`, `reason = insufficient_data`.
+  Ex.: 8 200, 9 600, 10 400 h e um com idade 0 → 9 400 h, `excluded_no_usage = 1`.
+- **S7-7 — Falha no instante da troca (A-12).** Intervalo de instalação semiaberto `[installed_at, removed_at)`: a falha
+  registrada no instante exato da troca é do componente **novo** (determinístico, independe da ordem da consulta).
+- **S7-8 — Cumprimento: concluída depois do período (A-11).** OS programada no período e concluída **depois do fim do
+  período** conta como **não feita** (S4-6); "atrasada" é só a concluída dentro do período após o prazo. O número de um
+  período fechado não depende do dia em que o relatório é gerado (reports.md princípio 4). No prazo pela tolerância
+  continua no prazo.
+- **S7-9 — Ao: sobreposição com parada planejada declarada (A-14).** A parte de uma parada `EQP-*`/`PLN-03`/`MNT-02` sob
+  uma parada planejada declarada `PLN-01/02/04/05` está fora de T_req e **não** entra em D_eq (a planejada prevalece,
+  S3-4); a união das planejadas é descontada uma vez. Ex.: DDS `PLN-02` 10:00–10:30 sobre falha 10:00–10:20 → Ao = 1,0;
+  falha 10:00–10:40 → D_eq = 10 min, Ao = 440/450.
+- **S7-10 — `failures_outside_production` (A-6, S5-1c item 6).** n das falhas `critical`/`degraded` cujo `failed_at`
+  não é tempo produtivo **pelo calendário** da planta da máquina: fora de instância de turno, dentro de pausa /
+  `planned_stop` do calendário, ou dentro de um `DowntimeEvent` planejado declarado. Devolvido em `GET /api/reliability`
+  e em toda linha de `GET /api/maintenance/reliability`; o relatório mensal usa esse campo (o *proxy* "sem
+  `downtime_event_id`" foi removido). `break_fault_shift`: 3.
+- **S7-11 — Ciclos estimados (A-7).** Linhas de confiabilidade por posição, tipo de componente e fabricante/modelo
+  trazem `estimated = true` quando os ciclos de alguma posição do grupo vêm de peças × `cycles_per_part` (posição sem
+  tag de ciclo própria, topologia atual — C14). Linhas por máquina: `estimated = false` (ciclos de máquina só vêm de
+  contador de ciclos da máquina).
+- **S7-12 — λ por ciclos (A-8).** `failure_rate_per_million_cycles = n / ciclos × 10⁶` (ciclos 0/sem fonte → `null`;
+  `n = 0` com ciclos → 0). Ex. R5: 3 / 2 400 000 → 1,25.
+- **S7-13 — Cadência ao vivo do mapa (A-19).** `cadence_per_hour` do mapa = peças dos **últimos 15 min** × 4 a partir das
+  **leituras brutas** do contador (InfluxDB: `part_counter_total`, senão bom + refugo; regras de delta de domain.md §3.3
+  a partir da última leitura até o início da janela) — `cadence_source = counter`. Sem leituras ou InfluxDB
+  indisponível: estimativa pelos buckets horários (`cadence_source = buckets`, `cadence_prorated`), que a UI sinaliza.
+  `cadence_shift_per_hour` continua a cadência realizada do turno (PQ/PBT). Ex.: 400 peças 06:00–09:45 e 15 peças
+  09:45–10:00 → 60 pç/h (os buckets davam ~115).
+- **S7-14 — MART (A-20).** `mart_s`/`mart_min` = média de `repair_finished_at − repair_started_at` das falhas contadas
+  em `n` que têm os dois apontados; `repairs_timed` = quantas; nenhuma → `null`, `mart_reason = no_repair_times`.
+  Nas duas APIs de confiabilidade. Separa espera (MTTR − MART) de reparo.
+- **S7-15 — Relógio da hora corrente nas horas de operação (A-16).** O bucket da hora corrente é limitado pelo `now`
+  de quem calcula (`services.clock`/o `now` do motor), nunca pelo relógio de parede.
+- **S7-16 — Detectores depois de longas quedas (não muda fórmula).** O detector de paradas processa o atraso em
+  fatias limitadas (`DOWNTIME_SLICE_READINGS` leituras por tag) que avançam o checkpoint; o resultado (eventos,
+  falhas, micro-paradas, intervalos com dados) é **idêntico** ao do processamento contínuo — prova:
+  `server/tests/test_detector_catchup.py` (72 h de buffer descarregado de uma vez).

@@ -228,6 +228,24 @@ RUL_HORIZON_DAYS = 3650             # no projected end date beyond ~10 years (av
 RUL_MIN_DAYS = 3
 
 
+def rate_window(now: datetime, *since: Optional[datetime], days: int = RUL_WINDOW_DAYS
+                ) -> tuple[datetime, datetime, float]:
+    """kpis.md "Decisões Sprint 7" S7-2/S7-5 (audits A-2, A-10, A-18): the pace window shared by the nominal RUL,
+    the plans, the condition RUL and the Weibull conditional risk.
+
+    Window = the **complete** hourly buckets [hour(now) − 14 d, hour(now)) — the current, still filling, hour is left
+    out, so evaluating live and recomputing later give the same pace (P-12). History = the days actually behind the
+    window: its start moves to the latest of `since` (installation, first data of the position/machine), floored to
+    the hour. Returns (start, end, days); days < RUL_MIN_DAYS → insufficient_data, < 14 → low_confidence."""
+    end = hour_floor(now)
+    start = end - timedelta(days=days)
+    for s in since:
+        if s is not None:
+            start = max(start, hour_floor(s))
+    start = min(start, end)
+    return start, end, (end - start).total_seconds() / 86400.0
+
+
 def rul(today: date, nominal: Mapping[str, float], usage: Mapping[str, float],
         usage_window: Mapping[str, float], history_days: float = RUL_WINDOW_DAYS) -> Rul:
     """kpis.md §4.2: rate = usage over the last min(14, history_days) calendar days / days;

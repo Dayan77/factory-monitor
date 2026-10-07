@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...models import Component, Line, Machine, Position, WorkOrder, WorkOrderReplacement
 from ..maintenance import core
 from ..usage import queries as uq
+from ..usage.core import RUL_MIN_DAYS, rate_window
 from . import weibull
 
 RATE_WINDOW_DAYS = 14     # kpis.md §4.2
@@ -79,11 +80,17 @@ async def reliability_life(db: AsyncSession, tenant_id: str, cutoff: datetime, p
             by_install[c.installed_at].append(c.id)
         for inst_at, ids in by_install.items():
             at_cut.update(await mu.window(db, tenant_id, "component", ids, inst_at, cutoff))
-            days = min(float(RATE_WINDOW_DAYS), max((cutoff - inst_at).total_seconds() / 86400.0, 0.0))
-            w = await mu.window(db, tenant_id, "component", ids, cutoff - timedelta(days=days), cutoff) if days > 0 else {}
-            for i in ids:
-                window_days[i] = days
-                rate[i] = {m: (v / days if days > 0 else 0.0) for m, v in (w.get(i) or {}).items()}
+        # S7-2 (audit A-18): the same pace rule as the nominal RUL — complete hours, days of history = min(14, since
+        # installation, since the first data); < 3 days → no pace (p_fail null, insufficient_data); < 14 → low_confidence
+        for c in in_service:
+            since = await uq.component_data_since(db, tenant_id, c)
+            ws, we, days = rate_window(cutoff, c.installed_at, since or cutoff)
+            window_days[c.id] = days
+            if days < RUL_MIN_DAYS:
+                rate[c.id] = None
+                continue
+            w = await mu.window(db, tenant_id, "component", [c.id], ws, we)
+            rate[c.id] = {m: v / days for m, v in (w.get(c.id) or {}).items()}
 
     # failures that were removals by confirmed defect in a predictive WO (§2.1: reported apart)
     failed_ids = [c.id for c in comps if c.removed_at is not None and c.removed_at <= cutoff
@@ -134,8 +141,10 @@ async def reliability_life(db: AsyncSession, tenant_id: str, cutoff: datetime, p
                 excluded.append(unit)
                 continue
             if not removed_before_cut:
-                unit["rate_per_day"] = rate.get(c.id, {}).get(measure, 0.0)
+                r_c = rate.get(c.id, {})
+                unit["rate_per_day"] = None if r_c is None else r_c.get(measure, 0.0)
                 unit["rate_window_days"] = window_days.get(c.id)
+                unit["rate_low_confidence"] = (window_days.get(c.id) or 0.0) < RATE_WINDOW_DAYS
             groups[(c.manufacturer or "—", c.model or "—")].append(unit)
 
         grows = []
@@ -175,7 +184,11 @@ async def reliability_life(db: AsyncSession, tenant_id: str, cutoff: datetime, p
                                                           "component_type", "position_name", "machine_id",
                                                           "machine_name", "measure", "age")},
                                      "rate_per_day": u.get("rate_per_day"), "days": HORIZON_DAYS,
-                                     "p_fail": cp["p_fail"], "p_reason": cp["reason"], "group_key": g["key"]})
+                                     "rate_window_days": u.get("rate_window_days"),
+                                     "low_confidence": bool(u.get("rate_low_confidence")),
+                                     "p_fail": cp["p_fail"],
+                                     "p_reason": "insufficient_data" if u.get("rate_per_day") is None else cp["reason"],
+                                     "group_key": g["key"]})
         types_out.append({"component_type": ctype, "label": TYPE_PT.get(ctype, ctype), "measure": measure,
                           "unit": MEASURE_UNIT.get(measure), "groups": grows, "excluded": excluded,
                           "comparison": compare_groups(grows)})

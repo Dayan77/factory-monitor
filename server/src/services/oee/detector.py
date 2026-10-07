@@ -111,21 +111,25 @@ async def signal_tags(db: AsyncSession, tenant_id: str, machine_id: str) -> Sign
 
 # ── Influx source ──────────────────────────────────────────────────────────
 
-async def influx_fetch(tenant_id: str, tag_ids: list[str], after: datetime, stop: datetime
-                       ) -> list[tuple[str, datetime, float]]:
-    """Readings of the tags with after < ts ≤ stop, sorted by ts."""
+async def influx_fetch(tenant_id: str, tag_ids: list[str], after: datetime, stop: datetime,
+                       limit: Optional[int] = None) -> list[tuple[str, datetime, float]]:
+    """Readings of the tags with after < ts ≤ stop, sorted by ts. `limit`: at most that many readings per tag (the
+    first ones) — a bounded catch-up slice (see _slice)."""
     tenant_id = ensure_uuid(tenant_id, "tenant_id")
     ids = [ensure_uuid(t, "tag_id") for t in tag_ids]
     if not ids:
         return []
     s = ", ".join(f'"{t}"' for t in ids)
+    lim = f"|> limit(n: {int(limit)})" if limit else ""
+    # range start is inclusive: start strictly after `after`, so the per-tag limit counts only readings we keep
     flux = f"""
     from(bucket: "{settings.influx_bucket}")
-      |> range(start: {after.astimezone(timezone.utc).isoformat()}, stop: {(stop + timedelta(microseconds=1)).astimezone(timezone.utc).isoformat()})
+      |> range(start: {(after + timedelta(microseconds=1)).astimezone(timezone.utc).isoformat()}, stop: {(stop + timedelta(microseconds=1)).astimezone(timezone.utc).isoformat()})
       |> filter(fn: (r) => r["_measurement"] == "sensors")
       |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
       |> filter(fn: (r) => contains(value: r["tag_id"], set: [{s}]))
       |> filter(fn: (r) => r["_field"] == "value")
+      {lim}
       |> keep(columns: ["_time", "_value", "tag_id"])
     """
     out = []
@@ -135,6 +139,52 @@ async def influx_fetch(tenant_id: str, tag_ids: list[str], after: datetime, stop
             out.append((rec.values.get("tag_id"), ts, float(rec.get_value())))
     out.sort(key=lambda r: (r[1], r[0]))
     return out
+
+
+async def influx_latest(tenant_id: str, tag_ids: list[str], after: datetime, stop: datetime) -> Optional[datetime]:
+    """Timestamp of the latest reading of the tags in (after, stop] (one aggregate per tag, computed by Influx)."""
+    tenant_id = ensure_uuid(tenant_id, "tenant_id")
+    ids = [ensure_uuid(t, "tag_id") for t in tag_ids]
+    if not ids:
+        return None
+    s = ", ".join(f'"{t}"' for t in ids)
+    flux = f"""
+    from(bucket: "{settings.influx_bucket}")
+      |> range(start: {after.astimezone(timezone.utc).isoformat()}, stop: {(stop + timedelta(microseconds=1)).astimezone(timezone.utc).isoformat()})
+      |> filter(fn: (r) => r["_measurement"] == "sensors")
+      |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
+      |> filter(fn: (r) => contains(value: r["tag_id"], set: [{s}]))
+      |> filter(fn: (r) => r["_field"] == "value")
+      |> last()
+      |> keep(columns: ["_time", "tag_id"])
+    """
+    best = None
+    for table in await influx._client.query_api().query(flux, org=settings.influx_org):
+        for rec in table.records:
+            ts = rec.get_time()
+            if ts > after and (best is None or ts > best):
+                best = ts
+    return best
+
+
+def _slice(rows: list[tuple[str, datetime, float]], limit: Optional[int]
+           ) -> tuple[list[tuple[str, datetime, float]], Optional[datetime]]:
+    """Bounded catch-up slice (Sprint 7): keep at most `limit` readings per tag. When some tag has more, the slice
+    ends at the latest instant up to which every tag is complete (the limit-th reading of the densest tag) and the
+    readings after it are left for the next pass. Returns (rows, slice end) — slice end None: complete up to `now`."""
+    if not limit or len(rows) <= limit:
+        return rows, None
+    count: dict[str, int] = {}
+    end: Optional[datetime] = None
+    for tag_id, ts, _ in rows:                       # rows are sorted by ts
+        c = count.get(tag_id, 0) + 1
+        count[tag_id] = c
+        if c == limit and (end is None or ts < end):
+            end = ts
+            break                                     # the first tag to reach the limit bounds the slice
+    if end is None:
+        return rows, None
+    return [r for r in rows if r[1] <= end], end
 
 
 # ── reconciliation ─────────────────────────────────────────────────────────
@@ -159,6 +209,12 @@ class TickResult:
     readings: int = 0
     rewound: bool = False
     failures_kept: set = field(default_factory=set)
+    # Sprint 7 catch-up
+    caught_up: bool = True             # the pass read everything up to `now` (False: bounded slice, more to read)
+    advanced: bool = False             # the checkpoint moved
+    checkpoint: Optional[datetime] = None
+    latest: Optional[datetime] = None  # latest reading of the machine's signals seen
+    lag_s: float = 0.0                 # latest − checkpoint
 
 
 _NEVER = datetime.min.replace(tzinfo=timezone.utc)
@@ -631,12 +687,17 @@ def _seen_append(seen: list, wall: datetime, max_ts: Optional[datetime]) -> list
 
 async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now: datetime,
                          fetch: Fetch = influx_fetch, tags: Optional[SignalTags] = None,
-                         wall: Optional[datetime] = None) -> TickResult:
+                         wall: Optional[datetime] = None, slice_readings: Optional[int] = None) -> TickResult:
     """One detector pass for one machine. Commits. Skips machines locked by another pass.
 
     `now` bounds the readings (data time); `wall` is the real clock, used to know which readings are
     settled (see _matured). Each pass re-derives everything after the checkpoint: events (upsert by
-    start, stale ones removed), micro-stops still provisional, data spans."""
+    start, stale ones removed), micro-stops still provisional, data spans.
+
+    Sprint 7: a pass reads at most `slice_readings` (settings.downtime_slice_readings) readings per tag. After a long
+    outage (gateway buffer flushed hours later) the backlog is cut into bounded slices: the pass detects up to the
+    slice end as if it were `now` there, advances the checkpoint and returns `caught_up = False`; the caller runs the
+    next slice (run_machine) — no pass re-derives the whole gap, so none hits the per-machine timeout."""
     res = TickResult()
     wall = wall or datetime.now(timezone.utc)
     tags = tags or await signal_tags(db, info.tenant_id, info.id)
@@ -675,7 +736,22 @@ async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now
         pri = await product_pri(db, info.tenant_id, info)
         ideal = pri.fallback_pri
         mode = "cycle" if ideal else "run"
-    rows = await fetch(info.tenant_id, tags.all, old_cp, now)
+    limit = settings.downtime_slice_readings if slice_readings is None else slice_readings
+    if fetch is influx_fetch:
+        rows = await influx_fetch(info.tenant_id, tags.all, old_cp, now, limit=limit or None)
+        full = None
+    else:
+        full = rows = await fetch(info.tenant_id, tags.all, old_cp, now)
+    rows, slice_end = _slice(rows, limit)
+    res.caught_up = slice_end is None
+    if res.caught_up:
+        latest = rows[-1][1] if rows else None
+    elif full is not None:
+        latest = full[-1][1] if full else None
+    else:
+        latest = await influx_latest(info.tenant_id, tags.all, old_cp, now)
+    # the slice is detected as if `now` were its end (what a live pass at that instant saw)
+    now = slice_end or now
     res.readings = len(rows)
     readings, ctracks = _to_readings(rows, tags, js.get("counter"))
     initial = SignalState.from_json(js)
@@ -726,12 +802,16 @@ async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now
         await db.flush()
         await _snapshot(db, info, new_cp, dict(js), new_pending, now)
     state.covered_until = covered
-    state.state = {**js, "seen": _seen_append(seen, wall, det.last_state.at or initial.at),
-                   "micro_pending": new_pending}
+    seen_max = latest or det.last_state.at or initial.at
+    state.state = {**js, "seen": _seen_append(seen, wall, seen_max), "micro_pending": new_pending}
     await _close_out_shifts(db, info, cal, now, res)
     msgs = [m if kind == "raw" else event_message(m, action) for kind, m, action in res.messages]
     await db.commit()
     res.messages = msgs
+    res.advanced = new_cp > old_cp
+    res.checkpoint = new_cp
+    res.latest = seen_max
+    res.lag_s = max(0.0, (seen_max - new_cp).total_seconds()) if seen_max else 0.0
     return res
 
 
@@ -746,9 +826,54 @@ SELECT DISTINCT t.tenant_id::text, t.machine_id::text
 """)
 
 
-async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch) -> int:
+# per-machine outcome of the latest tick (observability, tests): machine_id → dict
+last_tick_stats: dict[str, dict] = {}
+
+
+async def run_machine(info: MachineInfo, cal: Calendar, now: datetime, fetch: Fetch = influx_fetch,
+                      budget_s: Optional[float] = None) -> dict:
+    """Detector passes for one machine in this tick: bounded slices until it is caught up, the checkpoint stops
+    moving (readings not settled yet) or the catch-up budget is spent — then it yields (the next tick resumes from
+    the checkpoint, nothing lost). Each slice has its own timeout and commits on its own."""
+    import time as _time
     from ...db import AsyncSessionLocal
     from ...websocket.manager import manager
+    budget = settings.downtime_catchup_budget_s if budget_s is None else budget_s
+    t0 = _time.monotonic()
+    out = {"tenant_id": info.tenant_id, "passes": 0, "caught_up": False, "lag_s": 0.0, "timeout": False,
+           "readings": 0}
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                res = await asyncio.wait_for(detect_machine(db, info, cal, now, fetch),
+                                             timeout=settings.downtime_machine_timeout_s)
+        except asyncio.TimeoutError:
+            # nothing is lost: the machine's cursor did not advance, the next tick picks it up again
+            log.warning("downtime.detector.timeout", machine_id=info.id[:8],
+                        timeout_s=settings.downtime_machine_timeout_s)
+            out["timeout"] = True
+            break
+        out["passes"] += 1
+        out["readings"] += res.readings
+        out["caught_up"], out["lag_s"] = res.caught_up, res.lag_s
+        out["checkpoint"] = res.checkpoint.isoformat() if res.checkpoint else None
+        for msg in res.messages:
+            await manager.broadcast(info.tenant_id, msg)
+        if res.caught_up or not res.advanced or _time.monotonic() - t0 >= budget:
+            break
+    out["duration_s"] = _time.monotonic() - t0
+    if out["lag_s"] > settings.detector_lag_alert_s:
+        log.warning("downtime.detector.lag_high", machine_id=info.id[:8], tenant_id=info.tenant_id[:8],
+                    lag_s=round(out["lag_s"]), passes=out["passes"], caught_up=out["caught_up"])
+    return out
+
+
+async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch,
+                   tenant_ids: Optional[set[str]] = None) -> int:
+    """One detector tick over every machine with signal tags. Machines run with bounded concurrency
+    (settings.detector_concurrency), so a machine catching up a backlog — or stuck on a slow query — holds one slot,
+    never the whole tick: the other machines and tenants are detected meanwhile. `tenant_ids` narrows (tests)."""
+    from ...db import AsyncSessionLocal
 
     now = now or datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
@@ -758,34 +883,50 @@ async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch) 
         pairs = (await db.execute(_MACHINES_SQL)).all()
     by_tenant: dict[str, list[str]] = {}
     for tid, mid in pairs:
-        by_tenant.setdefault(tid, []).append(mid)
-    n = 0
+        if tenant_ids is None or tid in tenant_ids:
+            by_tenant.setdefault(tid, []).append(mid)
+    jobs: list[tuple[MachineInfo, Calendar]] = []
     for tid, mids in by_tenant.items():
-        async with AsyncSessionLocal() as db:
-            infos = await machine_infos(db, tid, mids)
-            cals: dict[str, Calendar] = {}
-        for mid, info in infos.items():
-            try:
-                async with AsyncSessionLocal() as db:
+        try:
+            async with AsyncSessionLocal() as db:
+                infos = await machine_infos(db, tid, mids)
+                cals: dict[str, Calendar] = {}
+                for info in infos.values():
                     if info.plant_id not in cals:
                         cals[info.plant_id] = await load_calendar(db, tid, info.plant_id, info.tz)
-                    res = await asyncio.wait_for(detect_machine(db, info, cals[info.plant_id], now, fetch),
-                                                 timeout=settings.downtime_machine_timeout_s)
-                for msg in res.messages:
-                    await manager.broadcast(tid, msg)
-                n += 1
-            except asyncio.TimeoutError:
-                # nothing is lost: the machine's cursor did not advance, the next tick picks it up again
-                log.warning("downtime.detector.timeout", machine_id=mid[:8],
-                            timeout_s=settings.downtime_machine_timeout_s)
+                    jobs.append((info, cals[info.plant_id]))
+        except Exception as e:  # noqa: BLE001 — one tenant's setup never stops the others
+            log.warning("downtime.detector.tenant_error", tenant_id=tid[:8], error=str(e)[:300])
+    # round-robin over tenants so the first slots are not all taken by one big tenant
+    order: list[tuple[MachineInfo, Calendar]] = []
+    queues: dict[str, list] = {}
+    for j in jobs:
+        queues.setdefault(j[0].tenant_id, []).append(j)
+    while any(queues.values()):
+        for q in queues.values():
+            if q:
+                order.append(q.pop(0))
+    sem = asyncio.Semaphore(max(1, int(settings.detector_concurrency)))
+    stats: dict[str, dict] = {}
+
+    async def one(info: MachineInfo, cal: Calendar) -> bool:
+        async with sem:
+            try:
+                stats[info.id] = await run_machine(info, cal, now, fetch)
+                return not stats[info.id]["timeout"]
             except Exception as e:  # noqa: BLE001
-                log.warning("downtime.detector.error", machine_id=mid[:8], error=str(e)[:300],
+                log.warning("downtime.detector.error", machine_id=info.id[:8], error=str(e)[:300],
                             error_type=type(e).__name__)
-    return n
+                return False
+
+    done = await asyncio.gather(*(one(i, c) for i, c in order))
+    last_tick_stats.clear()
+    last_tick_stats.update(stats)
+    return sum(1 for d in done if d)
 
 
 async def run_downtime_detector() -> None:
-    """Long-running task (app lifespan)."""
+    """Long-running task (worker process, or the app lifespan when DETECTORS_IN_WORKER=false)."""
     while True:
         try:
             await run_tick()
@@ -794,3 +935,18 @@ async def run_downtime_detector() -> None:
         except Exception as e:  # noqa: BLE001
             log.warning("downtime.detector.tick_error", error=str(e)[:300])
         await asyncio.sleep(settings.downtime_tick_s)
+
+
+async def run_late_flusher() -> None:
+    """App process (DETECTORS_IN_WORKER): the MQTT handler notes late readings in memory (note_late); this persists
+    them (downtime_detector_states.late_from) for the detector running in the worker process."""
+    from ...db import AsyncSessionLocal
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await flush_late(db, datetime.now(timezone.utc))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("downtime.detector.late_flush_error", error=str(e)[:300])
+        await asyncio.sleep(min(settings.downtime_tick_s, 5.0))

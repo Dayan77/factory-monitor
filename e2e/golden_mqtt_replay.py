@@ -90,8 +90,8 @@ def build(api: Api) -> dict:
     stamp = int(time.time())
     email = f"qa-golden-{stamp}@qa-factoryconnect.com.br"
     api.post("/api/auth/register", json={"company_name": f"QA Golden {stamp}", "admin_name": "QA",
-                                         "admin_email": email, "admin_password": "QaGolden#2026"})
-    api.login(email, "QaGolden#2026")
+                                         "admin_email": email, "admin_password": "QaOuro#Teste2026"})
+    api.login(email, "QaOuro#Teste2026")
     me = api.get("/api/auth/me")
     ids = {"tenant": me["tenant_id"]}
     plant = api.post("/api/plants/", json={"name": A["plant"]["name"], "timezone": A["plant"]["timezone"]})

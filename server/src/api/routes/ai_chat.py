@@ -108,6 +108,8 @@ def _rate(user: User) -> None:
 @router.post("/chat", response_model=AiChatResponse)
 async def chat(body: AiChatRequest, user: CurrentUser, token: Bearer, db: DB):
     _rate(user)
+    if getattr(user, "api_token_id", None) and body.conversation_id:
+        _personal(user)                       # an API token never continues its creator's conversations
     try:
         res = await assistant.chat(db, user, token, body.message, _ctx(body), body.conversation_id)
     except LookupError:
@@ -122,6 +124,8 @@ def _sse(event: str, data: Any) -> bytes:
 @router.post("/chat/stream")
 async def chat_stream(body: AiChatRequest, user: CurrentUser, token: Bearer):
     _rate(user)
+    if getattr(user, "api_token_id", None) and body.conversation_id:
+        _personal(user)
     queue: asyncio.Queue = asyncio.Queue()
     user_id, ctx = user.id, _ctx(body)
 
@@ -180,8 +184,15 @@ async def status(user: CurrentUser, db: DB):
             "rate_limit_per_min": settings.ai_rate_limit_per_min, "max_tool_calls": settings.ai_max_tool_calls}
 
 
+def _personal(user: User) -> None:
+    """Sprint 7: an API token acts for its creator but never reads his personal conversation history."""
+    if getattr(user, "api_token_id", None):
+        raise HTTPException(status_code=403, detail="Tokens de API não acessam o histórico pessoal de conversas.")
+
+
 @router.get("/conversations")
 async def list_conversations(user: CurrentUser, db: DB, limit: int = Query(50, ge=1, le=200)):
+    _personal(user)
     rows = (await db.execute(select(AiConversation).where(
         AiConversation.tenant_id == user.tenant_id, AiConversation.user_id == user.id)
         .order_by(AiConversation.updated_at.desc()).limit(limit))).scalars().all()
@@ -193,6 +204,7 @@ async def list_conversations(user: CurrentUser, db: DB, limit: int = Query(50, g
 
 
 async def _own(db: AsyncSession, user: User, conversation_id: str) -> AiConversation:
+    _personal(user)
     conv = await assistant.get_conversation(db, user, conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversa não encontrada.")

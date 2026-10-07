@@ -331,26 +331,38 @@ def _a14_components() -> kpi.Components:
     return components(md, local(6), local(14), local(23))
 
 
-def test_A14_ao_overlap_counted_twice_code_today():
-    c = _a14_components()
-    assert c.adot_s == 0.0                                        # OEE: planned prevails (correct)
-    assert close(kpi.availability_operational(c), 430 / 450)      # Ao: 20 min also in D_eq
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-14: sobreposição contada em T_req (excluída) e em D_eq")
+# A-14 corrigido (Sprint 7): a parte de uma falha sob uma parada PLN-01/02/04/05 declarada sai de T_req e de D_eq.
 def test_A14_ao_overlap_counted_twice_spec():
-    assert close(kpi.availability_operational(_a14_components()), 1.0)
+    c = _a14_components()
+    assert c.adot_s == 0.0                                        # OEE: planned prevails (unchanged)
+    assert close(kpi.availability_operational(c), 1.0)            # T_req 450, D_eq 0
 
 
-def test_A2_rul_rate_divides_by_days_since_install_code_today():
-    """Componente instalado há 400 dias, mas com dados só nos últimos 5 dias (cliente recém-implantado):
-    100 000 ciclos em 5 dias (20 000/dia real)."""
+def test_A14_ao_partial_overlap_spec():
+    """Falha EQP-03 10:00–10:40 com DDS PLN-02 10:00–10:30: só os 10 min fora do DDS são D_eq → Ao = 440/450."""
+    md = _machine(_shift_a(), [EventLite("p1", local(10), local(10, 30), "PLN-02", True),
+                               EventLite("e1", local(10), local(10, 40), "EQP-03", False)])
+    assert close(kpi.availability_operational(components(md, local(6), local(14), local(23))), 440 / 450)
+
+
+# A-2 corrigido (Sprint 7, kpis.md S7-2): dias de histórico = min(14, desde a instalação, desde o 1º dado).
+def test_A2_rul_rate_uses_the_days_with_data_spec():
+    """Componente instalado há 400 dias, com dados só nos últimos 5 dias: 100 000 ciclos em 5 dias = 20 000/dia."""
+    now = local(10, 30)
+    start, end, days = ucore.rate_window(now, now - timedelta(days=400), now - timedelta(days=5))
+    assert close(days, 5.0) and end == now.replace(minute=0) and start == end - timedelta(days=5)
     r = ucore.rul(date(2026, 10, 5), {"cycles": 5_000_000}, {"cycles": 3_600_000}, {"cycles": 100_000},
-                  history_days=400)
-    assert (r.days, r.date.isoformat(), r.low_confidence) == (196, "2027-04-19", False)
-    r5 = ucore.rul(date(2026, 10, 5), {"cycles": 5_000_000}, {"cycles": 3_600_000}, {"cycles": 100_000},
-                   history_days=5)
-    assert (r5.days, r5.date.isoformat(), r5.low_confidence) == (70, "2026-12-14", True)
+                  history_days=days)
+    assert (r.days, r.date.isoformat(), r.low_confidence) == (70, "2026-12-14", True)
+    # com 14 dias ou mais de dados vale a janela cheia (U3 inalterado)
+    _, _, d14 = ucore.rate_window(now, now - timedelta(days=400), now - timedelta(days=60))
+    assert d14 == 14.0
+    r14 = ucore.rul(date(2026, 10, 5), {"cycles": 5_000_000}, {"cycles": 3_600_000}, {"cycles": 280_000}, d14)
+    assert (r14.days, r14.low_confidence) == (70, False)
+    # menos de 3 dias de dados: sem projeção
+    _, _, d2 = ucore.rate_window(now, now - timedelta(days=400), now - timedelta(days=2))
+    assert ucore.rul(date(2026, 10, 5), {"cycles": 5_000_000}, {"cycles": 3_600_000}, {"cycles": 40_000},
+                     d2).reason == "insufficient_data"
 
 
 def test_A3_plan_rate_uses_the_days_with_data_spec():
@@ -372,77 +384,80 @@ def test_A3_plan_rate_uses_the_days_with_data_spec():
     assert "window_days=days" in inspect.getsource(msvc.evaluate_plans)
 
 
-def test_A4_mtbf_zero_without_operating_time_code_today():
-    r = kpi.reliability(0.0, [("critical", 600.0), ("degraded", 1200.0)])
-    assert r["mtbf_h"] == 0.0 and r["availability_inherent"] == 0.0 and r["failure_rate_per_h"] is None
-    row = mcore.reliability_row([mcore.FailureFacts("f", "critical", local(8), local(8, 10), "p", None)], 0.0, None)
-    assert row["mtbf_h"] == 0.0 and row["reason"] is None
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-4: MTBF 0 h (e Ai 0) sem tempo de operação — deve ser null + reason")
+# A-4 corrigido (Sprint 7, S7-1): falhas sem tempo de operação → MTBF/Ai null + reason.
 def test_A4_mtbf_zero_without_operating_time_spec():
     r = kpi.reliability(0.0, [("critical", 600.0), ("degraded", 1200.0)])
-    assert r["mtbf_h"] is None and r["availability_inherent"] is None and r["reason"] is not None
+    assert r["mtbf_h"] is None and r["availability_inherent"] is None and r["reason"] == "insufficient_data"
+    assert r["failures"] == 2 and close(r["mttr_s"], 900.0) and r["failure_rate_per_h"] is None
+    row = mcore.reliability_row([mcore.FailureFacts("f", "critical", local(8), local(8, 10), "p", None)], 0.0, None)
+    assert row["mtbf_h"] is None and row["reason"] == "insufficient_data" and close(row["mttr_min"], 10.0)
+    assert mcore.reliability_row([], 0.0, None)["reason"] == "no_failures"
 
 
-def test_A5_pareto_without_planned_time_code_today():
-    rows = kpi.pareto(kpi.Components(pot_s=3600, pdot_s=3600), {})
-    assert [r["reason_code"] for r in rows] == ["micro_stops", "quality_loss", "speed_loss"]
-    assert all(r["duration_s"] == 0 and r["pct"] is None for r in rows)
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-5: S3-1 — Pareto com PBT = 0 deve ser lista vazia")
+# A-5 corrigido (Sprint 7): S3-1 — Pareto com PBT = 0 é lista vazia.
 def test_A5_pareto_without_planned_time_spec():
     assert kpi.pareto(kpi.Components(pot_s=3600, pdot_s=3600), {}) == []
+    assert kpi.pareto(kpi.Components(pot_s=3600, pdot_s=3600), {}, by="category") == []
 
 
-@pytest.mark.xfail(strict=True, reason="audit A-6: kpis S5-1c item 6 — failures_outside_production na confiabilidade")
+# A-6 corrigido (Sprint 7): failures_outside_production nas duas APIs (DB: server/tests/test_audit_s7.py).
 def test_A6_failures_outside_production_in_reliability_spec():
-    r = kpi.reliability(6.5 * 3600, [("critical", 1200.0)] * 4)
-    row = mcore.reliability_row([], 6.5, None)
-    assert "failures_outside_production" in r and "failures_outside_production" in row
+    r = kpi.reliability(6.5 * 3600, [("critical", 1200.0)] * 4, outside_production=3)
+    assert r["failures_outside_production"] == 3
+    facts = [mcore.FailureFacts(str(k), "critical", local(8), None, "p", None, outside_production=k > 0)
+             for k in range(4)]
+    assert mcore.reliability_row(facts, 6.5, None)["failures_outside_production"] == 3
 
 
-@pytest.mark.xfail(strict=True, reason="audit A-8: kpis.md §2.5 λc (falhas por 10⁶ ciclos) não é devolvido")
+# A-8 corrigido (Sprint 7): λc por 10⁶ ciclos.
 def test_A8_failure_rate_per_million_cycles_spec():
     facts = [mcore.FailureFacts(str(k), "critical", local(8), None, "p", None) for k in range(3)]
     row = mcore.reliability_row(facts, 720.0, 2_400_000)
-    assert any(isinstance(v, float) and close(v, 1.25) for v in row.values())
+    assert close(row["failure_rate_per_million_cycles"], 1.25)
+    assert mcore.reliability_row([], 720.0, 2_400_000)["failure_rate_per_million_cycles"] == 0.0
+    assert mcore.reliability_row(facts, 720.0, None)["failure_rate_per_million_cycles"] is None
 
 
-def test_A9_mttf_counts_zero_age_failure_code_today():
+# A-9 corrigido (Sprint 7, S7-6): idade 0 fora do MTTF simples, contada à parte.
+def test_A9_mttf_excludes_zero_age_failure_spec():
     life = [mcore.ComponentLife(str(k), "SKF", "6205", "bearing", {"hours": 20000}, {"hours": a}, False, True,
                                 "failure") for k, a in enumerate([8200, 9600, 10400, 0])]
-    assert mcore.mttf_row(life)["mttf_h"] == 7050.0             # Weibull (reports §2.1) excluiria a idade 0 → 9 400
+    m = mcore.mttf_row(life)
+    assert m["mttf_h"] == 9400.0 and m["failures"] == 3 and m["excluded_no_usage"] == 1
 
 
-def test_A10_condition_rate_vs_nominal_rate_code_today():
-    """Uso uniforme de 20 000 ciclos/dia; avaliação ao vivo às 10:30 (o bucket das 10:00 tem só 30 min de uso)."""
+# A-10 corrigido (Sprint 7, S7-5): ritmo pelas horas completas — ao vivo = recálculo = nominal.
+def test_A10_condition_rate_live_equals_recompute_spec():
+    """Uso uniforme de 20 000 ciclos/dia; avaliação às 10:30 (ao vivo o bucket das 10:00 tem só 30 min de uso)."""
     end = local(10, 30)
     per_h = 20000 / 24
-    hourly, t = {}, (end - timedelta(days=15)).replace(minute=0)
+    live, full, t = {}, {}, (end - timedelta(days=15)).replace(minute=0)
     while t < end:
-        hourly[t] = per_h if t + timedelta(hours=1) <= end else per_h * (end - t).total_seconds() / 3600
+        full[t] = per_h
+        live[t] = per_h if t + timedelta(hours=1) <= end else per_h * (end - t).total_seconds() / 3600
         t += timedelta(hours=1)
-    cond, lo, hi = make_rate_fn(hourly)(end)
-    first = (end - timedelta(days=14)).replace(minute=0)          # C17: buckets with start ≥ floor(now − 14 d)
-    nominal = sum(v for b, v in hourly.items() if b >= first) / 14
-    assert close(cond, 19985.119048) and close(nominal, 20029.761905)
+    cond_live = make_rate_fn(live)(end)
+    cond_recomputed = make_rate_fn(full)(end)
+    ws, we, d = ucore.rate_window(end)
+    nominal = sum(v for b, v in live.items() if ws <= b < we) / d
+    assert close(cond_live[0], 20000.0) and close(cond_recomputed[0], 20000.0) and close(nominal, 20000.0)
+    assert tuple(cond_live) == tuple(cond_recomputed)
+    # 5 dias de dados: janela e divisor de 5 dias, low_confidence (A-2)
+    r5 = make_rate_fn(full, data_since=end - timedelta(days=5))(end)
+    assert close(r5[0], 20000.0) and close(r5.days, 5.0)
+    assert make_rate_fn(full, data_since=end - timedelta(days=2))(end) is None
 
 
-def test_A11_schedule_compliance_completed_after_period_code_today():
-    wo = _wo(1, state="completed", scheduled_for=date(2026, 9, 30), scheduled_at=datetime(2026, 9, 25, tzinfo=UTC),
-             completed_at=local(9, day=2))
-    sc = mcore.schedule_compliance([wo], date(2026, 9, 1), date(2026, 10, 1), TZ)
-    assert (sc["late"], sc["not_done"]) == (1, 0)
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-11: S4-6 — não concluída até o fim do período = não feita")
+# A-11 corrigido (Sprint 7): concluída depois do fim do período = não feita.
 def test_A11_schedule_compliance_completed_after_period_spec():
     wo = _wo(1, state="completed", scheduled_for=date(2026, 9, 30), scheduled_at=datetime(2026, 9, 25, tzinfo=UTC),
              completed_at=local(9, day=2))
     sc = mcore.schedule_compliance([wo], date(2026, 9, 1), date(2026, 10, 1), TZ)
-    assert (sc["late"], sc["not_done"]) == (0, 1)
+    assert (sc["late"], sc["not_done"], sc["schedule_compliance"]) == (0, 1, 0.0)
+    late_in = _wo(2, state="completed", scheduled_for=date(2026, 9, 28), scheduled_at=datetime(2026, 9, 20, tzinfo=UTC),
+                  completed_at=datetime(2026, 9, 29, 15, tzinfo=TZ))
+    sc2 = mcore.schedule_compliance([late_in], date(2026, 9, 1), date(2026, 10, 1), TZ)
+    assert (sc2["late"], sc2["not_done"]) == (1, 0)
 
 
 def _a12(order: int):
@@ -453,26 +468,43 @@ def _a12(order: int):
     return attribute_component(f, {"p": [old, new] if order == 0 else [new, old]})
 
 
-def test_A12_failure_at_replacement_instant_code_today():
-    assert (_a12(0), _a12(1)) == ("old", "new")                  # depends on the row order of the query
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-12: atribuição na troca deve ser determinística ([instalado, removido) )")
+# A-12 corrigido (Sprint 7, S7-7): intervalo semiaberto [instalado, removido).
 def test_A12_failure_at_replacement_instant_spec():
     assert _a12(0) == _a12(1) == "new"
 
 
-def test_A15_performance_null_without_reason_code_today():
-    r = kpi.oee(kpi.Components(pot_s=3600, adot_s=3600, produced=10, good=10, ideal_produced_s=300,
-                               ideal_good_s=300))
-    assert r["performance"] is None and r["reason"] is None and r["availability"] == 0.0
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-15: kpis.md §0 — indicador indefinido sempre com reason")
+# A-15 corrigido (Sprint 7, S7-3): reason no_running_time.
 def test_A15_performance_null_without_reason_spec():
     r = kpi.oee(kpi.Components(pot_s=3600, adot_s=3600, produced=10, good=10, ideal_produced_s=300,
                                ideal_good_s=300))
-    assert r["performance"] is None and r["reason"] is not None
+    assert r["performance"] is None and r["reason"] == "no_running_time" and r["availability"] == 0.0
+
+
+# A-13 corrigido (Sprint 7, S7-4): PRI da linha vindo da saída é sinalizado.
+def test_A13_line_pri_fallback_flagged_spec():
+    cal = _shift_a()
+    info = MachineInfo("m", "t", "Saída", "l", "p", TZ, "running", 120, 30.0, {})
+    md = MachineData(info, cal, [], [(local(6), local(14))], [], {local(8): {"total": 100.0, "good": 100.0,
+                                                                            "scrap": 0.0}},
+                     [("prodX", local(6), None)], ProductPri(pri={"prodX": 30.0}, fallback_pri=30.0))
+    line_pri = ProductPri(pri={"prodX": 30.0}, fallback_pri=30.0, fallback_ids=frozenset({"prodX"}))
+    c = components(md, local(6), local(14), local(23), line_pri)
+    assert c.pri_fallback and kpi.oee(c)["line_pri_fallback"] is True
+    assert kpi.oee(components(md, local(6), local(14), local(23)))["line_pri_fallback"] is False
+
+
+# A-20 corrigido (Sprint 7): MART = média de repair_finished_at − repair_started_at.
+def test_A20_mart_spec():
+    facts = [mcore.FailureFacts("a", "critical", local(8), local(9), "p", None, repair_started_at=local(8, 20),
+                                repair_finished_at=local(8, 50)),
+             mcore.FailureFacts("b", "critical", local(10), local(11), "p", None, repair_started_at=local(10, 30),
+                                repair_finished_at=local(10, 40)),
+             mcore.FailureFacts("c", "critical", local(12), local(13), "p", None)]
+    row = mcore.reliability_row(facts, 10.0, None)
+    assert close(row["mart_min"], 20.0) and row["repairs_timed"] == 2 and close(row["mttr_min"], 60.0)
+    assert mcore.reliability_row(facts[2:], 10.0, None)["mart_reason"] == "no_repair_times"
+    r = kpi.reliability(3600.0, [("critical", 3600.0)] * 2, repair_s=[1800.0, 600.0])
+    assert close(r["mart_s"], 1200.0) and r["repairs_timed"] == 2
 
 
 # ═══ 3. the audit document itself ═══════════════════════════════════════════

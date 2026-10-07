@@ -121,6 +121,8 @@ class UserOut(BaseModel):
 
 
 class UserCreate(BaseModel):
+    model_config = {"extra": "forbid"}        # Sprint 7: strict write bodies (docs/security.md §3.2)
+
     email: EmailStr
     password: str
     name: str
@@ -138,6 +140,8 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
     name: Optional[str] = None
     role: Optional[UserRole] = None
     roles: Optional[list[UserRole]] = None

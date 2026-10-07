@@ -51,10 +51,14 @@ def _422(msg, **extra) -> HTTPException:
 async def settings_for(db: AsyncSession, tenant_id: str) -> MaintenanceSettings:
     s = await db.get(MaintenanceSettings, tenant_id)
     if s is None:
-        s = MaintenanceSettings(tenant_id=tenant_id, schedule_tolerance_days=0, technician_hours_per_week=44.0,
-                                due_soon_at=0.8, emergency_call_after_s=0, default_mttr_min=60.0, digest_hour_local=7)
-        db.add(s)
-        await db.flush()
+        # Sprint 7 (scale harness): concurrent first reads (the plan engine + GET /maintenance-plans/status) raced on
+        # the INSERT of the defaults → UniqueViolation → 500. Insert-if-absent, then read.
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        await db.execute(pg_insert(MaintenanceSettings).values(
+            tenant_id=tenant_id, schedule_tolerance_days=0, technician_hours_per_week=44.0, due_soon_at=0.8,
+            emergency_call_after_s=0, default_mttr_min=60.0, digest_hour_local=7)
+            .on_conflict_do_nothing(index_elements=["tenant_id"]))
+        s = await db.get(MaintenanceSettings, tenant_id)
     return s
 
 

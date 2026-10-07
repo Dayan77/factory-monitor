@@ -168,24 +168,20 @@ async def authorize_ws_user(token: Optional[str], tenant_id: str
                             ) -> tuple[Optional[int], Optional[datetime], Optional[str]]:
     """Like authorize_ws, also returning the user id (per-user notification messages)."""
     from ..db import AsyncSessionLocal       # local import: keeps module importable in tests
-    from ..models import User, UserRole
+    from ..models import UserRole
 
     if not token:
         return WS_UNAUTHORIZED, None, None
-    try:
-        payload = decode_token(token)
-    except JWTError:
-        return WS_UNAUTHORIZED, None, None
-    user_id = payload.get("sub")
-    if not user_id or payload.get("refresh") or not is_uuid(str(user_id)):
-        return WS_UNAUTHORIZED, None, None
     if not is_uuid(tenant_id):
-        return WS_FORBIDDEN, None, None
-
+        try:
+            payload = decode_token(token)
+        except JWTError:
+            return WS_UNAUTHORIZED, None, None
+        return (WS_UNAUTHORIZED if payload.get("refresh") else WS_FORBIDDEN), None, None
+    # Sprint 7: same checks as HTTP (kid/leeway, token kind, session not revoked, global cutoff)
+    from ..auth.deps import user_from_access_token
     async with AsyncSessionLocal() as db:
-        user = (await db.execute(
-            select(User).where(User.id == user_id, User.is_active.is_(True))
-        )).scalar_one_or_none()
+        user, payload = await user_from_access_token(db, token)
     if user is None:
         return WS_UNAUTHORIZED, None, None
     if user.role != UserRole.superadmin and str(user.tenant_id) != ensure_uuid(tenant_id):
@@ -193,6 +189,32 @@ async def authorize_ws_user(token: Optional[str], tenant_id: str
     exp = payload.get("exp")
     expires_at = datetime.fromtimestamp(exp, tz=timezone.utc) if isinstance(exp, (int, float)) else None
     return None, expires_at, str(user.id)
+
+
+async def _reauth(ws: WebSocket, text: str, tenant_id: str, user_id: Optional[str]
+                  ) -> tuple[bool, Optional[datetime]]:
+    """Client message {"type": "reauth", "token": "<new access JWT>"} before expiry keeps the socket open.
+    Returns (handled, new expiry | None when the token was refused)."""
+    import json
+    try:
+        msg = json.loads(text)
+    except ValueError:
+        return False, None
+    if not isinstance(msg, dict) or msg.get("type") != "reauth":
+        return False, None
+    code, exp, uid = await authorize_ws_user(msg.get("token"), tenant_id)
+    if code is not None or uid != user_id:
+        return True, None
+    await ws.send_json({"type": "reauth_ok", "expires_at": exp.isoformat() if exp else None})
+    return True, exp
+
+
+async def _still_valid(token: Optional[str], tenant_id: str) -> bool:
+    try:
+        code, _, _ = await authorize_ws_user(token, tenant_id)
+    except Exception:  # noqa: BLE001 — DB hiccup: keep the socket, retry at the next check
+        return True
+    return code is None
 
 
 @ws_router.websocket("/sensors/{tenant_id}")
@@ -219,21 +241,40 @@ async def sensor_stream(ws: WebSocket, tenant_id: str):
         await ws.close(code=1011)
         return
     await manager.connect(ws, tenant_id, accept=False, user_id=ws_user_id, scope=scope)
+    from ..config import settings
+    current_token = token
     try:
         while True:
-            # Keep connection alive; server pushes via manager.broadcast().
-            # Wake up when the token expires and make the client re-authenticate.
-            timeout = None
+            # Keep connection alive; server pushes via manager.broadcast(). Wake up when the token expires (close
+            # 4401 → the client refreshes and reconnects, or sends {"type": "reauth", "token"} before that) and
+            # every WS_REVALIDATE_S to re-check the session (logout / revoked → 4401).
+            now = datetime.now(timezone.utc)
+            timeout = settings.ws_revalidate_s if settings.ws_revalidate_s > 0 else None
             if expires_at is not None:
-                timeout = (expires_at - datetime.now(timezone.utc)).total_seconds()
-                if timeout <= 0:
+                left = (expires_at - now).total_seconds()
+                if left <= 0:
                     await ws.close(code=WS_UNAUTHORIZED)
                     break
+                timeout = left if timeout is None else min(timeout, left)
             try:
-                await asyncio.wait_for(ws.receive_text(), timeout=timeout)
+                text = await asyncio.wait_for(ws.receive_text(), timeout=timeout)
             except asyncio.TimeoutError:
-                await ws.close(code=WS_UNAUTHORIZED)
-                break
+                if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+                    await ws.close(code=WS_UNAUTHORIZED)
+                    break
+                if not await _still_valid(current_token, tenant_id):
+                    await ws.close(code=WS_UNAUTHORIZED)
+                    break
+                continue
+            if text and text.lstrip().startswith("{"):
+                handled, new_exp = await _reauth(ws, text, tenant_id, ws_user_id)
+                if handled:
+                    if new_exp is None:
+                        await ws.close(code=WS_UNAUTHORIZED)
+                        break
+                    import json as _json
+                    current_token = _json.loads(text).get("token")
+                    expires_at = new_exp
     except WebSocketDisconnect:
         pass
     except RuntimeError:

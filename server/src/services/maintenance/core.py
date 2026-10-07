@@ -255,11 +255,14 @@ def schedule_compliance(wos: Iterable[WoFacts], first_day: date, end_day: date, 
             excluded.append({"wo_id": w.id, "reason": "cancelled_superseded"})
             continue
         den.append(w.id)
-        if w.completed_at is not None and local_date(w.completed_at, tz) <= d + timedelta(days=tolerance_days):
+        done_day = local_date(w.completed_at, tz) if w.completed_at is not None else None
+        if done_day is not None and done_day <= d + timedelta(days=tolerance_days):
             on_time.append(w.id)
-        elif w.completed_at is not None:
+        elif done_day is not None and done_day < end_day:
             late.append(w.id)
         else:
+            # S4-6 (audit A-11): not completed by the end of the period = not done, even if completed afterwards —
+            # the counts of a closed period do not depend on the day the report is generated
             not_done.append(w.id)
     n = len(den)
     return {"schedule_compliance": (len(on_time) / n) if n else None,
@@ -303,19 +306,28 @@ class FailureFacts:
     position_id: Optional[str]
     component_id: Optional[str]
     machine_id: Optional[str] = None
+    repair_started_at: Optional[datetime] = None
+    repair_finished_at: Optional[datetime] = None
+    outside_production: bool = False          # kpis S5-1c item 6: failed_at outside planned production time
 
 
 def reliability_row(failures: Sequence[FailureFacts], hours: Optional[float], cycles: Optional[float]) -> dict:
     """MTBF = hours / n, MCBF = cycles / n, MTTR = mean restore time of failures with restored_at
-    (S4-10). n counts critical/degraded only; incipient returned apart."""
+    (S4-10). n counts critical/degraded only; incipient returned apart.
+    Sprint 7: failures with no operating time → MTBF null, reason insufficient_data (audit A-4); λc per 10⁶ cycles
+    (§2.5, A-8); failures_outside_production (S5-1c item 6, A-6); MART (§2.3, A-20)."""
     counted = [f for f in failures if f.severity in COUNTED_SEVERITIES]
     n = len(counted)
     inc = sum(1 for f in failures if f.severity == "incipient")
     rest = [(f.restored_at - f.failed_at).total_seconds() for f in counted if f.restored_at is not None]
     mttr_s = (sum(rest) / len(rest)) if rest else None
-    mtbf = (hours / n) if n and hours is not None else None
+    mtbf = (hours / n) if n and hours else None
     mcbf = (cycles / n) if n and cycles else None
-    reason = None if n else "no_failures"
+    reps = [(f.repair_finished_at - f.repair_started_at).total_seconds() for f in counted
+            if f.repair_started_at is not None and f.repair_finished_at is not None
+            and f.repair_finished_at >= f.repair_started_at]
+    mart_s = (sum(reps) / len(reps)) if reps else None
+    reason = "no_failures" if not n else (None if hours else "insufficient_data")
     return {"n": n, "failures": n, "incipient": inc, "operating_hours": hours, "cycles": cycles,
             "mtbf_h": mtbf, "mcbf": mcbf, "mcbf_cycles": mcbf,
             "mttr_s": mttr_s, "mttr_min": mttr_s / 60 if mttr_s is not None else None,
@@ -323,6 +335,10 @@ def reliability_row(failures: Sequence[FailureFacts], hours: Optional[float], cy
             "mttr_reason": None if rest else ("no_failures" if not n else "no_restored_failures"),
             "restored": len(rest),
             "failure_rate_per_h": (n / hours) if hours else None,
+            "failure_rate_per_million_cycles": (n / cycles * 1e6) if cycles else None,
+            "failures_outside_production": sum(1 for f in counted if f.outside_production),
+            "mart_s": mart_s, "mart_min": mart_s / 60 if mart_s is not None else None,
+            "mart_reason": None if reps else "no_repair_times", "repairs_timed": len(reps),
             "reason": reason, "null_reason": reason}
 
 
@@ -354,12 +370,16 @@ def mttf_row(components: Sequence[ComponentLife]) -> dict:
     failed = [c for c in components if c.removed and c.removal_reason == "failure"]
     susp = [c for c in components if c.removed and c.removal_reason != "failure"]
     in_service = [c for c in components if c.installed and not c.removed]
-    ages = [float(c.usage_since_install.get(m, 0.0) or 0.0) for c in failed]
+    all_ages = [float(c.usage_since_install.get(m, 0.0) or 0.0) for c in failed]
+    # audit A-9 (S7-6): a failure with no recorded usage (age ≤ 0 — imported, or removed before the gateway) is
+    # excluded like in the Weibull (reports.md §2.1) and counted apart
+    ages = [a for a in all_ages if a > 0]
+    excluded = len(all_ages) - len(ages)
     v = (sum(ages) / len(ages)) if ages else None
-    return {"measure": m, "failures": len(failed), "suspensions": len(susp), "in_service": len(in_service),
+    return {"measure": m, "failures": len(ages), "suspensions": len(susp), "in_service": len(in_service),
             "mttf": v, "mttf_h": v if m == "hours" else None, "mctf": v if m == "cycles" else None,
-            "small_sample": 0 < len(failed) < 3,
-            "reason": None if ages else "no_failures"}
+            "small_sample": 0 < len(ages) < 3, "excluded_no_usage": excluded,
+            "reason": None if ages else ("insufficient_data" if excluded else "no_failures")}
 
 
 # ── failure codes (domain.md §5.5, ISO 14224) ────────────────────────────────

@@ -378,7 +378,8 @@ async def test_failures_iso14224(client, m):
         "group_by": "position", "start": (NOW() - timedelta(days=30)).isoformat(), "stop": NOW().isoformat()})
     row = next(r for r in rel["rows"] if r["position_id"] == asset["position_id"])
     assert row["n"] == 1 and row["restored"] == 0 and row["mttr_min"] is None and row["mttr_reason"] == "no_restored_failures"
-    assert row["mtbf_h"] == 0.0 or row["mtbf_h"] is not None
+    # Sprint 7 (audit A-4): no operating time recorded → MTBF undefined (null + reason), never 0 h
+    assert row["mtbf_h"] is None and row["reason"] == "insufficient_data"
 
 
 async def test_offline_replay_is_idempotent(client, m):

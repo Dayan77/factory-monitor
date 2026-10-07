@@ -9,6 +9,7 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 import structlog
 from fastapi import FastAPI
@@ -27,13 +28,17 @@ from .api.routes import reports as reports_routes
 from .services.reports.engine import run_report_engine
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber, cancel_inflight
-from .services.oee.detector import run_downtime_detector
+from .services.oee.detector import run_downtime_detector, run_late_flusher
+from .services.oee.lag import run_lag_sampler
 from .services.machine_status import run_offline_sweeper
 from .services.influx import influx
 from .services.usage.broadcaster import usage_broadcaster
 from .services.maintenance.engine import run_maintenance_engine, run_webhook_worker
 from .services.predictive.engine import run_predictive_engine
 from .websocket.relay import run_listener as ws_relay_listener
+from .api.routes import account as account_routes
+from .services.security import http as security_http
+from .services.security.privacy import run_privacy_janitor
 
 # LOG_LEVEL (default INFO): structlog printed every level, i.e. one DEBUG line per MQTT reading.
 _level = logging.getLevelName(settings.log_level.upper())
@@ -45,14 +50,15 @@ log = structlog.get_logger()
 SERVER_DIR = Path(__file__).resolve().parent.parent
 
 
-async def supervise_worker() -> None:
-    """PREDICTIVE_WORKER=process: runs `python -m src.worker` (predictive engine) as a child process, restarts it
-    if it dies, and stops it with the app (SIGTERM, then SIGKILL after 5 s)."""
+async def supervise_worker(module: str = "src.worker", extra_env: Optional[dict] = None) -> None:
+    """PREDICTIVE_WORKER=process: runs `python -m src.worker` (predictive engine + detectors) as a child process,
+    restarts it if it dies, and stops it with the app (SIGTERM, then SIGKILL after 5 s). Sprint 7: also used for
+    the ingestion shards (MQTT_INGEST=process: `python -m src.ingest_worker` with MQTT_SHARD_INDEX/COUNT)."""
     proc = None
     try:
         while True:
-            proc = await asyncio.create_subprocess_exec(sys.executable, "-m", "src.worker", cwd=str(SERVER_DIR),
-                                                        env=dict(os.environ))
+            proc = await asyncio.create_subprocess_exec(sys.executable, "-m", module, cwd=str(SERVER_DIR),
+                                                        env={**os.environ, **(extra_env or {})})
             log.info("worker.spawned", pid=proc.pid)
             rc = await proc.wait()
             log.error("worker.exited", returncode=rc, restart_in_s=5)
@@ -95,29 +101,45 @@ async def shutdown_tasks(tasks: list[asyncio.Task], timeout_s: float) -> None:
 async def lifespan(app: FastAPI):
     log.info("server.starting", env=settings.app_env)
 
-    # Start MQTT subscriber as background task
-    # Background tasks: MQTT ingestion + offline machine sweeper
+    # Background tasks (MQTT ingestion and the detectors below, inline or in worker processes)
     tasks = [
-        asyncio.create_task(run_subscriber(), name="mqtt_subscriber"),
         asyncio.create_task(run_offline_sweeper(), name="machine_offline_sweeper"),
-        asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"),
-        asyncio.create_task(run_downtime_detector(), name="downtime_detector"),
-        asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"),
         asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
+        asyncio.create_task(run_privacy_janitor(), name="privacy_janitor"),
     ]
     if settings.reports_enabled:
         tasks.append(asyncio.create_task(run_report_engine(), name="report_engine"))
     if settings.demo_bot_enabled:
         tasks.append(asyncio.create_task(run_demo_bot(), name="demo_bot"))
-    if settings.predictive_enabled:
-        mode = (settings.predictive_worker or "process").lower()
-        if mode == "inline":
-            tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
-        else:
-            if mode == "process":
-                tasks.append(asyncio.create_task(supervise_worker(), name="predictive_worker"))
-            # the worker (child or external service) sends WebSocket messages through Postgres NOTIFY
-            tasks.append(asyncio.create_task(ws_relay_listener(), name="ws_relay_listener"))
+    # Sprint 7: detectors (downtime, plans) run in the worker process with the predictive engine — never on the API
+    # event loop — unless PREDICTIVE_WORKER=inline or DETECTORS_IN_WORKER=false
+    # Sprint 7: MQTT ingestion in its own process(es) (MQTT_INGEST=process|external) — API and ingestion do not share
+    # an event loop; N shards split the tags
+    ingest = (settings.mqtt_ingest or "inline").lower()
+    if ingest == "inline":
+        tasks.append(asyncio.create_task(run_subscriber(), name="mqtt_subscriber"))
+        tasks.append(asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"))
+    elif ingest == "process":
+        n = max(1, int(settings.mqtt_ingest_shards))
+        for k in range(n):
+            tasks.append(asyncio.create_task(supervise_worker("src.ingest_worker", {
+                "MQTT_SHARD_INDEX": str(k), "MQTT_SHARD_COUNT": str(n)}), name=f"ingest_worker_{k}"))
+    mode = (settings.predictive_worker or "process").lower()
+    detectors_out = settings.detectors_in_worker and mode in ("process", "external")
+    if detectors_out:
+        tasks.append(asyncio.create_task(run_late_flusher(), name="downtime_late_flusher"))
+    else:
+        tasks.append(asyncio.create_task(run_downtime_detector(), name="downtime_detector"))
+        tasks.append(asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"))
+    tasks.append(asyncio.create_task(run_lag_sampler(), name="detector_lag_sampler"))
+    if settings.predictive_enabled and mode == "inline":
+        tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
+    elif settings.predictive_enabled or detectors_out:
+        if mode == "process":
+            tasks.append(asyncio.create_task(supervise_worker(), name="predictive_worker"))
+    if ingest != "inline" or (mode != "inline" and (settings.predictive_enabled or detectors_out)):
+        # the workers (child or external services) send WebSocket messages through Postgres NOTIFY
+        tasks.append(asyncio.create_task(ws_relay_listener(), name="ws_relay_listener"))
 
     yield
 
@@ -145,6 +167,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Sprint 7 (docs/security.md §3): request size limit, security headers, JSON errors without stack traces, exact CORS
+security_http.install(app)
 
 # Real client IP/scheme behind Traefik/nginx (used by the per-IP lead rate limit). Added last =
 # outermost, so every other middleware and route sees the corrected request.client.
@@ -180,6 +205,7 @@ app.include_router(oee.downtime_router,        prefix="/api/downtime",          
 app.include_router(oee.kpi_router,             prefix="/api",                     tags=["oee"])
 
 app.include_router(users.router,                prefix="/api/users",               tags=["users"])
+app.include_router(account_routes.router,       prefix="/api/account",             tags=["account"])
 app.include_router(maintenance.plans_router,    prefix="/api/maintenance-plans",   tags=["maintenance"])
 app.include_router(maintenance.wo_router,       prefix="/api/work-orders",         tags=["maintenance"])
 app.include_router(maintenance.failures_router, prefix="/api/failures",            tags=["maintenance"])

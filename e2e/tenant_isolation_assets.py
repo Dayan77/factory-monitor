@@ -42,8 +42,8 @@ def main() -> int:
     stamp = int(time.time())
     email_b = f"qa-iso-{stamp}@qa-factoryconnect.com.br"
     httpx.post(f"{API}/api/auth/register", json={"company_name": f"QA Iso {stamp}", "admin_name": "QA",
-                                                 "admin_email": email_b, "admin_password": "QaIso#2026x"}).raise_for_status()
-    b = client(login(email_b, "QaIso#2026x"))
+                                                 "admin_email": email_b, "admin_password": "QaIsola#2026x"}).raise_for_status()
+    b = client(login(email_b, "QaIsola#2026x"))
 
     tree = a.get("/api/plants/tree").json()
     plant = next(p for p in tree if p["name"] == "Planta Manaus")

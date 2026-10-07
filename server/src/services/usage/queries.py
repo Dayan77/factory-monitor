@@ -10,10 +10,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import Component, Line, Machine, Plant, Tag, UsageBucket, UsageTotal
+from ...models import Component, Line, Machine, MachineDataSpan, Plant, Position, Tag, UsageBucket, UsageTotal
 from ...models.plant import DEFAULT_TIMEZONE
 from ...models.tag import SemanticRole
-from .core import RUL_WINDOW_DAYS, life_consumed, rul
+from .core import RUL_WINDOW_DAYS, life_consumed, rate_window, rul
 
 HOURS = "operating_seconds"
 
@@ -139,18 +139,53 @@ def component_life(component: Component, usage: dict[str, float]) -> tuple[Optio
     return life_consumed(_nominal(component), usage)
 
 
+async def data_since(db: AsyncSession, tenant_id: str, position_id: Optional[str] = None,
+                     machine_id: Optional[str] = None) -> Optional[datetime]:
+    """Since when the platform has data of a position / machine (audit A-2, S7-2): the earliest of the first usage
+    bucket of the position, of the machine and the first data span of the machine. None: no data at all."""
+    cands: list[datetime] = []
+    for scope, eid in (("position", position_id), ("machine", machine_id)):
+        if eid:
+            v = (await db.execute(select(func.min(UsageBucket.bucket_start)).where(
+                UsageBucket.tenant_id == tenant_id, UsageBucket.scope == scope, UsageBucket.entity_id == eid)
+            )).scalar_one_or_none()
+            if v is not None:
+                cands.append(v)
+    if machine_id:
+        v = (await db.execute(select(func.min(MachineDataSpan.start)).where(
+            MachineDataSpan.tenant_id == tenant_id, MachineDataSpan.machine_id == machine_id))).scalar_one_or_none()
+        if v is not None:
+            cands.append(v)
+    return min(cands) if cands else None
+
+
+async def component_data_since(db: AsyncSession, tenant_id: str, component: Component) -> Optional[datetime]:
+    pid = component.position_id or component.last_position_id
+    mid = None
+    if pid:
+        mid = (await db.execute(select(Position.machine_id).where(Position.id == pid, Position.tenant_id == tenant_id))
+               ).scalar_one_or_none()
+    first_own = (await db.execute(select(func.min(UsageBucket.bucket_start)).where(
+        UsageBucket.tenant_id == tenant_id, UsageBucket.scope == "component", UsageBucket.entity_id == component.id)
+    )).scalar_one_or_none()
+    since = await data_since(db, tenant_id, pid, mid)
+    return min(x for x in (since, first_own) if x is not None) if (since or first_own) else None
+
+
 async def component_usage_detail(db: AsyncSession, tenant_id: str, component: Component,
                                  tz: ZoneInfo, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     usage = (await component_usages(db, tenant_id, [component]))[component.id]
     life, life_measure = component_life(component, usage)
+    # S7-2 (audit A-2): days of history = min(14, since installation, since the first data of the position/machine);
+    # complete hourly buckets only (S7-5, audit A-10)
     if component.installed_at is not None:
-        history_days = (now - component.installed_at).total_seconds() / 86400.0
+        since = await component_data_since(db, tenant_id, component)
+        ws, we, history_days = rate_window(now, component.installed_at, since or now)
     else:
+        ws = we = now
         history_days = 0.0
-    window_days = min(float(RUL_WINDOW_DAYS), max(history_days, 0.0))
-    wsum = await window_sums(db, tenant_id, "component", [component.id],
-                             now - timedelta(days=window_days), now + timedelta(seconds=1))
+    wsum = await window_sums(db, tenant_id, "component", [component.id], ws, we) if history_days > 0 else {}
     window_usage = _usage_dict({m: v for (eid, m), v in wsum.items()})
     r = rul(now.astimezone(tz).date(), _nominal(component), usage, window_usage, history_days)
     return {
@@ -163,6 +198,7 @@ async def component_usage_detail(db: AsyncSession, tenant_id: str, component: Co
         "rul_measure": r.measure,
         "rul_reason": r.reason,
         "rate_per_day": r.rate_per_day,
+        "rate_window_days": history_days,
         "low_confidence": r.low_confidence,
         "overdue": r.overdue,
     }
