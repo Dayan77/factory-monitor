@@ -1,10 +1,18 @@
 # Wheels binários (manylinux) para todas as dependências: não precisa de gcc/apt.
+# Imagem base com versão fixa — atualize de propósito (Dependabot: .github/dependabot.yml).
 FROM python:3.12.15-slim
+
+ARG FM_VERSION=dev
+LABEL org.opencontainers.image.title="factoryconnect-server" \
+      org.opencontainers.image.description="API, WebSocket, ingestão MQTT e workers do FactoryConnect" \
+      org.opencontainers.image.version="${FM_VERSION}" \
+      org.opencontainers.image.source="https://github.com/Dayan77/factory-monitor"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    FM_VERSION=${FM_VERSION}
 
 WORKDIR /app
 

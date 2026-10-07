@@ -197,6 +197,19 @@ export default function NotificationBell({ mobile = false, className }: { mobile
   const [tab, setTab] = useState<"list" | "prefs">("list");
   const unread = (q.data ?? []).filter((n) => !n.read_at).length;
   const label = unread ? `Notificações: ${unread} não lida${unread > 1 ? "s" : ""}` : "Notificações";
+  // live update (WebSocket): a NEW unread notification is announced to screen readers, politely, once
+  const [announce, setAnnounce] = useState("");
+  const [seen, setSeen] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!q.data) return;
+    const ids = new Set(q.data.map((n) => n.id));
+    if (seen) {
+      const fresh = q.data.filter((n) => !n.read_at && !seen.has(n.id));
+      if (fresh.length) setAnnounce(fresh.length === 1 ? `Nova notificação: ${fresh[0].title}` : `${fresh.length} novas notificações`);
+    }
+    setSeen(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
 
   return (
     <>
@@ -209,6 +222,7 @@ export default function NotificationBell({ mobile = false, className }: { mobile
           </span>
         )}
       </button>
+      <span className="sr-only" role="status" aria-live="polite">{announce}</span>
       <Sheet open={open} onClose={() => setOpen(false)} title="Notificações" size="md">
         <div className="space-y-4">
           <Tabs id="notif-tabs" label="Central de notificações" items={TABS} value={tab} onChange={setTab} size="sm" />

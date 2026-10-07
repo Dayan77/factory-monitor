@@ -2,7 +2,7 @@
  * Shared predictive UI pieces: severity/state badges, RUL text, monitor summary and the per-position
  * "Condição" panel (position drawer, predictive page, technician WO).
  */
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import clsx from "clsx";
 import Badge from "@/components/ui/Badge";
 import EmptyState from "@/components/ui/EmptyState";
@@ -10,7 +10,8 @@ import ErrorState from "@/components/ui/ErrorState";
 import { Progress } from "@/components/ui/LifeBar";
 import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
-import ConditionChart from "./ConditionChart";
+// recharts only downloads when a condition chart is actually shown (the pills / RUL text are on light screens)
+const ConditionChart = lazy(() => import("./ConditionChart"));
 import { useFeatures, useMonitors } from "@/hooks/usePredictive";
 import type { AlertState, ConditionRul, Feature, Monitor, PredSeverity } from "@/services/predictiveTypes";
 import {
@@ -124,7 +125,9 @@ export function ConditionPanel({ positionId, feature, compact = false, chartHeig
       ) : !series || series.points.length === 0 ? (
         <p className="text-caption text-fg-subtle">Nenhuma janela fechada ainda para este sinal.</p>
       ) : (
-        <ConditionChart series={series} rul={current.state === "monitoring" ? current.rul_condition : null} compact={compact} height={chartHeight ?? (compact ? 200 : 260)} />
+        <Suspense fallback={<Skeleton className="w-full rounded-lg" style={{ height: chartHeight ?? (compact ? 200 : 260) }} />}>
+          <ConditionChart series={series} rul={current.state === "monitoring" ? current.rul_condition : null} compact={compact} height={chartHeight ?? (compact ? 200 : 260)} />
+        </Suspense>
       )}
     </div>
   );

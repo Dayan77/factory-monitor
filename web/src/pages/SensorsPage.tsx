@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
+import { formatTime } from "@/utils/format";
 import MachineStatusBadge from "@/components/MachineStatusBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import ErrorState from "@/components/ui/ErrorState";
@@ -56,7 +58,7 @@ export default function SensorsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-100">Sensores ao Vivo</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Leituras em tempo real via WebSocket</p>
+          <p className="text-sm text-fg-muted mt-0.5">Leituras em tempo real via WebSocket</p>
         </div>
         <div className="flex items-center gap-2 text-sm">
           <span className={`size-2 rounded-full ${statusColors[wsStatus]}`} />
@@ -84,15 +86,17 @@ export default function SensorsPage() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-100 truncate">{machine.name}</p>
-                    <p className="text-xs text-gray-500">{machine.model || "—"}</p>
+                    <p className="text-sm font-semibold text-gray-100 truncate">
+                      <Link to={`/factory/machines/${machine.id}`} className="underline-offset-2 hover:underline">{machine.name}</Link>
+                    </p>
+                    <p className="text-xs text-fg-muted">{machine.model || "—"}</p>
                   </div>
                   <MachineStatusBadge status={machine.status} size="sm" />
                 </div>
 
                 {/* Tags */}
                 {tags.length === 0 ? (
-                  <p className="text-xs text-gray-600 text-center py-6">Nenhum sensor cadastrado</p>
+                  <p className="text-xs text-fg-muted text-center py-6">Nenhum sensor cadastrado</p>
                 ) : (
                   <div className="divide-y divide-gray-800">
                     {tags.map(tag => {
@@ -124,7 +128,7 @@ export default function SensorsPage() {
                             <span className={`size-1.5 rounded-full shrink-0 ${hasData ? "bg-brand-400" : "bg-gray-700"}`}/>
                             <div className="min-w-0">
                               <p className="text-sm text-gray-300 truncate">{tag.name}</p>
-                              <p className="text-xs text-gray-600">{tag.protocol.toUpperCase()} · {tag.address}</p>
+                              <p className="text-xs text-fg-muted">{tag.protocol.toUpperCase()} · {tag.address}</p>
                             </div>
                           </div>
                           <div className="shrink-0">{sparkSvg()}</div>
@@ -133,14 +137,14 @@ export default function SensorsPage() {
                               <>
                                 <p className="text-sm font-mono font-semibold text-gray-100">
                                   {reading.value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
-                                  <span className="text-xs text-gray-500 ml-1">{reading.unit || tag.unit}</span>
+                                  <span className="text-xs text-fg-muted ml-1">{reading.unit || tag.unit}</span>
                                 </p>
-                                <p className="text-xs text-gray-500">
-                                  {new Date(reading.timestamp).toLocaleTimeString("pt-BR")}
+                                <p className="text-xs text-fg-muted">
+                                  {formatTime(reading.timestamp, true)}
                                 </p>
                               </>
                             ) : (
-                              <p className="text-xs text-gray-500">sem dados</p>
+                              <p className="text-xs text-fg-muted">sem dados</p>
                             )}
                           </div>
                         </div>

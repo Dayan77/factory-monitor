@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import KpiInfo from "@/components/ui/KpiInfo";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -53,14 +54,14 @@ function Headline({ o }: { o: OeeResult }) {
         <KpiRing value={o.oee} label="OEE" size={168} valueClassName="text-[2.5rem]" />
       </Card>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-        <Stat label="Disponibilidade" value={formatPct(o.availability)} tone={oeeTone(o.availability)} hint={`Rodando ${formatDuration(o.apt_s)} de ${formatDuration(o.pbt_s)}`} />
-        <Stat label="Desempenho" value={formatPct(o.performance)} tone={oeeTone(o.performance)} hint={o.cadence_running_per_hour != null ? `${formatDec1(o.cadence_running_per_hour)} peças/h rodando` : undefined} />
-        <Stat label="Qualidade" value={formatPct(o.quality)} tone={oeeTone(o.quality)} hint={`${formatInt(o.good)} boas · ${formatInt(o.scrap)} refugo`} />
-        <Stat label="TEEP" value={formatPct(o.teep)} hint={o.loading != null ? `Carga ${formatPct(o.loading)} do calendário` : "OEE × carga"} />
-        <Stat label="Micro-paradas" value={formatInt(o.micro_stop_count)} hint={`${formatDuration(o.micro_stop_loss_s)} perdidos`} tone={o.micro_stop_count > 0 ? "warn" : "neutral"} />
+        <Stat kpi="availability" label="Disponibilidade" value={formatPct(o.availability)} tone={oeeTone(o.availability)} hint={`Rodando ${formatDuration(o.apt_s)} de ${formatDuration(o.pbt_s)}`} />
+        <Stat kpi="performance" label="Desempenho" value={formatPct(o.performance)} tone={oeeTone(o.performance)} hint={o.cadence_running_per_hour != null ? `${formatDec1(o.cadence_running_per_hour)} peças/h rodando` : undefined} />
+        <Stat kpi="quality" label="Qualidade" value={formatPct(o.quality)} tone={oeeTone(o.quality)} hint={`${formatInt(o.good)} boas · ${formatInt(o.scrap)} refugo`} />
+        <Stat kpi="teep" label="TEEP" value={formatPct(o.teep)} hint={o.loading != null ? `Carga ${formatPct(o.loading)} do calendário` : "OEE × carga"} />
+        <Stat kpi="micro_stops" label="Micro-paradas" value={formatInt(o.micro_stop_count)} hint={`${formatDuration(o.micro_stop_loss_s)} perdidos`} tone={o.micro_stop_count > 0 ? "warn" : "neutral"} />
         <Stat label="Perda de velocidade" value={formatDuration(o.speed_loss_s)} />
         <Stat label="Paradas (ADOT)" value={formatDuration(o.adot_s)} tone={o.adot_s > 0 ? "warn" : "neutral"} />
-        <Stat label="Cadência realizada" value={o.cadence_planned_per_hour == null ? "—" : formatDec1(o.cadence_planned_per_hour)} unit="peças/h" />
+        <Stat kpi="cadence" label="Cadência realizada" value={o.cadence_planned_per_hour == null ? "—" : formatDec1(o.cadence_planned_per_hour)} unit="peças/h" />
       </div>
     </div>
   );
@@ -77,10 +78,10 @@ function ReliabilityCards({ scope, id, start, stop }: { scope: OeeScope; id: str
       {(r) => (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="MTBF" value={formatHours(r.mtbf_h)} hint={`${formatDec1(r.operating_h)} h de operação`} />
-            <Stat label="MTTR" value={r.mttr_s != null ? formatDuration(r.mttr_s) : formatHours(r.mttr_h)} hint="tempo médio até restabelecer" />
+            <Stat kpi="mtbf" label="MTBF" value={formatHours(r.mtbf_h)} hint={`${formatDec1(r.operating_h)} h de operação`} />
+            <Stat kpi="mttr" label="MTTR" value={r.mttr_s != null ? formatDuration(r.mttr_s) : formatHours(r.mttr_h)} hint="tempo médio até restabelecer" />
             <Stat label="Falhas" value={formatInt(r.failures)} hint={r.short_faults ? `+ ${r.short_faults} falhas curtas` : "críticas e degradadas"} tone={r.failures > 0 ? "warn" : "neutral"} />
-            <Stat label="Disponibilidade inerente" value={formatPct(r.availability_inherent)} hint="MTBF / (MTBF + MTTR)" />
+            <Stat kpi="ao" label="Disponibilidade inerente" value={formatPct(r.availability_inherent)} hint="MTBF / (MTBF + MTTR)" />
           </div>
           {r.reason === "no_failures" && <p className="text-caption text-fg-subtle">Nenhuma falha registrada no período — MTBF indefinido.</p>}
         </div>
@@ -121,7 +122,7 @@ export default function OeePage() {
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="truncate text-title text-fg">OEE {name && `· ${name}`}</h2>
+            <h2 className="flex min-w-0 items-center gap-2 text-title text-fg"><span className="truncate">OEE {name && `· ${name}`}</span><KpiInfo kpi="oee" /></h2>
             <p className="text-caption text-fg-subtle">{period.label} · ISO 22400 (D × P × Q)</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

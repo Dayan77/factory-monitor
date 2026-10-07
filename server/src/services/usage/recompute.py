@@ -329,6 +329,22 @@ class RecomputeBusy(Exception):
     """A recompute of this tenant is already running."""
 
 
+async def history_beyond_retention(db: AsyncSession, tenant_id: str) -> Optional[datetime]:
+    """Sprint 7 (kpis.md S7-18): the raw readings are kept INFLUX_RAW_RETENTION_DAYS. A recompute(apply) replaces
+    the accumulators by a replay of the raw readings — with history older than the retention it would erase that
+    usage. Returns the oldest usage bucket of the tenant when it is older than the retention (None: safe)."""
+    from ...config import settings
+    from ...models import UsageBucket
+    from sqlalchemy import func
+    days = settings.influx_raw_retention_days if settings.influx_downsampling else 0
+    if not days or days <= 0:
+        return None
+    oldest = (await db.execute(select(func.min(UsageBucket.bucket_start)).where(
+        UsageBucket.tenant_id == tenant_id))).scalar_one_or_none()
+    limit = datetime.now(timezone.utc) - timedelta(days=days) + timedelta(hours=1)
+    return oldest if oldest is not None and oldest < limit else None
+
+
 @dataclass
 class RecomputeJob:
     id: str

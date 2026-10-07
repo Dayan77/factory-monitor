@@ -1,5 +1,7 @@
-# Regras de alerta básicas do FactoryConnect. Aparecem em Prometheus → Alerts e no painel do Grafana.
-# (Sem Alertmanager por enquanto: para notificar, configure um contact point no Grafana — docs/operations.md.)
+# Regras de alerta do BACKEND (métricas de /metrics do fm_server). Produção: o Alertmanager manda e-mail
+# (infra/monitoring/alertmanager, docs/operations.md §8). Regras da plataforma (VPS, backup, gateways, demo,
+# sondas públicas): alerts.platform.yml. Cada alerta tem severity (critical = acorda alguém; warning = horário
+# comercial) e um runbook em docs/operations.md §8.4.
 # Métricas fm_* exportadas pelo backend: ver docs/operations.md §Observabilidade.
 groups:
   - name: factoryconnect
@@ -19,6 +21,16 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "Mais de 5% das requisições HTTP com erro 5xx"
+
+      - alert: FmHttp5xxRateCritical
+        expr: |
+          sum(rate(http_requests_total{job="fm-server",status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="fm-server"}[5m])), 1e-9) > 0.20
+          and sum(rate(http_requests_total{job="fm-server"}[5m])) > 0.1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Mais de 20% das requisições HTTP com erro 5xx (app quebrado para os usuários)"
 
       - alert: FmHttpLatencyP95High
         expr: |
@@ -52,3 +64,52 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "Nenhuma mensagem MQTT processada em 15 min (broker, gateways ou credenciais?)"
+
+      # ── Pipeline de ingestão (Sprint 5b/7) ───────────────────────────────────────────────────────
+      - alert: FmIngestionLagHigh
+        # recebida do broker → gravada no Influx + uso: p95 do pipeline (todas as leituras, inclusive backlog do gateway)
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(fm_ingest_latency_seconds_bucket{job="fm-server"}[5m]))) > 10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Ingestão lenta: p95 recebimento → gravação acima de 10 s há 10 min"
+
+      - alert: FmIngestQueueSaturated
+        expr: |
+          max(fm_ingest_queue_depth{job="fm-server"}) / clamp_min(max(fm_ingest_queue_capacity{job="fm-server"}), 1) > 0.8
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Fila de ingestão acima de 80% da capacidade — o broker vai segurar as leituras (backpressure)"
+
+      - alert: FmIngestDeadLetters
+        # qualquer leitura nova em dead letter = dado que não entrou no Influx/uso (reprocessar: docs/operations.md)
+        expr: sum(increase(fm_ingest_dead_letters_total{job="fm-server"}[15m])) > 0
+        for: 0m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} leitura(s) foram para dead letter nos últimos 15 min"
+
+      - alert: FmIngestDropped
+        expr: sum(increase(fm_ingest_dropped_total{job="fm-server"}[15m])) > 0
+        for: 0m
+        labels: { severity: critical }
+        annotations:
+          summary: "Leituras PERDIDAS (nem processadas nem em dead letter) — deve ser sempre 0"
+
+      # ── Detectores (paradas e preditiva) ─────────────────────────────────────────────────────────
+      - alert: FmDetectorLagHigh
+        # atraso do detector em relação aos próprios dados (checkpoint); DETECTOR_LAG_ALERT_S no servidor
+        expr: max by (detector) (fm_detector_lag_max_seconds{job="fm-server"}) > 1800
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Detector {{ $labels.detector }} atrasado {{ $value | humanizeDuration }} em relação aos dados"
+
+      - alert: FmDetectorLagging
+        expr: max by (detector) (fm_detector_lagging{job="fm-server"}) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} máquina(s)/monitor(es) com o detector {{ $labels.detector }} acima do limite de atraso"

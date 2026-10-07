@@ -81,7 +81,7 @@ function Row({ c }: { c: ComponentLifeRow }) {
         <p className="text-caption text-fg-subtle">{componentTypeLabel(c.component_type)}{c.serial_number ? ` · série ${c.serial_number}` : ""} · desde {formatDate(c.installed_at)}</p>
       </TD>
       <TD>
-        <Link to={`/factory/machines/${c.machine_id}?pos=${c.position_id}`} className="text-ok hover:underline">{c.position_name} · {c.machine_name}</Link>
+        <Link to={`/factory/machines/${c.machine_id}?pos=${c.position_id}`} className="text-ok underline underline-offset-2">{c.position_name} · {c.machine_name}</Link>
       </TD>
       <TD>
         <LifeBar fraction={c.life_consumed_pct} measure={c.life_measure} label={`Vida consumida — ${c.position_name}`} />

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import clsx from "clsx";
 import type { Tone } from "./Badge";
+import KpiInfo from "./KpiInfo";
+import type { KpiId } from "@/utils/kpiGlossary";
 
 interface Props {
   label: ReactNode;
@@ -12,6 +14,8 @@ interface Props {
   className?: string;
   /** Changing key re-runs a subtle flash (live updates). */
   flashKey?: string | number;
+  /** KPI with a definition in the glossary: shows the ⓘ with the explanation and the manual link. */
+  kpi?: KpiId;
 }
 
 const VALUE_TONE = {
@@ -22,11 +26,11 @@ const VALUE_TONE = {
 } as const;
 
 /** KPI tile: label, big tabular number, optional unit and hint. */
-export default function Stat({ label, value, unit, hint, icon, tone = "neutral", className, flashKey }: Props) {
+export default function Stat({ label, value, unit, hint, icon, tone = "neutral", className, flashKey, kpi }: Props) {
   return (
     <div className={clsx("surface rounded-xl border border-line bg-surface p-4 shadow-card", className)}>
       <div className="flex items-start justify-between gap-2">
-        <p className="text-caption font-medium text-fg-muted">{label}</p>
+        <p className="flex items-center gap-1.5 text-caption font-medium text-fg-muted">{label}{kpi && <KpiInfo kpi={kpi} />}</p>
         {icon && <span aria-hidden="true" className="text-fg-subtle">{icon}</span>}
       </div>
       <p className="mt-1.5 flex items-baseline gap-1">
@@ -38,7 +42,7 @@ export default function Stat({ label, value, unit, hint, icon, tone = "neutral",
         </span>
         {unit && <span className="text-body text-fg-subtle">{unit}</span>}
       </p>
-      {hint && <p className="mt-1 text-caption text-fg-subtle">{hint}</p>}
+      {hint && <p className="mt-1 text-caption text-fg-muted">{hint}</p>}
     </div>
   );
 }

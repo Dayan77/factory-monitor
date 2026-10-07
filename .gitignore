@@ -83,3 +83,7 @@ tmp/
 # Operação (fora do git): credenciais MQTT dos gateways/certificados e backups locais
 /mqtt/
 /backups/
+
+# Sprint 7: relatórios locais de make deps-audit e estado do deploy no VPS (scripts/remote_deploy.sh)
+.audit/
+.deploy/

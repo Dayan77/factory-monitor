@@ -270,3 +270,61 @@ async def test_influx_slices_equal_one_unbounded_pass(client, monkeypatch):
     ra, rb = await _snapshot_results(t.id, a["id"]), await _snapshot_results(t.id, b["id"])
     assert len(ra[0]) >= 8 and len(ra[2]) >= 4
     assert ra == rb
+
+
+async def test_tenant_prefetch_equals_one_query_per_machine(client, monkeypatch):
+    """Sprint 7 (scale): caught-up machines of a tenant share ONE Influx query per tick (TenantPrefetch). Twin
+    tenants receive the same 40 min of signals (a 5-min stop, a fault stop, a micro-stop); one is detected with the
+    tenant prefetch, the other with one query per machine, tick by tick: identical results."""
+    from src.config import settings
+    from src.db import AsyncSessionLocal
+    from src.models import DowntimeDetectorState
+    from src.services.influx import influx
+    from src.services.oee import detector
+    monkeypatch.setattr(settings, "downtime_settle_s", 0.0)
+    t0 = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=45)
+    ten = {}
+    for label in ("PFA", "PFB"):
+        t = await _tenant(label)
+        p = await build_plant(client, t, label)
+        ms = []
+        for k in range(2):
+            if k:
+                r = await client.post("/api/machines/", headers=t.headers("admin"),
+                                      json={"line_id": p.line["id"], "name": f"{label}{k}"})
+                p.machine = r.json()
+            run = await add_tag(client, t, p, f"{label}{k}_run", "run_state", data_type="bool")
+            fault = await add_tag(client, t, p, f"{label}{k}_fault", "fault_state")
+            ms.append((p.machine["id"], run["id"], fault["id"]))
+        for mid, run_id, fault_id in ms:
+            for s in range(0, 40 * 60, HB):
+                ts = t0 + timedelta(seconds=s)
+                rv = 0.0 if (600 <= s < 900 or 1200 <= s < 1290 or 1800 <= s < 1840) else 1.0
+                fv = 3.0 if 1200 <= s < 1290 else 0.0
+                await influx.write(t.id, run_id, rv, machine_id=mid, ts=ts)
+                await influx.write(t.id, fault_id, fv, machine_id=mid, ts=ts)
+        async with AsyncSessionLocal() as s:
+            for mid, _, _ in ms:
+                s.add(DowntimeDetectorState(machine_id=mid, tenant_id=t.id, checkpoint=t0 - timedelta(seconds=1),
+                                            state={}))
+            await s.commit()
+        ten[label] = (t, ms)
+    used = []
+    real = detector._prefetch_tenants
+
+    async def spy(jobs, now):
+        pf, sig = await real(jobs, now)
+        used.extend(pf.values())
+        return pf, sig
+    monkeypatch.setattr(detector, "_prefetch_tenants", spy)
+    for step in range(1, 9):                                   # ticks every 5 min of data time
+        now = t0 + timedelta(minutes=5 * step)
+        monkeypatch.setattr(settings, "downtime_prefetch_window_s", 600.0)
+        await detector.run_tick(now=now, tenant_ids={ten["PFA"][0].id})
+        monkeypatch.setattr(settings, "downtime_prefetch_window_s", 0.0)
+        await detector.run_tick(now=now, tenant_ids={ten["PFB"][0].id})
+    assert used and sum(p.hits for p in used) >= 8               # really served from the tenant query
+    for (ma, _, _), (mb, _, _) in zip(ten["PFA"][1], ten["PFB"][1]):
+        ra, rb = await _snapshot_results(ten["PFA"][0].id, ma), await _snapshot_results(ten["PFB"][0].id, mb)
+        assert ra[0] and (ra[1] or ra[2]) and ra == rb
+        assert await _checkpoint(ma) == await _checkpoint(mb)

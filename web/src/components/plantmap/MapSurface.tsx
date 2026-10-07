@@ -129,7 +129,7 @@ const MapSurface = forwardRef<HTMLDivElement, Props>(function MapSurface(
           className="flex size-10 items-center justify-center border-t border-line text-fg-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40">
           <svg viewBox="0 0 20 20" fill="currentColor" className="size-5" aria-hidden="true"><path d="M4 10a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H4.75A.75.75 0 0 1 4 10Z" /></svg>
         </button>
-        <button type="button" onClick={() => zoomAt(1)} disabled={zoom === 1} aria-label="Ajustar à tela"
+        <button type="button" onClick={() => zoomAt(1)} disabled={zoom === 1} aria-label="1:1 (ajustar à tela)"
           className="flex size-10 items-center justify-center border-t border-line text-caption font-semibold text-fg-muted hover:bg-surface-2 hover:text-fg disabled:opacity-40">
           1:1
         </button>

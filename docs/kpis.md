@@ -959,3 +959,21 @@ Os casos de §6 e os cenários de ouro A–F continuam exatos.
   fatias limitadas (`DOWNTIME_SLICE_READINGS` leituras por tag) que avançam o checkpoint; o resultado (eventos,
   falhas, micro-paradas, intervalos com dados) é **idêntico** ao do processamento contínuo — prova:
   `server/tests/test_detector_catchup.py` (72 h de buffer descarregado de uma vez).
+- **S7-17 — Nenhum motor para por causa de atraso (não muda fórmula).** Além do detector de paradas (S7-16): a
+  preditiva extrai janelas/blocos por no máximo `PREDICTIVE_EXTRACT_BUDGET_S` por execução, grava e continua do
+  cursor na próxima (série idêntica à de uma execução única — `server/tests/test_backlog_engines.py`); o motor de
+  manutenção roda chamados emergenciais e escalonamentos **antes** do recálculo dos planos, com commit próprio (um
+  plano lento nunca atrasa um chamado); os detectores rodam por máquina/monitor/tenant com concorrência limitada no
+  processo worker. As máquinas em dia de um tenant compartilham uma consulta ao InfluxDB por ciclo — mesmos eventos,
+  falhas e micro-paradas que uma consulta por máquina (`test_detector_catchup.py::test_tenant_prefetch_…`).
+- **S7-18 — Agregados do InfluxDB só para gráficos de séries (não muda KPI).** Bruto 90 dias, agregados de 1 min por
+  2 anos e horários para sempre (`docs/performance.md` §5). Os agregados guardam soma, contagem, mín., máx. e último
+  valor por janela, então a média de qualquer janela ≥ 1 min é **exata** (Σsoma/Σcontagem), igual à do bruto
+  (`server/tests/test_influx_downsampling.py`). Nenhum KPI (OEE, paradas, uso, MTBF, preditiva) é calculado dos
+  agregados: os detectores leem o bruto no momento em que os dados chegam e gravam o resultado no Postgres; depois de
+  90 dias o bruto expira, os KPIs já calculados ficam. Recalcular uso/preditiva além de 90 dias não é possível
+  (`/recompute` avisa — o bruto não existe mais).
+- **S7-19 — Cache curto das telas de painel (não muda número).** `/api/overview`, `/api/oee`, `/api/losses/pareto` e
+  `/api/maintenance-plans/status` guardam a resposta por `API_CACHE_TTL_S` (10 s) por usuário e consulta; qualquer
+  gravação do próprio tenant neste processo invalida na hora (o usuário vê a própria justificativa/OS). Dados da
+  ingestão e dos detectores aparecem em até 10 s — a mesma ordem do ciclo dos detectores (`DOWNTIME_TICK_S` = 10 s).

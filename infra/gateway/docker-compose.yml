@@ -13,8 +13,9 @@ name: factoryconnect-gateway
 services:
   gateway:
     # Imagem multi-arch (linux/amd64 + linux/arm64). Sem registro: `docker compose build` constrói no próprio host
-    # (amd64 ou arm64) a partir de ../../edge. Com registro: EDGE_IMAGE=<registro>/factoryconnect-edge:0.6.0
-    # (gerada com `docker buildx build --platform linux/amd64,linux/arm64 ... --push edge/`, ver edge/README.md).
+    # (amd64 ou arm64) a partir de ../../edge. Com registro (recomendado): imagem da release, multi-arch, com SBOM e
+    # proveniência — EDGE_IMAGE=ghcr.io/dayan77/factoryconnect-edge:<X.Y.Z> (workflow Release, docs/operations.md §11;
+    # verificar: gh attestation verify oci://ghcr.io/dayan77/factoryconnect-edge:<X.Y.Z> --owner Dayan77).
     image: ${EDGE_IMAGE:-factoryconnect-edge:0.6.0}
     build:
       context: ../../edge

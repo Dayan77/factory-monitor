@@ -7,11 +7,10 @@ Two kinds of tests:
    block against a reference implementation written inside the test, so a server function could drift without
    failing it (audit item A-17). Every case id must be mapped here or listed in `COVERED_ELSEWHERE`.
 
-2. **Divergences** (`test_A<n>_*`): the concrete counter-examples of docs/audit_kpis.md.
-   * `..._code_today` pins the number the code returns today (the value quoted in the audit). It passes now.
-   * `..._spec` asserts what docs/kpis.md / docs/domain.md require; it is `xfail(strict=True)`.
-   When the hardening sprint fixes an item, both tests fail on purpose: update the item in docs/audit_kpis.md
-   (status "corrigido"), delete `..._code_today` and drop the `xfail` mark from `..._spec`.
+2. **Divergences** (`test_A<n>_*`): the concrete counter-examples of docs/audit_kpis.md. Until Sprint 6 each item
+   had a `..._code_today` test (the number the code gave) and an `xfail(strict=True)` `..._spec` test. Sprint 7
+   fixed every item (docs/kpis.md "Decisões Sprint 7"): only the `..._spec` tests remain and they must pass; the
+   cases that need the database / InfluxDB live in server/tests/test_audit_s7.py.
 
 Run:  .venv/bin/python -m pytest docs/scenarios/test_audit_kpis.py -q
 """

@@ -57,7 +57,7 @@ export default function TvPage() {
   const clock = new Date(now).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: plant?.timezone });
 
   return (
-    <div className="min-h-screen bg-canvas text-fg" data-testid="tv-mode">
+    <main className="min-h-screen bg-canvas text-fg" data-testid="tv-mode">
       <DemoBanner compact />
       <div className="p-4 sm:p-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -144,6 +144,6 @@ export default function TvPage() {
         </p>
       )}
       </div>
-    </div>
+    </main>
   );
 }

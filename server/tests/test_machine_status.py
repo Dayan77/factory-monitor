@@ -151,10 +151,8 @@ async def test_mqtt_message_updates_status_and_broadcasts(client, tenants, db, w
 
     written = []
 
-    async def fake_write(**kw):
-        written.append(kw)
-
-    monkeypatch.setattr(influx, "write", fake_write)
+    from influx_capture import capture_writes
+    written = capture_writes(monkeypatch, influx)
 
     assets = await create_assets(client, tenants.a)
     ws_a = await ws_for(tenants.a.id)
@@ -191,10 +189,8 @@ async def test_mqtt_rejects_non_uuid_topic(ws_for, tenants, monkeypatch):
 
     written = []
 
-    async def fake_write(**kw):
-        written.append(kw)
-
-    monkeypatch.setattr(influx, "write", fake_write)
+    from influx_capture import capture_writes
+    written = capture_writes(monkeypatch, influx)
     ws = await ws_for(tenants.a.id)
     await mqtt_subscriber._handle_message(f'factory/{tenants.a.id}/sensors/x") or true', b'{"value": 1}')
     await mqtt_subscriber._handle_message('factory/not-a-uuid/sensors/also-not', b'{"value": 1}')
@@ -274,13 +270,11 @@ async def test_mqtt_replayed_reading_uses_source_ts_and_skips_live_side_effects(
 
     written, evaluated = [], []
 
-    async def fake_write(**kw):
-        written.append(kw)
-
     async def fake_evaluate(**kw):
         evaluated.append(kw)
 
-    monkeypatch.setattr(influx, "write", fake_write)
+    from influx_capture import capture_writes
+    written = capture_writes(monkeypatch, influx)
     monkeypatch.setattr(mqtt_subscriber, "evaluate", fake_evaluate)
 
     assets = await create_assets(client, tenants.a)
@@ -316,10 +310,8 @@ async def test_mqtt_missing_or_future_ts_falls_back_to_receive_time(client, tena
 
     written = []
 
-    async def fake_write(**kw):
-        written.append(kw)
-
-    monkeypatch.setattr(influx, "write", fake_write)
+    from influx_capture import capture_writes
+    written = capture_writes(monkeypatch, influx)
     assets = await create_assets(client, tenants.a)
     topic = f"factory/{tenants.a.id}/sensors/{assets.tag['id']}"
     received = datetime.now(timezone.utc)

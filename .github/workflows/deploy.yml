@@ -1,76 +1,89 @@
-# Deploy no VPS por SSH (chave de um usuário dedicado, não root).
+# Deploy de uma VERSÃO específica no VPS (staging ou produção) — sempre manual:
+#   Actions → Deploy → Run workflow → version = v0.7.0 (tag publicada pelo workflow Release) · target.
 #
-# Dispara:
-#   - automaticamente quando o workflow CI termina com SUCESSO em um push na `main`
-#     (equivale a "push na main", mas nunca deploya commit vermelho);
-#   - manualmente (Actions → Deploy → Run workflow).
+# Produção exige confirmação explícita do dono do projeto: o job usa o environment `production` — configure
+# "Required reviewers" (Settings → Environments → production) e restrinja os deployment branches/tags a `v*`.
+# O environment `staging` não precisa de aprovação. Fluxo recomendado: staging → smoke → produção (mesma tag).
 #
-# Secrets necessários (Settings → Secrets and variables → Actions):
-#   VPS_HOST, VPS_USER, VPS_SSH_KEY  (obrigatórios — sem eles o deploy é pulado)
-#   VPS_KNOWN_HOSTS                  (recomendado: saída de `ssh-keyscan -H <host>`;
-#                                     sem ele a host key é obtida via ssh-keyscan na hora)
-# Variables opcionais: VPS_APP_DIR (padrão /opt/factory-monitor), PUBLIC_HEALTH_URL.
+# O que roda no VPS: scripts/remote_deploy.sh (desta versão) — código na tag → pré-requisitos → pull das imagens
+# do GHCR (ou build local se FM_IMAGE_PREFIX não estiver no .env) → backup do Postgres → migrations com timeout →
+# up -d → healthcheck → rollback automático para a versão anterior se falhar. Rollback manual = rodar este
+# workflow com a tag anterior (docs/operations.md §3).
 #
-# Deploy em produção exige confirmação explícita do dono do projeto:
-# configure "Required reviewers" no environment `production`
-# (Settings → Environments → production).
+# Secrets do environment (Settings → Environments → <target> → secrets):
+#   VPS_HOST, VPS_USER (usuário dedicado, não root), VPS_SSH_KEY, VPS_KNOWN_HOSTS (ssh-keyscan -H <host>)
+# Variables do environment: VPS_APP_DIR (produção /opt/factory-monitor; staging /opt/factory-monitor-staging),
+#   PUBLIC_HEALTH_URL (ex. https://app.factoryconnect.tech/api/health · https://staging.factoryconnect.tech/api/health)
 name: Deploy
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag da release (vX.Y.Z) — ou sha de um commit da main (sem imagem publicada: build no VPS)"
+        required: true
+        type: string
+      target:
+        description: "Ambiente"
+        required: true
+        type: choice
+        default: staging
+        options: [staging, production]
+      migration_timeout_s:
+        description: "Tempo máximo das migrations (s)"
+        required: false
+        default: "600"
+        type: string
 
 concurrency:
-  group: deploy-production
+  group: deploy-${{ inputs.target }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  gate:
-    name: verificar pré-requisitos
-    runs-on: ubuntu-24.04
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
-    outputs:
-      enabled: ${{ steps.check.outputs.enabled }}
-      sha: ${{ steps.check.outputs.sha }}
-    steps:
-      - id: check
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: |
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          if [ -n "$VPS_HOST" ] && [ -n "$VPS_USER" ] && [ -n "$VPS_SSH_KEY" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Secrets VPS_HOST/VPS_USER/VPS_SSH_KEY ausentes — deploy pulado."
-          fi
-
   deploy:
-    name: deploy → VPS
-    needs: gate
-    if: needs.gate.outputs.enabled == 'true'
+    name: deploy ${{ inputs.version }} → ${{ inputs.target }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     environment:
-      name: production
+      name: ${{ inputs.target }}
+      url: ${{ vars.PUBLIC_HEALTH_URL }}
+    permissions:
+      contents: read
+      packages: read           # o GITHUB_TOKEN deste job faz o pull no VPS (login temporário, logout no fim)
     env:
-      APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/factory-monitor' }}
-      SHA: ${{ needs.gate.outputs.sha }}
+      REF: ${{ inputs.version }}
+      TARGET: ${{ inputs.target }}
+      MIGRATION_TIMEOUT_S: ${{ inputs.migration_timeout_s }}
+      APP_DIR: ${{ vars.VPS_APP_DIR || (inputs.target == 'production' && '/opt/factory-monitor' || '/opt/factory-monitor-staging') }}
     steps:
+      - name: Validar entrada
+        run: |
+          if ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ || "$REF" =~ ^[0-9a-f]{7,40}$ ]]; then
+            echo "::error::version deve ser vX.Y.Z ou um sha"; exit 1
+          fi
+          [[ "$MIGRATION_TIMEOUT_S" =~ ^[1-9][0-9]*$ ]] || { echo "::error::migration_timeout_s inválido"; exit 1; }
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ needs.gate.outputs.sha }}
+          ref: ${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: A versão é uma release publicada da main?
+        run: |
+          git fetch -q origin main
+          sha="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            if [ "$TARGET" = production ]; then
+              echo "::error::$REF não está na main — produção só recebe releases da main"; exit 1
+            fi
+            echo "::warning::$REF não está na main (permitido só em staging)"
+          fi
+          if [[ "$REF" == v* ]]; then
+            python3 scripts/release/check_release.py --tag "$REF"
+          fi
 
       - name: Configurar SSH
         env:
@@ -78,25 +91,29 @@ jobs:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_SSH_KEY" ] || [ -z "$VPS_KNOWN_HOSTS" ]; then
+            echo "::error::secrets VPS_HOST/VPS_SSH_KEY/VPS_KNOWN_HOSTS ausentes no environment $TARGET"; exit 1
+          fi
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          if [ -n "$VPS_KNOWN_HOSTS" ]; then
-            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          else
-            echo "::warning::VPS_KNOWN_HOSTS não definido — usando ssh-keyscan (TOFU)."
-            ssh-keyscan -H "$VPS_HOST" > ~/.ssh/known_hosts 2>/dev/null
-          fi
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Deploy (git → build → migrations → up -d → healthcheck, rollback se falhar)
+      - name: Deploy no VPS (remote_deploy.sh desta versão)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-              -o ServerAliveInterval=30 "$VPS_USER@$VPS_HOST" \
-              'bash -s' -- "$SHA" "$APP_DIR" < scripts/remote_deploy.sh
+          # As variáveis vão no stdin (antes do script), nunca na linha de comando do ssh (visível no `ps` do VPS).
+          {
+            printf 'export DEPLOY_TARGET=%q MIGRATION_TIMEOUT_S=%q GHCR_TOKEN=%q GHCR_USER=%q\n' \
+              "$TARGET" "$MIGRATION_TIMEOUT_S" "$GHCR_TOKEN" "$GHCR_USER"
+            cat scripts/remote_deploy.sh
+          } | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                -o ServerAliveInterval=30 "$VPS_USER@$VPS_HOST" 'bash -s' -- "$REF" "$APP_DIR"
 
       - name: Healthcheck público
         if: vars.PUBLIC_HEALTH_URL != ''
@@ -108,6 +125,12 @@ jobs:
             sleep 5
           done
           echo "::error::healthcheck público falhou: $URL"; exit 1
+
+      - name: Resumo
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+        run: echo "### Deploy ${REF} → ${TARGET} — ${STATUS}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Limpar chave
         if: always()

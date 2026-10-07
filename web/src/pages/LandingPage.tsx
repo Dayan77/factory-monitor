@@ -47,7 +47,7 @@ function Navbar() {
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
         {/* Logo */}
         <button onClick={() => scrollTo("hero")} className="flex items-center gap-2.5">
-          <span className="flex size-9 items-center justify-center rounded-xl bg-brand-500">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-brand-600">
             <svg viewBox="0 0 24 24" fill="currentColor" className="size-5 text-white">
               <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
@@ -72,7 +72,7 @@ function Navbar() {
             Login
           </Link>
           <Link to="/register"
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 transition-colors">
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 transition-colors">
             Comece Grátis
           </Link>
         </div>
@@ -98,7 +98,7 @@ function Navbar() {
           ))}
           <div className="flex gap-3 pt-2 border-t border-gray-800">
             <Link to="/login" className="flex-1 rounded-lg border border-gray-700 py-2 text-center text-sm text-gray-300 hover:bg-gray-800">Login</Link>
-            <Link to="/register" className="flex-1 rounded-lg bg-brand-500 py-2 text-center text-sm font-semibold text-white hover:bg-brand-600">Comece Grátis</Link>
+            <Link to="/register" className="flex-1 rounded-lg bg-brand-600 py-2 text-center text-sm font-semibold text-white hover:bg-brand-700">Comece Grátis</Link>
           </div>
         </div>
       )}
@@ -114,10 +114,10 @@ function Hero() {
       {/* Background grid */}
       <div className="absolute inset-0 bg-[linear-gradient(rgba(37,163,104,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(37,163,104,0.03)_1px,transparent_1px)] bg-[size:60px_60px]" />
       {/* Glow */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-600/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative mx-auto w-full min-w-0 max-w-7xl px-6 py-32 text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-1.5 text-xs font-medium text-brand-400 mb-8">
+        <span className="inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-600/10 px-4 py-1.5 text-xs font-medium text-brand-400 mb-8">
           <span className="size-1.5 rounded-full bg-brand-400 animate-pulse" />
           Indústria 4.0 — Monitoramento em tempo real
         </span>
@@ -135,7 +135,7 @@ function Hero() {
 
         <div className="flex flex-wrap justify-center gap-4">
           <Link to="/register"
-            className="rounded-xl bg-brand-500 px-8 py-3.5 text-base font-semibold text-white hover:bg-brand-600 transition-colors shadow-lg shadow-brand-500/20">
+            className="rounded-xl bg-brand-600 px-8 py-3.5 text-base font-semibold text-white hover:bg-brand-700 transition-colors shadow-lg shadow-brand-500/20">
             Comece gratuitamente
           </Link>
           <DemoButton />
@@ -154,7 +154,7 @@ function Hero() {
               <span className="size-3 rounded-full bg-red-500/60" />
               <span className="size-3 rounded-full bg-yellow-500/60" />
               <span className="size-3 rounded-full bg-green-500/60" />
-              <span className="ml-3 hidden truncate text-xs text-gray-600 font-mono sm:inline">factoryconnect.tech/dashboard</span>
+              <span className="ml-3 hidden truncate text-xs text-gray-400 font-mono sm:inline">factoryconnect.tech/dashboard</span>
               <span className="ml-auto rounded-full bg-gray-800 px-2.5 py-0.5 text-[11px] font-medium text-gray-400">Ilustração — dados fictícios</span>
             </div>
             {/* Fake dashboard */}
@@ -166,7 +166,7 @@ function Hero() {
                 { label: "Uptime", value: "99.8%", color: "text-green-400" },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
-                  <p className="text-xs text-gray-500 mb-1">{s.label}</p>
+                  <p className="text-xs text-gray-400 mb-1">{s.label}</p>
                   <p className={`text-2xl font-bold font-mono ${s.color}`}>{s.value}</p>
                 </div>
               ))}
@@ -175,7 +175,7 @@ function Hero() {
               {/* Fake chart bars */}
               <div className="sm:col-span-2 rounded-xl border border-gray-800 bg-gray-950 p-4 h-32 flex items-end gap-1.5">
                 {[60,75,55,80,70,87,65,90,72,85,78,87].map((h, i) => (
-                  <div key={i} className="flex-1 rounded-sm bg-brand-500/40 hover:bg-brand-500/60 transition-colors"
+                  <div key={i} className="flex-1 rounded-sm bg-brand-600/40 hover:bg-brand-600/60 transition-colors"
                     style={{ height: `${h}%` }} />
                 ))}
               </div>
@@ -189,7 +189,7 @@ function Hero() {
                   </svg>
                   <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-brand-400">87%</span>
                 </div>
-                <p className="text-xs text-gray-500">OEE Linha A</p>
+                <p className="text-xs text-gray-400">OEE Linha A</p>
               </div>
             </div>
           </div>
@@ -257,7 +257,7 @@ function Features() {
           {FEATURES.map((f) => (
             <div key={f.title}
               className="group rounded-2xl border border-gray-800 bg-gray-900 p-6 hover:border-brand-500/40 hover:bg-gray-900/80 transition-all duration-300">
-              <div className="mb-4 inline-flex size-12 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400 group-hover:bg-brand-500/15 transition-colors">
+              <div className="mb-4 inline-flex size-12 items-center justify-center rounded-xl bg-brand-600/10 text-brand-400 group-hover:bg-brand-600/15 transition-colors">
                 <Icon d={f.icon} size={6} />
               </div>
               <h3 className="mb-2 text-base font-semibold text-white">{f.title}</h3>
@@ -304,7 +304,7 @@ function About() {
               ].map((s) => (
                 <li key={s.label}>
                   <p className="text-2xl font-extrabold text-brand-400 font-mono">{s.value}</p>
-                  <p className="text-sm text-gray-500 mt-0.5">{s.label}</p>
+                  <p className="text-sm text-gray-400 mt-0.5">{s.label}</p>
                 </li>
               ))}
             </ul>
@@ -318,11 +318,11 @@ function About() {
               { icon: "M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 2.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125", title: "Dados Isolados", desc: "Arquitetura multi-tenant — cada empresa vê apenas seus próprios dados." },
             ].map((v) => (
               <div key={v.title} className="rounded-2xl border border-gray-800 bg-gray-900 p-5">
-                <div className="mb-3 inline-flex size-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">
+                <div className="mb-3 inline-flex size-10 items-center justify-center rounded-xl bg-brand-600/10 text-brand-400">
                   <Icon d={v.icon} size={5} />
                 </div>
-                <h4 className="text-sm font-semibold text-white mb-1">{v.title}</h4>
-                <p className="text-xs text-gray-500 leading-relaxed">{v.desc}</p>
+                <h3 className="text-sm font-semibold text-white mb-1">{v.title}</h3>
+                <p className="text-xs text-gray-400 leading-relaxed">{v.desc}</p>
               </div>
             ))}
           </div>
@@ -415,7 +415,7 @@ export function Contact() {
           <div className="rounded-2xl border border-gray-800 bg-gray-900 p-6 sm:p-8">
             {status === "sent" ? (
               <div role="status" className="flex flex-col items-center justify-center h-full py-8 text-center gap-4">
-                <div className="flex size-14 items-center justify-center rounded-full bg-brand-500/20 text-brand-400">
+                <div className="flex size-14 items-center justify-center rounded-full bg-brand-600/20 text-brand-400">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-7" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
                   </svg>
@@ -473,7 +473,7 @@ export function Contact() {
                   <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>
                 )}
                 <button type="submit" disabled={status === "sending"}
-                  className="flex w-full min-h-12 items-center justify-center gap-2 rounded-xl bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition-colors disabled:opacity-60">
+                  className="flex w-full min-h-12 items-center justify-center gap-2 rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 transition-colors disabled:opacity-60">
                   {status === "sending" && <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
                   {status === "sending" ? "Enviando…" : "Enviar mensagem"}
                 </button>
@@ -493,15 +493,15 @@ function Footer() {
     <footer className="bg-gray-950 border-t border-gray-800 py-10">
       <div className="mx-auto max-w-7xl px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-2.5">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-brand-500">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-brand-600">
             <svg viewBox="0 0 24 24" fill="currentColor" className="size-4 text-white">
               <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
           </span>
           <span className="text-sm font-semibold text-gray-400">FactoryConnect</span>
         </div>
-        <p className="text-xs text-gray-600">© 2026 FactoryConnect. Todos os direitos reservados.</p>
-        <div className="flex gap-4 text-xs text-gray-600">
+        <p className="text-xs text-gray-400">© 2026 FactoryConnect. Todos os direitos reservados.</p>
+        <div className="flex gap-4 text-xs text-gray-400">
           <Link to="/login" className="hover:text-gray-400">Login</Link>
           <Link to="/register" className="hover:text-gray-400">Cadastro</Link>
         </div>
@@ -521,7 +521,7 @@ function DemoButton() {
   return (
     <div className="flex flex-col items-center">
       <button type="button" onClick={() => void open()} disabled={busy} data-testid="open-demo"
-        className="rounded-xl border border-brand-500/60 bg-brand-500/10 px-8 py-3.5 text-base font-semibold text-brand-300 transition-colors hover:bg-brand-500/20 disabled:opacity-60">
+        className="rounded-xl border border-brand-500/60 bg-brand-600/10 px-8 py-3.5 text-base font-semibold text-brand-300 transition-colors hover:bg-brand-600/20 disabled:opacity-60">
         {busy ? "Abrindo demonstração…" : "Ver demonstração"}
       </button>
       {error && <p role="alert" className="mt-2 max-w-xs text-sm text-red-300">{error}</p>}

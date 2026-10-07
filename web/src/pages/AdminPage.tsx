@@ -1,7 +1,7 @@
+import ErrorState from "@/components/ui/ErrorState";
 import { useState } from "react";
+import { formatDate } from "@/utils/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
 import clsx from "clsx";
 import { adminApi } from "@/services/api";
 import type { TenantWithStats, TenantUser, TenantPlan } from "@/services/types";
@@ -62,7 +62,7 @@ function Modal({ title, onClose, children }: {
       <div className="w-full max-w-lg rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
           <h2 className="text-sm font-semibold text-gray-100">{title}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
+          <button onClick={onClose} className="text-fg-muted hover:text-gray-300">
             <svg viewBox="0 0 20 20" fill="currentColor" className="size-5">
               <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22z" />
             </svg>
@@ -178,7 +178,7 @@ function CreateTenantModal({ onClose }: { onClose: () => void }) {
             <input
               type="password"
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:outline-none"
-              placeholder="Senha (mín. 8 caracteres)"
+              placeholder="Senha (mín. 12 caracteres)"
               {...field("admin_password")}
             />
           </div>
@@ -193,7 +193,7 @@ function CreateTenantModal({ onClose }: { onClose: () => void }) {
           <button
             onClick={() => create.mutate()}
             disabled={create.isPending || !form.name || !form.slug || !form.admin_email || !form.admin_password}
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
           >
             {create.isPending ? "Criando..." : "Criar Empresa"}
           </button>
@@ -295,7 +295,7 @@ function EditTenantModal({ tenant, onClose }: { tenant: TenantWithStats; onClose
           <button
             onClick={() => update.mutate()}
             disabled={update.isPending}
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
           >
             {update.isPending ? "Salvando..." : "Salvar"}
           </button>
@@ -313,7 +313,7 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
   const [newUser, setNewUser] = useState({ name: "", email: "", password: "", role: "operator" });
   const [addError, setAddError] = useState("");
 
-  const { data: users = [], isLoading } = useQuery<TenantUser[]>({
+  const { data: users = [], isLoading, isError: usersError, error: usersErr, refetch: refetchUsers } = useQuery<TenantUser[]>({
     queryKey: ["admin", "tenants", tenant.id, "users"],
     queryFn: () => adminApi.listUsers(tenant.id).then((r) => r.data),
   });
@@ -350,16 +350,18 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
           <div className="flex justify-center py-8">
             <span className="size-5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
           </div>
+        ) : usersError ? (
+          <ErrorState title="Não foi possível carregar os usuários" error={usersErr} onRetry={() => void refetchUsers()} />
         ) : (
           <div className="rounded-lg border border-gray-800 overflow-hidden">
             {users.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-gray-600">Nenhum usuário cadastrado.</p>
+              <p className="px-4 py-6 text-center text-sm text-fg-muted">Nenhum usuário cadastrado.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-800 bg-gray-800/50">
                     {["Nome", "E-mail", "Papel", "Status", ""].map((h) => (
-                      <th key={h} className="px-3 py-2 text-left text-xs text-gray-500 font-medium">{h}</th>
+                      <th key={h} className="px-3 py-2 text-left text-xs text-fg-muted font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -382,7 +384,7 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => toggleUser.mutate({ userId: u.id, is_active: !u.is_active })}
-                            className="text-xs text-gray-500 hover:text-gray-300"
+                            className="text-xs text-fg-muted hover:text-gray-300"
                             title={u.is_active ? "Desativar" : "Ativar"}
                           >
                             {u.is_active ? "Desativar" : "Ativar"}
@@ -417,7 +419,7 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
             {addError && <p className="text-xs text-red-400">{addError}</p>}
             <div className="flex gap-2">
               <button onClick={() => { setShowAdd(false); setAddError(""); }} className="rounded-lg px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-700">Cancelar</button>
-              <button onClick={() => createUser.mutate()} disabled={createUser.isPending} className="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+              <button onClick={() => createUser.mutate()} disabled={createUser.isPending} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50">
                 {createUser.isPending ? "Salvando..." : "Adicionar"}
               </button>
             </div>
@@ -426,7 +428,7 @@ function UsersPanel({ tenant, onClose }: { tenant: TenantWithStats; onClose: () 
           <button
             onClick={() => setShowAdd(true)}
             disabled={users.length >= tenant.max_users}
-            className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-2.5 text-sm text-gray-500 hover:border-gray-600 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed w-full justify-center"
+            className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-2.5 text-sm text-fg-muted hover:border-gray-600 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed w-full justify-center"
           >
             <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
               <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5z" />
@@ -452,7 +454,7 @@ export default function AdminPage() {
   const [confirmDelete, setConfirmDelete] = useState<TenantWithStats | null>(null);
   const qc = useQueryClient();
 
-  const { data: tenants = [], isLoading } = useQuery<TenantWithStats[]>({
+  const { data: tenants = [], isLoading, isError: tenantsError, error: tenantsErr, refetch: refetchTenants } = useQuery<TenantWithStats[]>({
     queryKey: ["admin", "tenants"],
     queryFn: () => adminApi.listTenants().then((r) => r.data),
     refetchInterval: 30_000,
@@ -473,11 +475,11 @@ export default function AdminPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Painel de Administração</h1>
-          <p className="text-sm text-gray-500">Gerencie empresas e usuários da plataforma</p>
+          <p className="text-sm text-fg-muted">Gerencie empresas e usuários da plataforma</p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover"
         >
           <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
             <path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5z" />
@@ -495,7 +497,7 @@ export default function AdminPage() {
           { label: "Suspensas", value: suspended,      color: "text-red-400" },
         ].map((s) => (
           <div key={s.label} className="rounded-xl border border-gray-800 bg-gray-900 px-5 py-4">
-            <p className="text-xs text-gray-500">{s.label}</p>
+            <p className="text-xs text-fg-muted">{s.label}</p>
             <p className={clsx("mt-1 text-2xl font-bold font-mono", s.color)}>{s.value}</p>
           </div>
         ))}
@@ -507,9 +509,11 @@ export default function AdminPage() {
           <div className="flex justify-center py-16">
             <span className="size-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
           </div>
+        ) : tenantsError ? (
+          <ErrorState className="m-4" title="Não foi possível carregar as empresas" error={tenantsErr} onRetry={() => void refetchTenants()} />
         ) : tenants.length === 0 ? (
           <div className="py-16 text-center">
-            <p className="text-sm text-gray-500">Nenhuma empresa cadastrada.</p>
+            <p className="text-sm text-fg-muted">Nenhuma empresa cadastrada.</p>
             <button onClick={() => setShowCreate(true)} className="mt-3 text-sm text-brand-400 hover:text-brand-300">
               Criar a primeira empresa
             </button>
@@ -519,7 +523,7 @@ export default function AdminPage() {
             <thead>
               <tr className="border-b border-gray-800 bg-gray-800/30">
                 {["Empresa", "Plano", "Status", "Usuários", "Máquinas", "Criada em", "Ações"].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs text-gray-500 font-medium">{h}</th>
+                  <th key={h} className="px-4 py-3 text-left text-xs text-fg-muted font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -528,20 +532,20 @@ export default function AdminPage() {
                 <tr key={t.id} className={clsx("hover:bg-gray-800/20 transition-colors", i < tenants.length - 1 && "border-b border-gray-800/40")}>
                   <td className="px-4 py-3">
                     <p className="font-medium text-gray-100">{t.name}</p>
-                    <p className="text-xs text-gray-500 font-mono">{t.slug}</p>
+                    <p className="text-xs text-fg-muted font-mono">{t.slug}</p>
                   </td>
                   <td className="px-4 py-3">
                     <PlanBadge plan={t.plan} />
                     {t.trial_ends_at && (
-                      <p className="mt-0.5 text-xs text-gray-600">
-                        até {format(new Date(t.trial_ends_at), "dd/MM/yy", { locale: ptBR })}
+                      <p className="mt-0.5 text-xs text-fg-muted">
+                        até {formatDate(t.trial_ends_at)}
                       </p>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge active={t.is_active} />
                     {t.suspended_reason && (
-                      <p className="mt-0.5 text-xs text-gray-600 max-w-[140px] truncate" title={t.suspended_reason}>
+                      <p className="mt-0.5 text-xs text-fg-muted max-w-[140px] truncate" title={t.suspended_reason}>
                         {t.suspended_reason}
                       </p>
                     )}
@@ -556,8 +560,8 @@ export default function AdminPage() {
                       {t.machine_count}/{t.max_machines}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-500">
-                    {format(new Date(t.created_at), "dd/MM/yyyy", { locale: ptBR })}
+                  <td className="px-4 py-3 text-xs text-fg-muted">
+                    {formatDate(t.created_at)}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">

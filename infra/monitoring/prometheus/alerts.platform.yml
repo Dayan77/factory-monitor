@@ -1,0 +1,136 @@
+# Regras de alerta da PLATAFORMA (produção): VPS, backups, gateways em campo, demo pública, sondas públicas.
+# Métricas vindas dos exporters do profile monitoring (infra/docker-compose.prod.yml), não do backend:
+#   node_*                      node-exporter (disco do VPS)
+#   fm_backup_*                 textfile collector ← scripts/backup.sh (BACKUP_METRICS_FILE)
+#   fm_gateway_*, fm_demo_*,
+#   fm_ingest_dead_letters_pending  sql-exporter (infra/monitoring/sql-exporter)
+#   probe_*                     blackbox-exporter (infra/monitoring/blackbox)
+# Runbooks: docs/operations.md §8.4.
+groups:
+  - name: factoryconnect-platform
+    rules:
+      # ── VPS ──────────────────────────────────────────────────────────────────────────────────
+      - alert: FmDiskSpaceLow
+        expr: |
+          min by (mountpoint) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disco {{ $labels.mountpoint }} do VPS com menos de 15% livre"
+
+      - alert: FmDiskSpaceCritical
+        expr: |
+          min by (mountpoint) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}) < 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Disco {{ $labels.mountpoint }} do VPS com menos de 5% livre — Postgres/Influx param de gravar"
+
+      - alert: FmDiskWillFillIn24h
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}[6h], 24 * 3600) < 0
+          and on (instance, mountpoint)
+          (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"}) < 0.30
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "No ritmo atual o disco {{ $labels.mountpoint }} enche em menos de 24 h"
+
+      - alert: FmNodeExporterDown
+        expr: max(up{job="node"}) < 1 or absent(up{job="node"})
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "node-exporter não responde — disco e idade do backup sem monitoramento"
+
+      # ── Backups ──────────────────────────────────────────────────────────────────────────────
+      - alert: FmBackupTooOld
+        # cron diário (docs/operations.md §4.2): 26 h dá folga para um atraso sem ficar 2 dias sem backup
+        expr: time() - max(fm_backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Último backup completo há {{ $value | humanizeDuration }} (esperado: diário)"
+
+      - alert: FmBackupNeverReported
+        expr: absent(fm_backup_last_success_timestamp_seconds) and on() (count(up{job="node"} == 1) > 0)
+        for: 26h
+        labels: { severity: critical }
+        annotations:
+          summary: "Nenhum backup registrado há 26 h (cron não instalado ou BACKUP_METRICS_FILE não definido)"
+
+      - alert: FmBackupFailed
+        expr: max(fm_backup_last_failure_timestamp_seconds) > max(fm_backup_last_success_timestamp_seconds)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "A última execução do backup FALHOU (log do cron: journalctl -t fm-backup)"
+
+      # ── Gateways em campo ────────────────────────────────────────────────────────────────────
+      - alert: FmGatewayOffline
+        # sem contato há mais de 6 heartbeats (mínimo 3 min)
+        expr: |
+          max by (tenant, gateway) (fm_gateway_seconds_since_seen{job="fm-postgres"})
+            > max by (tenant, gateway) (clamp_min(fm_gateway_heartbeat_seconds{job="fm-postgres"} * 6, 180))
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Gateway {{ $labels.gateway }} ({{ $labels.tenant }}) sem contato há {{ $value | humanizeDuration }}"
+
+      - alert: FmSqlExporterDown
+        expr: max(up{job="fm-postgres"}) < 1 or absent(up{job="fm-postgres"})
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "sql-exporter não responde — gateways offline e dead letters sem monitoramento"
+
+      - alert: FmDeadLettersPending
+        expr: max(fm_ingest_dead_letters_pending{job="fm-postgres"}) > 0
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} leitura(s) em dead letter aguardando reprocessamento há mais de 1 h"
+
+      # ── Demo pública ─────────────────────────────────────────────────────────────────────────
+      - alert: FmDemoPlantDown
+        # só quando a demo está instalada (há dado do tenant demo); 503 da planta = tempo simulado parado
+        expr: |
+          max(probe_success{job="blackbox-demo"}) < 1
+          and on() (count(fm_demo_last_data_age_seconds{job="fm-postgres"}) > 0)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Planta virtual da demo pública fora do ar ou atrasada (/health ≠ 200)"
+
+      - alert: FmDemoDataStale
+        expr: max(fm_demo_last_data_age_seconds{job="fm-postgres"}) > 600
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Demo pública sem dado novo há {{ $value | humanizeDuration }} (visitantes veem a planta parada)"
+
+      # ── Sondas públicas (DNS + Traefik + TLS) ────────────────────────────────────────────────
+      - alert: FmPublicEndpointDown
+        expr: max by (instance, env) (probe_success{job="blackbox-public"}) < 1
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} ({{ $labels.env }}) não responde 200 por HTTPS"
+
+      - alert: FmTlsCertificateExpiring
+        expr: min by (instance) (probe_ssl_earliest_cert_expiry{job="blackbox-public"}) - time() < 14 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Certificado TLS de {{ $labels.instance }} expira em {{ $value | humanizeDuration }} (renovação do Let's Encrypt falhou?)"
+
+      # ── O próprio monitoramento ─────────────────────────────────────────────────────────────
+      - alert: FmAlertmanagerDown
+        expr: max(up{job="alertmanager"}) < 1 or absent(up{job="alertmanager"})
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Alertmanager fora do ar — os alertas não estão sendo enviados por e-mail"

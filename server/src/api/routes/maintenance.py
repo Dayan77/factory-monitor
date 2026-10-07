@@ -27,6 +27,7 @@ from ...db import get_db
 from ...models import (Component, ComponentType, DowntimeEvent, FailureRecord, Line, Machine, MaintenanceAbsence,
                        MaintenancePlan, Plant, Position, RemovalReason, User, WorkOrder, WorkOrderReplacement)
 from ...notifications import service as notif
+from ...services.response_cache import cached_endpoint
 from ...services import clock, webhooks
 from ...services.maintenance import core, kpis as mk, service as ms
 from ...services.maintenance import usage as mu
@@ -127,6 +128,7 @@ async def list_plans(user: CurrentUser, db: DB, position_id: Optional[str] = Non
 
 
 @plans_router.get("/status", dependencies=[Depends(require_any(*MAINT_READ))])
+@cached_endpoint("plans_status")   # Sprint 7: short TTL, per user (services/response_cache.py)
 async def plans_status(user: CurrentUser, db: DB, plant_id: Optional[str] = None, line_id: Optional[str] = None,
                        machine_id: Optional[str] = None,
                        state: Optional[list[Literal["ok", "due_soon", "due", "overdue"]]] = Query(None)):
@@ -605,8 +607,25 @@ def _failure_status(f: FailureRecord) -> str:
 
 async def _failure_out(db: AsyncSession, f: FailureRecord) -> dict:
     names = await ms.asset_names(db, f.tenant_id, [f.machine_id], [f.position_id])
-    iso = clock.iso
     comp = await db.get(Component, f.component_id) if f.component_id else None
+    return _failure_dict(f, names, comp)
+
+
+async def _failures_out(db: AsyncSession, tenant_id: str, rows: list[FailureRecord]) -> list[dict]:
+    """Sprint 7 (performance): a list of failures with ONE name lookup and ONE component query (it was 2–3 queries
+    per failure: 2 000 failures of a month took > 1 s, the monthly maintenance report asks for them)."""
+    if not rows:
+        return []
+    names = await ms.asset_names(db, tenant_id, list({f.machine_id for f in rows}),
+                                 list({f.position_id for f in rows if f.position_id}))
+    cids = list({f.component_id for f in rows if f.component_id})
+    comps = {c.id: c for c in (await db.execute(select(Component).where(
+        Component.tenant_id == tenant_id, Component.id.in_(cids)))).scalars()} if cids else {}
+    return [_failure_dict(f, names, comps.get(f.component_id)) for f in rows]
+
+
+def _failure_dict(f: FailureRecord, names: dict, comp) -> dict:
+    iso = clock.iso
     return {
         "id": f.id, "machine_id": f.machine_id, "machine_name": names.get(f.machine_id),
         "line_id": names.get(("line", f.machine_id)), "position_id": f.position_id,
@@ -700,7 +719,7 @@ async def list_failures(user: CurrentUser, db: DB, machine_id: Optional[str] = N
     if stop:
         q = q.where(FailureRecord.failed_at < _aware(stop))
     rows = (await db.execute(q.order_by(FailureRecord.failed_at.desc()).limit(limit))).scalars().all()
-    return [await _failure_out(db, f) for f in rows]
+    return await _failures_out(db, user.tenant_id, rows)
 
 
 @failures_router.get("/{failure_id}", dependencies=[Depends(require_any(*MAINT_READ))])

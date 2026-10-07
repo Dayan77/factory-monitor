@@ -13,7 +13,8 @@ PY          ?= python3
 .PHONY: help env dev up infra down stop ps logs config migrate seed \
         venv test test-server test-edge test-scripts test-golden test-web web-check \
         monitoring test-infra lint-infra backup restore backup-restore-test backup-restore-test-dev \
-        mqtt-gateway-add mqtt-gateway-remove mqtt-gateway-list mqtt-reload
+        mqtt-gateway-add mqtt-gateway-remove mqtt-gateway-list mqtt-reload \
+        security secrets-scan deps-audit headers-test release-check staging-config
 
 help: ## Lista os alvos
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -81,11 +82,11 @@ monitoring: env ## Sobe Prometheus (:9090) + Grafana (:3000, painel FactoryConne
 	$(COMPOSE) --profile monitoring up -d prometheus grafana
 	@echo "✓ Grafana http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD, padrão admin) · Prometheus http://localhost:9090"
 
-test-infra: ## Testes de infra com docker: mosquitto prod (auth/ACL/TLS), Traefik/XFF, monitoring
+test-infra: ## Testes de infra com docker: mosquitto prod, Traefik/XFF, monitoring/alertas, staging, cabeçalhos/CSP
 	$(VENV)/bin/python -m pytest -q infra/tests
 
 lint-infra: ## shellcheck + actionlint (via docker, versões fixas)
-	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 -S warning scripts/*.sh infra/mosquitto/prod/*.sh
+	docker run --rm -v "$(CURDIR):/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 -S warning scripts/*.sh infra/mosquitto/prod/*.sh infra/monitoring/alertmanager/*.sh
 	docker run --rm -v "$(CURDIR):/repo:ro" -w /repo rhysd/actionlint:1.7.7 -color
 
 BACKUP_DIR ?= ./backups
@@ -118,3 +119,34 @@ mqtt-gateway-list: ## Lista gateways com credencial MQTT
 
 mqtt-reload: ## Re-renderiza passwd/acl no fm_mosquitto de produção e recarrega (SIGHUP)
 	MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh reload
+
+# ── Segurança e release (docs/operations.md §11 e §13) ──────────────────────────
+GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.30.1
+AUDIT_VENV     ?= .venv-audit
+
+security: secrets-scan deps-audit headers-test ## Tudo que o workflow Security roda (gitleaks, pip-audit, npm audit, cabeçalhos)
+
+secrets-scan: ## gitleaks no histórico completo do git (aceites em .github/security/gitleaksignore)
+	docker run --rm -v "$(CURDIR):/repo:ro" $(GITLEAKS_IMAGE) git /repo --config /repo/.github/security/gitleaks.toml \
+	  --gitleaks-ignore-path /repo/.github/security/gitleaksignore --redact --no-banner
+
+deps-audit: ## pip-audit (server, edge, scripts) + npm audit (web, site) → portão com a lista de aceites
+	@test -x $(AUDIT_VENV)/bin/pip-audit || { $(PY) -m venv $(AUDIT_VENV) && $(AUDIT_VENV)/bin/pip install -q pip-audit==2.10.1; }
+	@mkdir -p .audit && rc=0; \
+	for p in server:server/requirements-dev.txt edge:edge/requirements-dev.txt scripts:scripts/requirements.txt; do \
+	  $(AUDIT_VENV)/bin/pip-audit -r $${p#*:} --progress-spinner off -f json -o .audit/pip-$${p%%:*}.json >/dev/null 2>&1; \
+	  $(PY) scripts/security/audit_gate.py pip .audit/pip-$${p%%:*}.json --project $${p%%:*} || rc=1; \
+	done; \
+	for p in web site; do \
+	  (cd $$p && npm audit --json --package-lock-only > ../.audit/npm-$$p.json 2>/dev/null); \
+	  $(PY) scripts/security/audit_gate.py npm .audit/npm-$$p.json --project $$p || rc=1; \
+	done; exit $$rc
+
+headers-test: ## Cabeçalhos de segurança/CSP com nginx real + Chromium (usa web/dist e site/dist se existirem)
+	$(VENV)/bin/python -m pytest -q -rs infra/tests/test_security_headers.py
+
+release-check: ## VERSION é SemVer e tem seção datada no CHANGELOG.md (opcional: TAG=vX.Y.Z)
+	$(PY) scripts/release/check_release.py $(if $(TAG),--tag $(TAG))
+
+staging-config: ## Valida o compose de staging com .env.staging.example
+	docker compose --env-file .env.staging.example -f infra/docker-compose.staging.yml config -q && echo "✓ staging"

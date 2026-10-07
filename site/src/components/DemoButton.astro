@@ -9,7 +9,7 @@ interface Props {
   /** classes do invólucro; sem nenhuma, "inline-flex" (passe a exibição junto: "hidden md:inline-flex") */
   class?: string;
   statusClass?: string;
-  /** rótulo curto ("Ver demo") para o cabeçalho em telas largas; nome acessível continua "Ver demonstração" */
+  /** rótulo curto ("Ver demo") no cabeçalho em telas largas; o nome acessível começa pelo texto visível (WCAG 2.5.3) */
   short?: boolean;
 }
 const { placement, variant = "ghost", class: extra = "", statusClass = "", short = false } = Astro.props;
@@ -22,7 +22,7 @@ const id = `demo-status-${placement}${short ? "-short" : ""}`;
     data-demo-status-url={DEMO_STATUS_URL}
     data-demo-event-url={DEMO_EVENT_URL || undefined}
     aria-describedby={id}
-    aria-label={short ? "Ver demonstração" : undefined}
+    aria-label={short ? "Ver demo — abrir a demonstração" : undefined}
     data-demo-loading={short ? "Abrindo…" : undefined}
     class:list={[variant === "primary" ? "btn-primary" : "btn-ghost", "gap-2 whitespace-nowrap aria-busy:cursor-progress aria-busy:opacity-80"]}
   >

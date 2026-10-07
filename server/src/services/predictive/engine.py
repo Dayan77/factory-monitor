@@ -22,6 +22,8 @@ from ...db import AsyncSessionLocal
 from ...models import (ConditionBaseline, ConditionFeature, Position, PredictiveAlert, PredictiveAlertEvent,
                        PredictiveDirty, PredictiveMonitor, ProductionPlanDay, Tag, UsageBucket)
 from ...models.tag import CYCLE_ROLES, SemanticRole
+import time as _time
+
 from .. import clock
 from ..ingest import watermarks
 from . import core, features as fx
@@ -35,6 +37,10 @@ ACTION_OF = {"acknowledge": "acknowledge", "convert": "convert", "unconvert": "u
 # late readings: a window is extracted this long after it closes (settings.predictive_grace_s, default 2 min)
 GRACE = timedelta(seconds=float(getattr(settings, "predictive_grace_s", 120.0)))
 MAX_WINDOWS_PER_RUN = 400
+# Sprint 7 (backlog robustness): one run stops adding windows/blocks after this many seconds and commits what it has;
+# the next run resumes from the cursor. Before, a 72 h backlog of slow Influx extractions could exceed the run's
+# timeout (predictive_monitor_timeout_s), roll everything back and start over every tick — never advancing.
+EXTRACT_BUDGET_S = float(getattr(settings, "predictive_extract_budget_s", 60.0))
 
 
 def _utc(t: Optional[datetime]) -> Optional[datetime]:
@@ -312,7 +318,11 @@ async def extract(db: AsyncSession, m: PredictiveMonitor, reset: ConditionBaseli
             start = anchor + k * dur
             if prev is not None and _utc(prev.end_at) > start:
                 start = _utc(prev.end_at)
+        deadline = _time.monotonic() + EXTRACT_BUDGET_S
         while start + dur <= horizon and made < MAX_WINDOWS_PER_RUN:
+            if made and _time.monotonic() > deadline:
+                log.info("predictive.extract_budget", monitor_id=m.id, windows=made, resume_at=clock.iso(start))
+                break
             end = start + dur
             wf = await _time_window(m, tags, start, end)
             await store_window(db, m, reset, start=start, end=end, x=wf.x, n=wf.n, valid=wf.valid,
@@ -394,7 +404,11 @@ async def extract_cycles(db: AsyncSession, m: PredictiveMonitor, reset: Conditio
     carry = float(cur["carry"]) if cur else 0.0
     k0 = (seg_prev.i + 1) if seg_prev else ((prev.i + 1) if prev else 1)
     caught_up = False
+    deadline = _time.monotonic() + EXTRACT_BUDGET_S
     while made < MAX_WINDOWS_PER_RUN:
+        if made and _time.monotonic() > deadline:
+            log.info("predictive.extract_budget", monitor_id=m.id, blocks=made, resume_at=clock.iso(after))
+            break
         nxt = await _next_close(m, tags, after, horizon, carry) if after < horizon else None
         if nxt is None:
             caught_up = True

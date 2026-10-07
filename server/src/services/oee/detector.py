@@ -141,6 +141,41 @@ async def influx_fetch(tenant_id: str, tag_ids: list[str], after: datetime, stop
     return out
 
 
+influx_fetch.supports_limit = True        # type: ignore[attr-defined]
+
+
+class TenantPrefetch:
+    """Sprint 7 (scale): the readings of the signal tags of a tenant's caught-up machines, read with ONE Influx query
+    per tick ((start, stop]) instead of one per machine — 200 machines every DOWNTIME_TICK_S were 20 Flux queries/s
+    and a large share of InfluxDB's CPU. Called like influx_fetch; a request outside the prefetched range or tags
+    (a rewind after late data, a machine catching up) goes to influx_fetch itself."""
+
+    supports_limit = True
+
+    def __init__(self, tenant_id: str, tag_ids: set[str], start: datetime, stop: datetime,
+                 rows: list[tuple[str, datetime, float]]) -> None:
+        self.tenant_id, self.tags, self.start, self.stop, self.rows = tenant_id, tag_ids, start, stop, rows
+        self.hits = self.misses = 0
+
+    async def __call__(self, tenant_id: str, tag_ids: list[str], after: datetime, stop: datetime,
+                       limit: Optional[int] = None) -> list[tuple[str, datetime, float]]:
+        if tenant_id != self.tenant_id or after < self.start or stop > self.stop or not set(tag_ids) <= self.tags:
+            self.misses += 1
+            return await influx_fetch(tenant_id, tag_ids, after, stop, limit=limit)
+        self.hits += 1
+        want = set(tag_ids)
+        out, count = [], {}
+        for r in self.rows:                       # sorted by (ts, tag) like influx_fetch
+            if r[0] in want and after < r[1] <= stop:
+                if limit:
+                    c = count.get(r[0], 0)
+                    if c >= limit:
+                        continue
+                    count[r[0]] = c + 1
+                out.append(r)
+        return out
+
+
 async def influx_latest(tenant_id: str, tag_ids: list[str], after: datetime, stop: datetime) -> Optional[datetime]:
     """Timestamp of the latest reading of the tags in (after, stop] (one aggregate per tag, computed by Influx)."""
     tenant_id = ensure_uuid(tenant_id, "tenant_id")
@@ -737,8 +772,8 @@ async def detect_machine(db: AsyncSession, info: MachineInfo, cal: Calendar, now
         ideal = pri.fallback_pri
         mode = "cycle" if ideal else "run"
     limit = settings.downtime_slice_readings if slice_readings is None else slice_readings
-    if fetch is influx_fetch:
-        rows = await influx_fetch(info.tenant_id, tags.all, old_cp, now, limit=limit or None)
+    if getattr(fetch, "supports_limit", False):
+        rows = await fetch(info.tenant_id, tags.all, old_cp, now, limit=limit or None)
         full = None
     else:
         full = rows = await fetch(info.tenant_id, tags.all, old_cp, now)
@@ -831,7 +866,7 @@ last_tick_stats: dict[str, dict] = {}
 
 
 async def run_machine(info: MachineInfo, cal: Calendar, now: datetime, fetch: Fetch = influx_fetch,
-                      budget_s: Optional[float] = None) -> dict:
+                      budget_s: Optional[float] = None, tags: Optional[SignalTags] = None) -> dict:
     """Detector passes for one machine in this tick: bounded slices until it is caught up, the checkpoint stops
     moving (readings not settled yet) or the catch-up budget is spent — then it yields (the next tick resumes from
     the checkpoint, nothing lost). Each slice has its own timeout and commits on its own."""
@@ -845,7 +880,7 @@ async def run_machine(info: MachineInfo, cal: Calendar, now: datetime, fetch: Fe
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                res = await asyncio.wait_for(detect_machine(db, info, cal, now, fetch),
+                res = await asyncio.wait_for(detect_machine(db, info, cal, now, fetch, tags=tags),
                                              timeout=settings.downtime_machine_timeout_s)
         except asyncio.TimeoutError:
             # nothing is lost: the machine's cursor did not advance, the next tick picks it up again
@@ -906,13 +941,18 @@ async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch,
         for q in queues.values():
             if q:
                 order.append(q.pop(0))
+    prefetch: dict[str, TenantPrefetch] = {}
+    sigtags: dict[str, SignalTags] = {}
+    if fetch is influx_fetch and settings.downtime_prefetch_window_s > 0:
+        prefetch, sigtags = await _prefetch_tenants(jobs, now)
     sem = asyncio.Semaphore(max(1, int(settings.detector_concurrency)))
     stats: dict[str, dict] = {}
 
     async def one(info: MachineInfo, cal: Calendar) -> bool:
         async with sem:
             try:
-                stats[info.id] = await run_machine(info, cal, now, fetch)
+                stats[info.id] = await run_machine(info, cal, now, prefetch.get(info.tenant_id, fetch),
+                                                   tags=sigtags.get(info.id))
                 return not stats[info.id]["timeout"]
             except Exception as e:  # noqa: BLE001
                 log.warning("downtime.detector.error", machine_id=info.id[:8], error=str(e)[:300],
@@ -923,6 +963,42 @@ async def run_tick(now: Optional[datetime] = None, fetch: Fetch = influx_fetch,
     last_tick_stats.clear()
     last_tick_stats.update(stats)
     return sum(1 for d in done if d)
+
+
+async def _prefetch_tenants(jobs: list, now: datetime) -> tuple[dict[str, "TenantPrefetch"], dict[str, SignalTags]]:
+    """One Influx query per tenant covering its machines whose checkpoint is within DOWNTIME_PREFETCH_WINDOW_S
+    (caught up, no pending late data). Errors fall back to per-machine queries."""
+    from ...db import AsyncSessionLocal
+    out: dict[str, TenantPrefetch] = {}
+    sig: dict[str, SignalTags] = {}
+    window = timedelta(seconds=settings.downtime_prefetch_window_s)
+    by_tenant: dict[str, list[MachineInfo]] = {}
+    for info, _ in jobs:
+        by_tenant.setdefault(info.tenant_id, []).append(info)
+    for tid, infos in by_tenant.items():
+        try:
+            async with AsyncSessionLocal() as db:
+                ids = [i.id for i in infos]
+                cps = {m: (cp, late) for m, cp, late in (await db.execute(select(
+                    DowntimeDetectorState.machine_id, DowntimeDetectorState.checkpoint,
+                    DowntimeDetectorState.late_from).where(DowntimeDetectorState.tenant_id == tid,
+                                                           DowntimeDetectorState.machine_id.in_(ids)))).all()}
+                recent = {}
+                for i in infos:
+                    cp, late = cps.get(i.id, (None, None))
+                    if cp is not None and late is None and now - window <= cp <= now:
+                        sig[i.id] = await signal_tags(db, tid, i.id)
+                        if sig[i.id].all:
+                            recent[i.id] = cp
+            if len(recent) < 2:
+                continue
+            tag_ids = {t for m in recent for t in sig[m].all}
+            start = min(recent.values())
+            rows = await influx_fetch(tid, sorted(tag_ids), start, now)
+            out[tid] = TenantPrefetch(tid, tag_ids, start, now, rows)
+        except Exception as e:  # noqa: BLE001 — per-machine queries then
+            log.warning("downtime.detector.prefetch_error", tenant_id=tid[:8], error=str(e)[:200])
+    return out, sig
 
 
 async def run_downtime_detector() -> None:

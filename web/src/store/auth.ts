@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { isAxiosError } from "axios";
+import axios from "axios";
 import { authApi } from "@/services/api";
+import { authFlowApi, isMfaChallenge, storeTokens, type TokenPair } from "@/services/accountApi";
 import { purgeOtherUsersSnapshots } from "@/services/offline";
 
 export interface AuthUser {
@@ -16,12 +18,20 @@ export interface AuthUser {
   line_ids?: string[];
 }
 
+export type LoginResult = { mfa: false } | { mfa: true; mfaToken: string };
+
 interface AuthState {
   user: AuthUser | null;
   loading: boolean;
   /** True when the user came from the device cache because the server was unreachable (offline). */
   offline: boolean;
-  login:  (email: string, password: string) => Promise<void>;
+  /** First step of the login. Resolves `{mfa: true, mfaToken}` when the account has MFA (then call verifyMfa). */
+  login:  (email: string, password: string) => Promise<LoginResult>;
+  /** Second step: TOTP code or recovery code for the challenge returned by login(). */
+  verifyMfa: (mfaToken: string, code: { code: string } | { recovery_code: string }) => Promise<void>;
+  /** A token pair obtained elsewhere (accepted invitation) becomes the session. */
+  signInWithTokens: (t: TokenPair) => Promise<void>;
+  /** Ends the session on the server too (best effort: offline the local session is dropped anyway). */
   logout: () => void;
   loadMe: () => Promise<void>;
 }
@@ -58,9 +68,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email, password) => {
     set({ loading: true });
     try {
-      const res = await authApi.login(email, password);
-      localStorage.setItem("access_token",  res.data.access_token);
-      localStorage.setItem("refresh_token", res.data.refresh_token);
+      const res = await authFlowApi.login(email, password);
+      if (isMfaChallenge(res.data)) return { mfa: true, mfaToken: res.data.mfa_token };
+      storeTokens(res.data);
+      const me = await authApi.me();
+      cacheUser(me.data);
+      set({ user: me.data, offline: false });
+      return { mfa: false };
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  verifyMfa: async (mfaToken, code) => {
+    set({ loading: true });
+    try {
+      const res = await authFlowApi.mfaVerify(mfaToken, code);
+      storeTokens(res.data);
       const me = await authApi.me();
       cacheUser(me.data);
       set({ user: me.data, offline: false });
@@ -69,7 +93,21 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
+  signInWithTokens: async (t) => {
+    storeTokens(t);
+    const me = await authApi.me();
+    cacheUser(me.data);
+    set({ user: me.data, offline: false });
+  },
+
   logout: () => {
+    const token = localStorage.getItem("access_token");
+    if (token) {
+      // revoke the session server side; the header is set here because the tokens are cleared right below
+      void axios.post(`${import.meta.env.VITE_API_URL ?? ""}/api/auth/logout`, null, {
+        headers: { Authorization: `Bearer ${token}` }, timeout: 5_000,
+      }).catch(() => undefined);
+    }
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
     cacheUser(null);

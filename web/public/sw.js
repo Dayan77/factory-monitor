@@ -2,6 +2,9 @@
  *
  * - App shell: navigations are network-first and fall back to the cached index.html, so the
  *   technician app (/m) and the operator tablet (/op, own manifest /op.webmanifest) open without signal. Hashed build assets (/assets/*) are cache-first.
+ * - Code splitting: every screen is a separate chunk. On install the worker precaches the chunks listed in
+ *   /asset-manifest.json (written by the build) so a screen never opened before still works offline, and on
+ *   activate it deletes the chunks of previous deploys (the cache would otherwise grow with every release).
  * - API calls (/api, /ws) are NEVER handled here: offline data is kept by the app itself
  *   (src/services/offline.ts) and always shown flagged as "salvo às …".
  * - Push: shows the notification (emergency calls stay on screen and vibrate) and forwards it to open
@@ -9,7 +12,50 @@
  * Registered with ?dev=1 under `vite` dev: push only, no caching.
  */
 const DEV = new URL(self.location.href).searchParams.has("dev");
-const CACHE = "fm-shell-v2";
+const CACHE = "fm-shell-v3";
+// replaced at build time (vite.config.ts → fm-asset-manifest): a new deploy = a new worker
+const BUILD = "__FM_BUILD_ID__";
+const MANIFEST = "/asset-manifest.json";
+
+async function buildAssets() {
+  try {
+    const res = await fetch(MANIFEST, { cache: "no-cache" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.files) ? data.files.filter((f) => typeof f === "string" && f.startsWith("/assets/")) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Precache this build's chunks, 4 at a time (a single failure must not abort the install). */
+async function precacheAssets(cache) {
+  const files = await buildAssets();
+  if (!files) return;
+  const queue = files.slice();
+  const worker = async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      if (await cache.match(f)) continue;
+      try {
+        const res = await fetch(f);
+        if (res.ok) await cache.put(f, res);
+      } catch { /* offline during install: cached on first use instead */ }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+}
+
+/** Drop hashed chunks that no longer belong to the current build. */
+async function pruneAssets(cache) {
+  const files = await buildAssets();
+  if (!files) return;
+  const keep = new Set(files);
+  const keys = await cache.keys();
+  await Promise.all(keys.map((req) => {
+    const p = new URL(req.url).pathname;
+    return p.startsWith("/assets/") && !keep.has(p) && !/hls/.test(p) ? cache.delete(req) : undefined;
+  }));
+}
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/op.webmanifest", "/favicon.svg", "/theme-init.js", "/manifest-init.js",
   "/icons/icon-192.png", "/icons/icon-512.png", "/icons/op-192.png", "/icons/op-512.png"];
 
@@ -19,7 +65,10 @@ self.addEventListener("install", (event) => {
     return;
   }
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => undefined).then(() => self.skipWaiting()),
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL).catch(() => undefined).then(() => precacheAssets(c)))
+      .catch(() => undefined)
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -27,6 +76,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => caches.open(CACHE).then(pruneAssets).catch(() => undefined))
       .then(() => self.clients.claim()),
   );
 });

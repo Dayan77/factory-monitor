@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import KpiInfo from "@/components/ui/KpiInfo";
 import { OverdueWorkOrdersCard } from "@/components/maintenance/MaintenancePanels";
 import PredictiveCard from "@/components/predictive/PredictiveCard";
 import { useAuthStore } from "@/store/auth";
@@ -51,8 +52,8 @@ function LineCard({ line }: { line: OverviewLine }) {
         type="button"
         onClick={() => navigate(oeeLink("line", line.line_id))}
         className="-m-2 flex items-center gap-4 rounded-xl p-2 text-left transition-colors hover:bg-surface-2/60"
-        aria-label={`Ver análise de OEE de ${line.name}`}
       >
+        <span className="sr-only">Ver análise de OEE de {line.name}: </span>
         <KpiRing value={line.oee} label="OEE hoje" sublabel="OEE hoje" size={112} />
         <ApqBreakdown className="min-w-0 flex-1" availability={line.availability} performance={line.performance} quality={line.quality} />
       </button>
@@ -210,7 +211,7 @@ function GatewayWarning({ data, now }: { data: Overview; now: number }) {
   const bad = (data.gateways ?? []).filter((g) => g.status === "offline" || g.status === "degraded");
   if (!bad.length) return null;
   return (
-    <div role="status" data-testid="raiox-gateway-warning" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warn-solid/40 bg-warn-solid/10 px-4 py-3 text-body text-fg">
+    <div role="status" id="raiox-gateways" data-testid="raiox-gateway-warning" className="scroll-mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warn-solid/40 bg-warn-solid/10 px-4 py-3 text-body text-fg">
       <p>
         {bad.map((g, i) => (
           <span key={g.id}>{i > 0 && "; "}<strong>{g.name}</strong> {g.status === "offline" ? "offline" : "degradado"}{g.last_seen_at ? ` (visto ${formatAgo(secondsSince(g.last_seen_at, now) ?? 0)})` : ""}</span>
@@ -226,8 +227,14 @@ export default function RaioXPage() {
   const { tree, plant } = usePlant();
   const overview = useOverview(plant?.id);
   const now = useNow(15_000);
-  const data = overview.data;
+  // the line cards render in an interruptible (time-sliced) pass: the tablet / phone stays responsive while the
+  // whole plant arrives at once (Lighthouse TBT)
+  const data = useDeferredValue(overview.data);
+  // secondary cards (faults, predictive, losses, life, overdue WOs) mount after the first paint, also time-sliced
+  const [secondary, setSecondary] = useState(false);
+  useEffect(() => { startTransition(() => setSecondary(true)); }, []);
   const generated = secondsSince(data?.generated_at, now);
+  const gatewaysDown = (data?.gateways ?? []).filter((g) => g.status === "offline" || g.status === "degraded").length;
 
   const lines = useMemo(
     () => (data?.lines ?? []).slice().sort((a, b) => (b.open_downtime_count - a.open_downtime_count) || ((a.oee ?? 2) - (b.oee ?? 2))),
@@ -239,9 +246,15 @@ export default function RaioXPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-title text-fg">Raio-X {data?.plant_name ? `· ${data.plant_name}` : plant ? `· ${plant.name}` : ""}</h2>
-          <p className="text-caption text-fg-subtle">
+          <p className="flex min-h-8 flex-wrap items-center gap-x-1.5 text-caption text-fg-muted sm:min-h-0">
+            <span>OEE por linha</span><KpiInfo kpi="oee" /><span aria-hidden="true">·</span>
             Dia produtivo {data?.productive_day ? formatDate(data.productive_day) : "—"}
             {generated != null && ` · calculado ${formatAgo(generated)}`}
+            {gatewaysDown > 0 && (
+              <a href="#raiox-gateways" className="ml-1 inline-flex min-h-6 items-center gap-1 rounded-full bg-warn-solid/15 px-2 font-medium text-warn underline-offset-2 hover:underline">
+                <span aria-hidden="true">⚠</span> {gatewaysDown} gateway{gatewaysDown > 1 ? "s" : ""} com problema
+              </a>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -258,12 +271,12 @@ export default function RaioXPage() {
         <ErrorState title="Não foi possível calcular o Raio-X" error={overview.error} onRetry={() => void overview.refetch()} />
       ) : (
         <>
-          {data && <GatewayWarning data={data} now={now} />}
           <section aria-label="Linhas" >
             {!data ? (
               <LoadingRegion label="Calculando OEE das linhas…">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {[0, 1, 2].map((i) => <Skeleton key={i} className="h-80 rounded-xl" />)}
+                  {/* same height as a line card: no jump when the data arrives */}
+                  {Array.from({ length: Math.max(1, Math.min(6, plant?.lines.length ?? 3)) }, (_, i) => <Skeleton key={i} className="h-[30rem] rounded-xl" />)}
                 </div>
               </LoadingRegion>
             ) : lines.length === 0 ? (
@@ -275,12 +288,19 @@ export default function RaioXPage() {
             )}
           </section>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <MachinesInFault tree={plant} overview={data} now={now} />
-            <PredictiveCard />
-            {data ? <TopLosses data={data} plantId={plant?.id} /> : <Skeleton className="h-64 rounded-xl" />}
-            {data ? <NearEol data={data} /> : <Skeleton className="h-64 rounded-xl" />}
-            <OverdueWorkOrdersCard />
+          {/* below the line cards: it arrives with the overview and, above them, would push the cards down (CLS);
+              the header line already flags it right away */}
+          {data && <GatewayWarning data={data} now={now} />}
+          <div className="grid gap-4 [contain-intrinsic-size:auto_40rem] [content-visibility:auto] lg:grid-cols-3">
+            {secondary ? (
+              <>
+                <MachinesInFault tree={plant} overview={data} now={now} />
+                <PredictiveCard />
+                {data ? <TopLosses data={data} plantId={plant?.id} /> : <Skeleton className="h-64 rounded-xl" />}
+                {data ? <NearEol data={data} /> : <Skeleton className="h-64 rounded-xl" />}
+                <OverdueWorkOrdersCard />
+              </>
+            ) : [0, 1, 2].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
           </div>
         </>
       )}

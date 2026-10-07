@@ -97,6 +97,62 @@ RETURNING m.id::text, m.tenant_id::text, m.name, m.status::text,
           prev.old_status::text, m.last_seen_at
 """)
 
+# Sprint 7 (scale): _MARK_SEEN_SQL for several machines of one tenant in one statement (one row per machine: the
+# reading it would end with), rows locked in machine-id order.
+_MARK_SEEN_MANY_SQL = text("""
+WITH inp AS (
+    SELECT i.tag_id, i.seen_at, i.fresh, i.write_before
+      FROM unnest(CAST(:tag_ids AS uuid[]), CAST(:seen AS timestamptz[]), CAST(:fresh AS boolean[]),
+                  CAST(:write_before AS timestamptz[])) AS i(tag_id, seen_at, fresh, write_before)
+), prev AS (
+    SELECT m.id, m.status AS old_status, inp.seen_at, inp.fresh, inp.write_before,
+           EXISTS (SELECT 1 FROM tags rt
+                    WHERE rt.machine_id = m.id AND rt.semantic_role = 'run_state'
+                      AND rt.position_id IS NULL AND rt.is_active) AS has_run_state
+      FROM inp
+      JOIN tags t ON t.id = inp.tag_id
+      JOIN machines m ON m.id = t.machine_id
+     WHERE t.tenant_id = CAST(:tenant_id AS uuid)
+       AND m.tenant_id = CAST(:tenant_id AS uuid)
+     ORDER BY m.id
+       FOR UPDATE OF m
+)
+UPDATE machines m
+   SET last_seen_at = GREATEST(COALESCE(m.last_seen_at, prev.seen_at), prev.seen_at),
+       status = CASE WHEN prev.fresh AND m.status IN ('unknown', 'stopped') AND NOT prev.has_run_state
+                     THEN 'running'::machinestatus ELSE m.status END
+  FROM prev
+ WHERE m.id = prev.id
+   AND ((prev.fresh AND m.status IN ('unknown', 'stopped') AND NOT prev.has_run_state)
+        OR m.last_seen_at IS NULL
+        OR m.last_seen_at < prev.write_before)
+RETURNING m.id::text, m.tenant_id::text, m.name, m.status::text,
+          prev.old_status::text, m.last_seen_at
+""")
+
+
+async def mark_seen_many(db: AsyncSession, tenant_id: str,
+                         readings: list[tuple[str, datetime, datetime]]) -> list[StatusChange]:
+    """mark_seen for several machines of one tenant: `readings` = [(tag_id, seen_at, now)], at most one per machine
+    (the caller picks the one mark_seen would end with). One statement; the caller commits. Returns the status
+    changes."""
+    rows = [(tag_id, min(seen_at or now, now), now) for tag_id, seen_at, now in readings
+            if is_uuid(tag_id)]
+    if not rows or not is_uuid(tenant_id):
+        return []
+    off = timedelta(seconds=settings.machine_offline_timeout_s)
+    wi = timedelta(seconds=settings.machine_last_seen_write_interval_s)
+    result = await db.execute(_MARK_SEEN_MANY_SQL, {
+        "tenant_id": tenant_id, "tag_ids": [r[0] for r in rows], "seen": [r[1] for r in rows],
+        "fresh": [r[1] >= r[2] - off for r in rows], "write_before": [r[1] - wi for r in rows]})
+    out = []
+    for row in result.all():
+        change = _row_to_change(row)
+        if change.status != change.previous_status:
+            out.append(change)
+    return out
+
+
 _SWEEP_SQL = text("""
 WITH stale AS (
     SELECT id, status AS old_status
@@ -128,6 +184,7 @@ async def mark_seen(
     tag_id: str,
     now: Optional[datetime] = None,
     seen_at: Optional[datetime] = None,
+    commit: bool = True,
 ) -> Optional[StatusChange]:
     """Records that a reading arrived for tag_id. Returns the status change, if any.
 
@@ -151,7 +208,8 @@ async def mark_seen(
          "fresh": fresh, "write_before": write_before},
     )
     row = result.first()
-    await db.commit()
+    if commit:      # commit=False: the caller commits (the MQTT batch marks several machines in one transaction)
+        await db.commit()
     if row is None:
         return None
     change = _row_to_change(row)

@@ -1,0 +1,20 @@
+# blackbox-exporter (profile monitoring de produção): sondas HTTP de fora para dentro.
+#   http_2xx  — saúde pública do app/site/staging (passa por DNS + Traefik + TLS) e validade do certificado
+#   demo_health — /health da planta virtual da demo (rede interna fm-demo; 503 = tempo simulado parado/atrasado)
+modules:
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      follow_redirects: false
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+  demo_health:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4

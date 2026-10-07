@@ -1,0 +1,151 @@
+# Testes unitários das regras de alerta: promtool test rules (infra/tests/test_monitoring.py).
+# Cada caso prova que o alerta DISPARA na condição e NÃO dispara fora dela.
+rule_files:
+  - ../alerts.yml
+  - ../alerts.platform.yml
+
+evaluation_interval: 30s
+
+tests:
+  # Gateway sem contato: heartbeat 10 s → limite = max(6×10, 180) = 180 s; gw-a parado, gw-b ok
+  - interval: 1m
+    input_series:
+      - series: 'fm_gateway_seconds_since_seen{job="fm-postgres",tenant="t1",gateway="gw-a"}'
+        values: '60+60x20'
+      - series: 'fm_gateway_heartbeat_seconds{job="fm-postgres",tenant="t1",gateway="gw-a"}'
+        values: '10x20'
+      - series: 'fm_gateway_seconds_since_seen{job="fm-postgres",tenant="t1",gateway="gw-b"}'
+        values: '5x20'
+      - series: 'fm_gateway_heartbeat_seconds{job="fm-postgres",tenant="t1",gateway="gw-b"}'
+        values: '10x20'
+    alert_rule_test:
+      - eval_time: 3m          # gw-a = 240 s > 180, mas o "for: 5m" ainda não passou
+        alertname: FmGatewayOffline
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: FmGatewayOffline
+        exp_alerts:
+          - exp_labels: { severity: warning, tenant: t1, gateway: gw-a }
+            exp_annotations:
+              summary: "Gateway gw-a (t1) sem contato há 11m 0s"
+
+  # Dead letter nova dispara na hora; sem incremento, não
+  - interval: 1m
+    input_series:
+      - series: 'fm_ingest_dead_letters_total{job="fm-server",stage="influx"}'
+        values: '0x5 1 1 1'
+      - series: 'fm_ingest_dropped_total{job="fm-server"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FmIngestDeadLetters
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: FmIngestDeadLetters
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "1 leitura(s) foram para dead letter nos últimos 15 min"
+      - eval_time: 8m
+        alertname: FmIngestDropped
+        exp_alerts: []
+
+  # Backup: último sucesso há 27 h → crítico; falha mais recente que o sucesso → aviso
+  - interval: 1m
+    input_series:
+      - series: 'fm_backup_last_success_timestamp_seconds{job="node"}'
+        values: '0x1700'
+      - series: 'fm_backup_last_failure_timestamp_seconds{job="node"}'
+        values: '-1x1000 3600x700'
+      - series: 'up{job="node"}'
+        values: '1x1700'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: FmBackupTooOld
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: FmBackupTooOld
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Último backup completo há 1d 3h 0m 0s (esperado: diário)"
+      - eval_time: 17h
+        alertname: FmBackupFailed
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "A última execução do backup FALHOU (log do cron: journalctl -t fm-backup)"
+      - eval_time: 16h
+        alertname: FmBackupNeverReported
+        exp_alerts: []
+
+  # Disco: 10% livre → aviso (não crítico)
+  - interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{job="node",fstype="ext4",mountpoint="/",instance="n"}'
+        values: '10x30'
+      - series: 'node_filesystem_size_bytes{job="node",fstype="ext4",mountpoint="/",instance="n"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FmDiskSpaceLow
+        exp_alerts:
+          - exp_labels: { severity: warning, mountpoint: "/" }
+            exp_annotations:
+              summary: "Disco / do VPS com menos de 15% livre"
+      - eval_time: 20m
+        alertname: FmDiskSpaceCritical
+        exp_alerts: []
+
+  # Demo: sonda falhando só alerta com a demo instalada (há dado do tenant demo)
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-demo",instance="http://demo-plant:8091/health"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FmDemoPlantDown
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-demo",instance="http://demo-plant:8091/health"}'
+        values: '0x20'
+      - series: 'fm_demo_last_data_age_seconds{job="fm-postgres"}'
+        values: '30x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FmDemoPlantDown
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Planta virtual da demo pública fora do ar ou atrasada (/health ≠ 200)"
+
+  # Detector atrasado 1 h (depois de uma queda longa) por 15 min
+  - interval: 1m
+    input_series:
+      - series: 'fm_detector_lag_max_seconds{job="fm-server",detector="downtime"}'
+        values: '3600x30'
+      - series: 'fm_detector_lag_max_seconds{job="fm-server",detector="predictive"}'
+        values: '60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FmDetectorLagHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, detector: downtime }
+            exp_annotations:
+              summary: "Detector downtime atrasado 1h 0m 0s em relação aos dados"
+
+  # Taxa de erro 30% com tráfego → crítico
+  - interval: 1m
+    input_series:
+      - series: 'http_requests_total{job="fm-server",status="5xx"}'
+        values: '0+30x20'
+      - series: 'http_requests_total{job="fm-server",status="2xx"}'
+        values: '0+70x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FmHttp5xxRateCritical
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Mais de 20% das requisições HTTP com erro 5xx (app quebrado para os usuários)"

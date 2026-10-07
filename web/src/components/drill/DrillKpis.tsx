@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import KpiInfo from "@/components/ui/KpiInfo";
+import type { KpiId } from "@/utils/kpiGlossary";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/services/api";
@@ -35,10 +37,10 @@ export function useDrillPareto(scope: OeeScope, id: string | undefined, ctx: Dri
   });
 }
 
-function Kpi({ label, value, testId }: { label: string; value: number | null | undefined; testId?: string }) {
+function Kpi({ label, value, testId, kpi }: { label: string; value: number | null | undefined; testId?: string; kpi: KpiId }) {
   return (
     <div className="min-w-0 rounded-xl border border-line bg-surface p-3" data-testid={testId}>
-      <p className="text-caption text-fg-subtle">{label}</p>
+      <p className="flex items-center gap-1.5 text-caption text-fg-muted">{label}<KpiInfo kpi={kpi} /></p>
       <p className="text-title tabular text-fg">{value == null ? "—" : formatPct(value)}</p>
     </div>
   );
@@ -87,10 +89,10 @@ export default function DrillKpis({ scope, id, ctx, machineIds, unjustifiedLink 
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Kpi label="OEE" value={d.oee} testId="drill-oee" />
-            <Kpi label="Disponibilidade" value={d.availability} />
-            <Kpi label="Desempenho" value={d.performance} />
-            <Kpi label="Qualidade" value={d.quality} />
+            <Kpi kpi="oee" label="OEE" value={d.oee} testId="drill-oee" />
+            <Kpi kpi="availability" label="Disponibilidade" value={d.availability} />
+            <Kpi kpi="performance" label="Desempenho" value={d.performance} />
+            <Kpi kpi="quality" label="Qualidade" value={d.quality} />
             <div className="rounded-xl border border-line bg-surface p-3">
               <p className="text-caption text-fg-subtle">Peças boas</p>
               <p className="text-title tabular text-fg">{formatInt(d.good)}</p>

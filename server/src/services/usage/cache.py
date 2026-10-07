@@ -69,6 +69,12 @@ class TopologyCache:
             store.clear()
         store[key] = (time.monotonic() + self.ttl_s, value)
 
+    def peek_tag(self, tenant_id: str, tag_id: str) -> Optional[TagInfo]:
+        """The cached TagInfo without awaiting (None: not cached — use tag_info) — the MQTT hot path."""
+        if not self.enabled:
+            return None
+        return self._get(self._tags, (tenant_id, tag_id))
+
     async def tag_info(self, db: AsyncSession, tenant_id: str, tag_id: str) -> Optional[TagInfo]:
         if not self.enabled:
             return await load_tag_info(db, tenant_id, tag_id)

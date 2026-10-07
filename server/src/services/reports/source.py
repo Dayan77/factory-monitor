@@ -8,6 +8,7 @@ is recorded (path, params, status) so the test suite can replay it and compare t
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -25,9 +26,12 @@ class SafeGetTransport(httpx.ASGITransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if request.method != "GET":
             return httpx.Response(405, json={"detail": "relatórios só leem a API"})
+        import time
+        t0 = time.perf_counter()
         resp = await super().handle_async_request(request)
         self.log.append({"path": request.url.path, "query": str(request.url.query, "ascii") if isinstance(
-            request.url.query, bytes) else str(request.url.query), "status": resp.status_code})
+            request.url.query, bytes) else str(request.url.query), "status": resp.status_code,
+            "ms": round((time.perf_counter() - t0) * 1000, 1)})
         return resp
 
 
@@ -46,6 +50,9 @@ class ApiSource:
                                                    "role": viewer.role.value if hasattr(viewer.role, "value")
                                                    else str(viewer.role), "purpose": "report"})
         self._client: Optional[httpx.AsyncClient] = None
+        # Sprint 7 (performance): responses already fetched (prefetch) by (path, params) — a report asks for
+        # the same API response at most once, and independent ones are fetched concurrently
+        self._memo: dict[tuple, Any] = {}
 
     @property
     def app(self):
@@ -64,7 +71,8 @@ class ApiSource:
             await self._client.aclose()
             self._client = None
 
-    async def get(self, path: str, params: Optional[dict] = None) -> tuple[int, Any]:
+    @staticmethod
+    def _clean(params: Optional[dict]) -> list[tuple[str, str]]:
         clean: list[tuple[str, str]] = []
         for k, v in (params or {}).items():
             if v is None:
@@ -73,6 +81,57 @@ class ApiSource:
                 if isinstance(x, datetime):
                     x = iso(x)
                 clean.append((k, str(x).lower() if isinstance(x, bool) else str(x)))
+        return clean
+
+    async def get(self, path: str, params: Optional[dict] = None) -> tuple[int, Any]:
+        clean = self._clean(params)
+        return await self._get_clean(path, clean, hand_out=True)
+
+    async def _get_clean(self, path: str, clean: list[tuple[str, str]], hand_out: bool) -> tuple[int, Any]:
+        key = (path, tuple(clean))
+        hit = self._memo.get(key)
+        if hit is None:
+            fut = asyncio.get_running_loop().create_future()
+            self._memo[key] = hit = [fut, False]
+            try:
+                res = await self._fetch(path, clean)
+            except BaseException as e:
+                self._memo.pop(key, None)
+                fut.set_exception(e)
+                fut.exception()                    # retrieved: no "never retrieved" warning
+                raise
+            fut.set_result(res)
+        else:
+            res = await asyncio.shield(hit[0])
+        if not hand_out:
+            return res
+        if hit[1]:                                 # handed out before: the builder may have changed it
+            import copy
+            return res[0], copy.deepcopy(res[1])
+        hit[1] = True
+        return res
+
+    async def prefetch(self, requests: list[tuple[str, Optional[dict]]], concurrency: int = 4) -> None:
+        """Fetches independent API responses concurrently (at most `concurrency` at once); the builder's own
+        get/get_ok calls with the same (path, params) then return them. Errors are left for that call to raise."""
+        sem = asyncio.Semaphore(max(1, concurrency))
+
+        async def one(path: str, params: Optional[dict]) -> None:
+            async with sem:
+                try:
+                    await self._get_clean(path, self._clean(params), hand_out=False)
+                except Exception:  # noqa: BLE001 — raised again (uncached) by the builder's own call
+                    pass
+        await asyncio.gather(*(one(p, q) for p, q in requests))
+
+    def cached_status(self, path: str, params: Optional[dict] = None) -> Optional[int]:
+        """HTTP status of a response already fetched (prefetch), None if not fetched (or still in flight)."""
+        hit = self._memo.get((path, tuple(self._clean(params))))
+        if hit is None or not hit[0].done() or hit[0].exception() is not None:
+            return None
+        return hit[0].result()[0]
+
+    async def _fetch(self, path: str, clean: list[tuple[str, str]]) -> tuple[int, Any]:
         own = self._client is None
         client = self._client or httpx.AsyncClient(transport=SafeGetTransport(self.app, self.calls),
                                                    base_url="http://reports.internal", timeout=300)

@@ -15,6 +15,7 @@ from ...db import get_db
 from ...models import (Component, DowntimeEvent, FailureRecord, Line, Machine, MachineStatus, Plant, Position,
                        ReasonCode, User, UserRole)
 from ...services.oee import kpi
+from ...services.response_cache import cached_endpoint
 from ...services.oee.detector import ensure_failure, event_message
 from ...services.oee.engine import (UNJUSTIFIED, components as machine_components, effective_reason, load_calendar,
                                     load_machines_data, machine_infos, reason_meta)
@@ -288,6 +289,7 @@ Scope = Literal["machine", "line", "plant"]
 
 
 @kpi_router.get("/oee", response_model=OeeOut)
+@cached_endpoint("oee")      # Sprint 7: short TTL, per user (services/response_cache.py)
 async def get_oee(user: CurrentUser, db: DB, scope: Scope = "machine", id: str = Query(...),
                   start: Optional[datetime] = None, stop: Optional[datetime] = None,
                   group_by: Literal["none", "hour", "shift", "day", "shift_name"] = "none",
@@ -313,6 +315,7 @@ async def get_oee(user: CurrentUser, db: DB, scope: Scope = "machine", id: str =
 
 
 @kpi_router.get("/losses/pareto", response_model=list[ParetoRow])
+@cached_endpoint("pareto")      # Sprint 7: short TTL, per user (services/response_cache.py)
 async def get_pareto(user: CurrentUser, db: DB, scope: Scope = "machine", id: str = Query(...),
                      start: Optional[datetime] = None, stop: Optional[datetime] = None,
                      by: Literal["code", "category"] = "code",
@@ -382,6 +385,7 @@ async def shift_report(user: CurrentUser, db: DB, line_id: str = Query(...), pro
 # ── overview (raio-x) ──────────────────────────────────────────────────────
 
 @kpi_router.get("/overview", response_model=OverviewOut)
+@cached_endpoint("overview")      # Sprint 7: short TTL, per user (services/response_cache.py)
 async def overview(user: CurrentUser, db: DB, plant_id: Optional[str] = None):
     tid = user.tenant_id
     if plant_id is None:

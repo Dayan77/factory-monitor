@@ -25,6 +25,13 @@ class ServerSettings(BaseSettings):
     influx_token: str = ""
     influx_org: str = "factory-monitor"
     influx_bucket: str = "sensors"
+    # Sprint 7 (docs/performance.md §5): retention + downsampling (services/influx_downsampling.py). The worker
+    # process creates <bucket>_1m (1-minute aggregates) and <bucket>_1h (hourly, forever) and two Influx tasks at
+    # startup (idempotent) and sets the raw bucket's retention (INFLUX_MANAGE_RETENTION=false leaves it alone).
+    influx_downsampling: bool = True
+    influx_raw_retention_days: int = 90
+    influx_1m_retention_days: int = 730
+    influx_manage_retention: bool = True
 
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
@@ -91,6 +98,10 @@ class ServerSettings(BaseSettings):
     # unbounded handlers took every pooled connection under a backlog and API requests waited
     # for the 30 s pool timeout. Excess readings wait (in arrival order per tag) instead.
     mqtt_max_concurrency: int = 12
+    # Sprint 7 (scale, docs/performance.md): one pipeline turn serves up to this many tags with readings waiting,
+    # processed together (one usage transaction per tenant, one machine-status transaction, one Influx request).
+    # 1 = one tag per turn (the Sprint 5b behaviour).
+    mqtt_keys_per_turn: int = 128
     # Max MQTT readings received and not finished yet (backpressure). When reached, the subscriber stops
     # taking messages: QoS 1 deliveries are acknowledged only when accepted, so the broker stops sending
     # (its max_inflight_messages window) and keeps the backlog in its own bounded queue instead of the
@@ -119,6 +130,13 @@ class ServerSettings(BaseSettings):
     # pushed to them (Postgres NOTIFY, usage/cache.py), so the TTL only bounds a lost notification.
     ingest_cache_ttl_s: float = 300.0
     mqtt_ingest_shards: int = 1
+    # SQLAlchemy pool of each process (db.py); the ingestion processes get INGEST_DB_POOL_SIZE (main.py)
+    # Sprint 7 (docs/performance.md §6): TTL of the per-user response cache of /api/overview, /api/oee,
+    # /api/losses/pareto and /api/maintenance-plans/status (services/response_cache.py). 0 = off.
+    api_cache_ttl_s: float = 10.0
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    ingest_db_pool_size: int = 24
     mqtt_shard_index: int = 0
     mqtt_shard_count: int = 1
     # Valid readings that still fail after the retries go to the table ingest_dead_letters; if even the database
@@ -157,11 +175,20 @@ class ServerSettings(BaseSettings):
     downtime_slice_readings: int = 20000
     downtime_catchup_budget_s: float = 20.0
     detector_concurrency: int = 4
+    # Sprint 7 (scale): machines whose checkpoint is within this window share ONE Influx query per tenant and tick
+    # (oee/detector.TenantPrefetch); 0 = one query per machine
+    downtime_prefetch_window_s: float = 600.0
     # Per-machine detector lag (latest reading seen − checkpoint) above this → log warning + metric alert
     detector_lag_alert_s: float = 900.0
+    # Sprint 7: a predictive run stops extracting after this long and commits (resumed next tick) — must stay well
+    # below predictive_monitor_timeout_s, which rolls the run back
+    predictive_extract_budget_s: float = 60.0
+    predictive_monitor_timeout_s: float = 240.0
     # Sprint 7: the downtime detector and the maintenance (plan) engine run in the worker process (src/worker.py)
     # together with the predictive engine whenever PREDICTIVE_WORKER is process/external; false keeps them inline.
     detectors_in_worker: bool = True
+    # Sprint 7: CPU priority of the worker process (os.nice increment; 0 = same as the app)
+    worker_nice: int = 5
     # Lifespan shutdown waits at most this long for background / in-flight MQTT tasks.
     shutdown_timeout_s: float = 5.0
 

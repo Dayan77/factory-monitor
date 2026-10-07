@@ -138,6 +138,18 @@ OEE_COLS = [Col("oee", "OEE", "pct"), Col("availability", "A", "pct"), Col("perf
 
 # ── daily_production (§1.1) ────────────────────────────────────────────────
 
+async def _prefetch(src, requests) -> None:
+    """Sprint 7 (performance): fetch independent API responses concurrently when the source supports it."""
+    fn = getattr(src, "prefetch", None)
+    if fn is not None:
+        await fn(requests)
+
+
+def _cached_status(src, path, params):
+    fn = getattr(src, "cached_status", None)
+    return fn(path, params) if fn is not None else None
+
+
 async def build_daily_production(src: ApiSource, ctx: BuildCtx) -> Doc:
     plant, per = ctx.plant, ctx.period
     doc = _new_doc(ctx, plant["name"])
@@ -145,6 +157,16 @@ async def build_daily_production(src: ApiSource, ctx: BuildCtx) -> Doc:
     labels = await _reason_labels(src)
     lines = _visible_lines(ctx, plant["lines"])
     q = {"start": ps, "stop": pe, "group_by": "shift"}
+    # Sprint 7 (performance): the per-line OEE and same-weekday references fetched concurrently (same params)
+    pre = [("/api/oee", {"scope": "plant", "id": plant["id"], **q})]
+    for ln in lines:
+        pre.append(("/api/oee", {"scope": "line", "id": ln["id"], **q}))
+        if ctx.cal is not None and per.first_day is not None:
+            for k in range(1, 5):
+                dp = P.day_period(ctx.cal, per.first_day - timedelta(days=7 * k))
+                pre.append(("/api/oee", {"scope": "line", "id": ln["id"], "start": dp.start, "stop": dp.end,
+                                         "group_by": "shift"}))
+    await _prefetch(src, pre)
     plant_oee = await src.get_ok("/api/oee", {"scope": "plant", "id": plant["id"], **q})
     doc.sources.append({"path": "/api/oee", "params": {"scope": "plant", "id": plant["id"], **q}, "key": "plant"})
     has_target = any(ctx.targets.get(ln["id"], {}).get("oee") for ln in lines)
@@ -418,6 +440,17 @@ async def build_weekly_oee(src: ApiSource, ctx: BuildCtx) -> Doc:
     doc = _new_doc(ctx, label)
     ps, pe = per.start, per.end
     trend = []
+    # Sprint 7 (performance): the independent API responses of the report, fetched concurrently
+    prev_wk0 = P.week_period(cal, per.first_day - timedelta(days=7))
+    await _prefetch(src, 
+        [("/api/oee", {"scope": scope, "id": sid, "start": w.start, "stop": w.end, "group_by": "shift"})
+         for w in (P.week_period(cal, per.first_day - timedelta(days=7 * k)) for k in range(11, -1, -1))]
+        + [("/api/losses/pareto", {"scope": scope, "id": sid, "start": ps, "stop": pe}),
+           ("/api/losses/pareto", {"scope": scope, "id": sid, "start": prev_wk0.start, "stop": prev_wk0.end})]
+        + [x for m in machines for x in (
+            ("/api/oee", {"scope": "machine", "id": m["id"], "start": ps, "stop": pe, "group_by": "shift"}),
+            ("/api/losses/pareto", {"scope": "machine", "id": m["id"], "start": ps, "stop": pe}))]
+        + [("/api/oee", {"scope": scope, "id": sid, "start": ps, "stop": pe, "group_by": "shift_name"})])
     for k in range(11, -1, -1):
         wk = P.week_period(cal, per.first_day - timedelta(days=7 * k))
         o = await src.get_ok("/api/oee", {"scope": scope, "id": sid, "start": wk.start, "stop": wk.end,
@@ -556,6 +589,19 @@ async def build_monthly_maintenance(src: ApiSource, ctx: BuildCtx) -> Doc:
     ms_, me_ = _month_bounds(tz, y, m)
     hist = []
     kpis_ok = True
+    # Sprint 7 (performance): the 13 months × (kpis, oee, reliability) fetched concurrently (same params below)
+    kpre, pre = [], []
+    for k in range(-12, 1):
+        yy, mm = _shift_month(y, m, k)
+        s, e = _month_bounds(tz, yy, mm)
+        mp = P.month_period(cal, yy, mm)
+        rstart = _month_bounds(tz, *_shift_month(yy, mm, -12))[1]
+        kpre.append(("/api/maintenance/kpis", {"plant_id": plant["id"], "start": s, "stop": e}))
+        pre += [("/api/oee", {"scope": "plant", "id": plant["id"], "start": mp.start, "stop": mp.end}),
+                ("/api/reliability", {"scope": "plant", "id": plant["id"], "start": rstart, "stop": e})]
+    await _prefetch(src, kpre[:1])
+    if _cached_status(src, *kpre[0]) == 200:          # without maintenance.kpis the section is omitted (below)
+        await _prefetch(src, kpre[1:] + pre)
     for k in range(-12, 1):
         yy, mm = _shift_month(y, m, k)
         s, e = _month_bounds(tz, yy, mm)

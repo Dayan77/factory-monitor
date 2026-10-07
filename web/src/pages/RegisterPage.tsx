@@ -1,3 +1,4 @@
+import { PASSWORD_MIN } from "@/utils/password";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { authApi } from "@/services/api";
@@ -31,8 +32,8 @@ export default function RegisterPage() {
       setError("As senhas não coincidem.");
       return;
     }
-    if (form.admin_password.length < 8) {
-      setError("A senha deve ter no mínimo 8 caracteres.");
+    if (form.admin_password.length < PASSWORD_MIN) {
+      setError("A senha deve ter no mínimo 12 caracteres.");
       return;
     }
 
@@ -53,7 +54,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-950">
+    <main className="flex min-h-screen bg-gray-950">
       {/* Left panel */}
       <div className="hidden lg:flex w-1/2 flex-col justify-between bg-gray-900 border-r border-gray-800 p-12">
         <Link to="/" className="flex items-center gap-2.5">
@@ -89,7 +90,7 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        <p className="text-xs text-gray-600">© 2026 FactoryConnect. Todos os direitos reservados.</p>
+        <p className="text-xs text-fg-muted">© 2026 FactoryConnect. Todos os direitos reservados.</p>
       </div>
 
       {/* Right panel — form */}
@@ -109,42 +110,42 @@ export default function RegisterPage() {
 
           <div>
             <h1 className="text-2xl font-bold text-gray-50">Criar conta gratuita</h1>
-            <p className="mt-1 text-sm text-gray-500">14 dias de trial — sem compromisso.</p>
+            <p className="mt-1 text-sm text-fg-muted">14 dias de trial — sem compromisso.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">Nome da empresa</label>
               <input required placeholder="Acme Indústria Ltda"
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 {...field("company_name")} />
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">Seu nome</label>
               <input required placeholder="João Silva"
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 {...field("admin_name")} />
             </div>
 
             <div>
               <label className="block text-xs font-medium text-gray-400 mb-1.5">E-mail</label>
               <input required type="email" placeholder="joao@empresa.com"
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 {...field("admin_email")} />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">Senha</label>
-                <input required type="password" placeholder="Mín. 8 caracteres"
-                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                <input required type="password" placeholder="Mín. 12 caracteres"
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   {...field("admin_password")} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">Confirmar senha</label>
                 <input required type="password" placeholder="Repita a senha"
-                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   {...field("confirm_password")} />
               </div>
             </div>
@@ -156,12 +157,12 @@ export default function RegisterPage() {
             )}
 
             <button type="submit" disabled={loading}
-              className="w-full rounded-xl bg-brand-500 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition-colors">
+              className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-accent-fg hover:bg-accent-hover disabled:opacity-50 transition-colors">
               {loading ? "Criando conta..." : "Criar conta grátis"}
             </button>
           </form>
 
-          <p className="text-center text-sm text-gray-500">
+          <p className="text-center text-sm text-fg-muted">
             Já tem conta?{" "}
             <Link to="/login" className="text-brand-400 hover:text-brand-300 font-medium">
               Fazer login
@@ -169,6 +170,6 @@ export default function RegisterPage() {
           </p>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

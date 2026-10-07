@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import KpiInfo from "@/components/ui/KpiInfo";
+import type { KpiId } from "@/utils/kpiGlossary";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
 import ExportMenu from "@/components/reports/ExportMenu";
@@ -32,19 +34,21 @@ export function previousMonth(today: string): string {
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
 }
 
-function KpiTile({ label, value, hint, tone = "neutral", to, testId }: {
-  label: string; value: string; hint?: React.ReactNode; tone?: "ok" | "warn" | "danger" | "neutral"; to?: string; testId?: string;
+function KpiTile({ label, value, hint, tone = "neutral", to, testId, kpi }: {
+  label: string; value: string; hint?: React.ReactNode; tone?: "ok" | "warn" | "danger" | "neutral"; to?: string; testId?: string; kpi?: KpiId;
 }) {
   const body = (
     <>
-      <p className="text-caption font-medium text-fg-muted">{label}</p>
+      <p className={clsx("text-caption font-medium text-fg-muted", kpi && "pr-8")}>{label}</p>
       <p data-testid={testId} className={clsx("mt-1.5 text-display tabular", { ok: "text-ok", warn: "text-warn", danger: "text-danger", neutral: "text-fg" }[tone])}>{value}</p>
       {hint && <div className="mt-1 text-caption text-fg-subtle">{hint}</div>}
       {to && <p className="mt-2 text-caption font-medium text-ok">Ver as OS ›</p>}
     </>
   );
   const cls = "surface block rounded-xl border border-line bg-surface p-4 shadow-card";
-  return to ? <Link to={to} className={clsx(cls, "transition-colors hover:border-line-strong")}>{body}</Link> : <div className={cls}>{body}</div>;
+  const tile = to ? <Link to={to} className={clsx(cls, "h-full transition-colors hover:border-line-strong")}>{body}</Link> : <div className={clsx(cls, "h-full")}>{body}</div>;
+  // the ⓘ is a sibling of the link (never a button inside a link)
+  return kpi ? <div className="relative">{tile}<KpiInfo kpi={kpi} className="absolute right-4 top-4" /></div> : tile;
 }
 
 /** Backlog in weeks against the 2–4 week reference band (not a chart: one number + its band). */
@@ -96,16 +100,16 @@ export default function KpisPage() {
       ) : (
         <>
           <section aria-label="Indicadores" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiTile testId="kpi-pmp" label="PMP — manutenção planejada" value={d.pmp == null ? "—" : formatPct(d.pmp)}
+            <KpiTile kpi="pmp" testId="kpi-pmp" label="PMP — manutenção planejada" value={d.pmp == null ? "—" : formatPct(d.pmp)}
               tone={d.pmp == null ? "neutral" : d.pmp >= 0.85 ? "ok" : d.pmp >= 0.6 ? "warn" : "danger"}
               hint={d.pmp == null ? `sem OS concluídas no período${d.pmp_reason ? ` (${d.pmp_reason})` : ""}` : "Horas planejadas ÷ horas totais das OS concluídas · meta ≥ 85 %"}
               to={listLink(`completed_from=${encodeURIComponent(range.start)}&completed_to=${encodeURIComponent(range.stop)}`)} />
-            <KpiTile testId="kpi-compliance" label="Cumprimento da programação" value={d.schedule_compliance == null ? "—" : formatPct(d.schedule_compliance)}
+            <KpiTile kpi="compliance" testId="kpi-compliance" label="Cumprimento da programação" value={d.schedule_compliance == null ? "—" : formatPct(d.schedule_compliance)}
               tone={d.schedule_compliance == null ? "neutral" : d.schedule_compliance >= 0.9 ? "ok" : d.schedule_compliance >= 0.7 ? "warn" : "danger"}
               hint={d.schedule_compliance == null ? "sem OS programadas no período" : "OS concluídas no prazo ÷ OS programadas (semana congelada)"}
               to={listLink(`from=${range.from}&to=${range.to}`)} />
             <div className="surface rounded-xl border border-line bg-surface p-4 shadow-card">
-              <p className="text-caption font-medium text-fg-muted">Backlog</p>
+              <p className="flex items-center gap-1.5 text-caption font-medium text-fg-muted">Backlog <KpiInfo kpi="backlog" /></p>
               <p data-testid="kpi-backlog" className="mt-1.5 text-display tabular text-fg">{formatDec1(d.backlog_hours)}<span className="ml-1 text-body text-fg-subtle">h</span></p>
               <p className="mt-1 text-caption text-fg-subtle">
                 {d.backlog_weeks == null ? "— capacidade da equipe não cadastrada" : `${formatDec2(d.backlog_weeks)} semana(s) de trabalho · capacidade ${formatDec1(d.crew_capacity_hours_per_week)} h/semana`}
@@ -135,7 +139,7 @@ export default function KpisPage() {
           </Card>
           <p className="text-caption text-fg-subtle">
             Definições (ISO 22400 / EN 15341) em docs/kpis.md §3. Mês de {month.split("-").reverse().join("/")} · {plant?.name ?? ""}.{" "}
-            <Link to="/maintenance/reliability" className="text-ok hover:underline">Confiabilidade (MTBF/MTTR) ›</Link>
+            <Link to="/maintenance/reliability" className="text-ok underline underline-offset-2">Confiabilidade (MTBF/MTTR) ›</Link>
           </p>
         </>
       )}

@@ -1,0 +1,115 @@
+# Segurança da cadeia de suprimentos — em todo push/PR e toda segunda-feira (advisories novos em deps antigas).
+#   secrets   gitleaks no HISTÓRICO COMPLETO do git (regras do projeto + aceites em .github/security/)
+#   pip-audit server, edge e scripts → scripts/security/audit_gate.py (lista de aceites com prazo)
+#   npm audit web e site            → idem (high/critical reprovam)
+#   sbom      CycloneDX das dependências (fonte) de cada projeto, como artefato
+# Imagens: Trivy + SBOM no job `docker` do CI e no workflow Release. Política: docs/operations.md §13.
+name: Security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"       # segunda 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1
+  PIP_AUDIT_VERSION: "2.10.1"
+  CYCLONEDX_PY_VERSION: "7.5.0"
+
+jobs:
+  secrets:
+    name: gitleaks · histórico completo
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0             # todo o histórico: segredo apagado num commit novo continua vazado
+      - name: gitleaks (sem imprimir o valor de nenhum segredo)
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" git /repo \
+            --config /repo/.github/security/gitleaks.toml \
+            --gitleaks-ignore-path /repo/.github/security/gitleaksignore \
+            --redact --no-banner --exit-code 1
+
+  pip-audit:
+    name: pip-audit · ${{ matrix.project }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: server,  req: server/requirements-dev.txt }
+          - { project: edge,    req: edge/requirements-dev.txt }
+          - { project: scripts, req: scripts/requirements.txt }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: pip-audit (dependências fixadas + transitivas resolvidas)
+        run: |
+          pip install "pip-audit==$PIP_AUDIT_VERSION" "cyclonedx-bom==$CYCLONEDX_PY_VERSION"
+          pip-audit -r "${{ matrix.req }}" --progress-spinner off -f json -o "pip-${{ matrix.project }}.json" || true
+          test -s "pip-${{ matrix.project }}.json"
+      - name: Portão (lista de aceites .github/security/audit-allowlist.toml)
+        run: python scripts/security/audit_gate.py pip "pip-${{ matrix.project }}.json" --project "${{ matrix.project }}"
+      - name: SBOM CycloneDX (fonte)
+        if: always()
+        run: |
+          python -m venv /tmp/sbom-env
+          /tmp/sbom-env/bin/pip install -q -r "${{ matrix.req }}"
+          cyclonedx-py environment /tmp/sbom-env --of JSON -o "sbom-src-${{ matrix.project }}.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: deps-${{ matrix.project }}
+          path: |
+            pip-${{ matrix.project }}.json
+            sbom-src-${{ matrix.project }}.cdx.json
+          retention-days: 30
+
+  npm-audit:
+    name: npm audit · ${{ matrix.project }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [web, site]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: npm audit (lockfile completo, dev incluído)
+        working-directory: ${{ matrix.project }}
+        run: |
+          npm audit --json --package-lock-only > "../npm-${{ matrix.project }}.json" || true
+          test -s "../npm-${{ matrix.project }}.json"
+      - name: Portão (high/critical reprovam, salvo aceites com prazo)
+        run: python3 scripts/security/audit_gate.py npm "npm-${{ matrix.project }}.json" --project "${{ matrix.project }}"
+      - name: SBOM CycloneDX (fonte)
+        if: always()
+        working-directory: ${{ matrix.project }}
+        run: npx --yes @cyclonedx/cyclonedx-npm@6.0.1 --package-lock-only --output-format JSON --output-file "../sbom-src-${{ matrix.project }}.cdx.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: deps-${{ matrix.project }}
+          path: |
+            npm-${{ matrix.project }}.json
+            sbom-src-${{ matrix.project }}.cdx.json
+          retention-days: 30

@@ -40,6 +40,30 @@ export function formatMeasure(measure: string, value: number | null | undefined)
   return formatInt(value);
 }
 
+// ── display timezone ──────────────────────────────────────────────
+// Every date/time on screen is shown in the plant's timezone (a manager in São Paulo reading a plant in Manaus sees
+// the plant clock, the same one the shifts follow). Set by the app shells once the plant tree is known and kept on
+// the device so the next cold start already formats in it. Unset → the browser's timezone.
+const TZ_KEY = "fm-plant-tz";
+let displayTz: string | undefined = (() => {
+  try { return validTz(localStorage.getItem(TZ_KEY)) ?? undefined; } catch { return undefined; }
+})();
+
+function validTz(tz: string | null | undefined): string | null {
+  if (!tz) return null;
+  try { new Intl.DateTimeFormat("pt-BR", { timeZone: tz }); return tz; } catch { return null; }
+}
+
+export function setDisplayTimeZone(tz: string | null | undefined): void {
+  const v = validTz(tz) ?? undefined;
+  displayTz = v;
+  try { if (v) localStorage.setItem(TZ_KEY, v); else localStorage.removeItem(TZ_KEY); } catch { /* storage blocked */ }
+}
+
+export function displayTimeZone(): string | undefined {
+  return displayTz;
+}
+
 /** ISO date/datetime → "05/10/2026". Date-only strings are not shifted by the timezone. */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -49,7 +73,7 @@ export function formatDate(iso: string | null | undefined): string {
     return `${d}/${m}/${y}`;
   }
   const t = new Date(iso);
-  return Number.isNaN(t.getTime()) ? "—" : t.toLocaleDateString("pt-BR");
+  return Number.isNaN(t.getTime()) ? "—" : t.toLocaleDateString("pt-BR", { timeZone: displayTz });
 }
 
 /** ISO → "05/10/2026 14:32" */
@@ -58,11 +82,22 @@ export function formatDateTime(iso: string | null | undefined): string {
   const t = new Date(iso);
   return Number.isNaN(t.getTime())
     ? "—"
-    : t.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    : t.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: displayTz });
+}
+
+/** ISO → "14:32" (or "14:32:05" with seconds) in the plant timezone. */
+export function formatTime(iso: string | null | undefined, seconds = false): string {
+  if (!iso) return "—";
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime())
+    ? "—"
+    : t.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}), timeZone: displayTz });
 }
 
 /** ISO → "14h" label for hourly chart buckets. */
 export function formatHourLabel(iso: string): string {
   const t = new Date(iso);
-  return Number.isNaN(t.getTime()) ? "" : `${String(t.getHours()).padStart(2, "0")}h`;
+  if (Number.isNaN(t.getTime())) return "";
+  const hh = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", hourCycle: "h23", timeZone: displayTz }).format(t);
+  return `${hh.padStart(2, "0")}h`;
 }

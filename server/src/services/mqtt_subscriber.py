@@ -29,15 +29,16 @@ from prometheus_client import Gauge
 
 from ..config import settings
 from ..db import AsyncSessionLocal
-from ..services.influx import influx
+from ..services.influx import influx, line_protocol
+from ..services import influx_downsampling as rollups
 from ..services.payload_crypto import PayloadError, decode_payload, key_error
-from ..services.machine_status import broadcast_change, mark_seen
+from ..services.machine_status import broadcast_change, mark_seen, mark_seen_many
 from ..services.oee.detector import note_late
 from ..services.predictive.engine import late_threshold as predictive_late_threshold
 from ..services.metrics import INGEST_RETRIES, MQTT_LAG, MQTT_MESSAGES
 from ..services.validation import InvalidIdentifier, ensure_uuid
 from ..services.usage.broadcaster import usage_broadcaster
-from ..services.usage.processor import process_reading, process_readings  # noqa: F401
+from ..services.usage.processor import process_many, process_reading, process_readings  # noqa: F401
 from ..services.usage.cache import topology_cache
 from ..models.tag import COUNTER_ROLES, SemanticRole
 from ..rules.engine import evaluate, note_value, rule_tags
@@ -49,6 +50,7 @@ from .ingest.transient import is_transient, retry_transient
 log = structlog.get_logger()
 
 TOPIC = "factory/+/sensors/#"   # factory/{tenant_id}/sensors/{tag_id}
+_DEBUG = str(settings.log_level).upper() == "DEBUG"
 
 USAGE_ROLES = frozenset(COUNTER_ROLES | {SemanticRole.run_state, SemanticRole.fault_state})
 
@@ -88,6 +90,89 @@ def _enable_manual_ack(client: Any) -> bool:
         return False
     setter(True)
     return True
+
+
+# Sprint 7 (scale): packets read per socket-readable event. aiomqtt's reader callback reads ONE MQTT packet per event
+# loop iteration (paho loop_read with nothing in flight); with the pipeline busy an iteration takes a few ms, so the
+# subscriber received only ~250 readings/s however fast the processing was — the broker kept the rest (QA load test:
+# 2 600/s published, 60–120 s of lag). This reads every packet already buffered on the socket, up to this many.
+READ_BURST = 2000
+
+
+def _burst_reader(client: Any) -> bool:
+    """Replaces aiomqtt's socket reader with one that drains the socket (READ_BURST packets per event). Same error
+    handling as aiomqtt's own callback (an exception = the connection broke → the client is disconnected). False when
+    the library internals are not the expected ones (the default reader stays: correct, only slower)."""
+    import paho.mqtt.client as paho_mqtt
+    paho = getattr(client, "_client", None)
+    sock = paho.socket() if paho is not None and hasattr(paho, "socket") else None
+    disconnected = getattr(client, "_disconnected", None)
+    if sock is None or not hasattr(paho, "_packet_read") or not hasattr(paho, "_loop_rc_handle") \
+            or disconnected is None:
+        log.warning("mqtt.burst_reader_unavailable")
+        return False
+    again = paho_mqtt.MQTTErrorCode.MQTT_ERR_AGAIN
+
+    def callback() -> None:
+        try:
+            for _ in range(READ_BURST):
+                if paho._sock is None:         # noqa: SLF001
+                    return
+                rc = paho._packet_read()       # noqa: SLF001
+                if rc == again:
+                    return
+                if rc > 0:
+                    paho._loop_rc_handle(rc)   # noqa: SLF001
+                    return
+        except Exception as exc:  # noqa: BLE001
+            if not disconnected.done():
+                disconnected.set_exception(exc)
+
+    loop = asyncio.get_running_loop()
+    loop.remove_reader(sock.fileno())
+    loop.add_reader(sock.fileno(), callback)
+    _skip_empty_topic_filters(paho)
+    return True
+
+
+def _skip_empty_topic_filters(paho: Any) -> None:
+    """paho walks its per-topic callback trie for every message (message_callback_add filters); aiomqtt registers
+    none, so that walk (~5 % of the ingestion CPU at 2 600 readings/s) always finds nothing. Same answer, without the
+    walk, while no filter is registered."""
+    m = getattr(paho, "_on_message_filtered", None)
+    if m is None or not hasattr(m, "iter_match") or getattr(m, "_fm_fast", False):
+        return
+    root = getattr(m, "_root", None)
+    if root is None or not hasattr(root, "_children"):
+        return
+    orig = m.iter_match
+
+    def iter_match(topic):
+        if not root._children:
+            return iter(())
+        return orig(topic)
+    m.iter_match = iter_match
+    m._fm_fast = True
+
+
+async def _drain_messages(client: Any):
+    """client.messages, without one event-loop round trip per message (Sprint 7, scale): aiomqtt's iterator creates
+    a task and an asyncio.wait for EVERY message, i.e. at least two loop iterations each — with the pipeline busy
+    (an iteration of a few ms) the subscriber took ~700 readings/s off the queue however fast everything else was.
+    Messages already queued are taken directly; only an empty queue waits through aiomqtt (which also raises on a
+    disconnection)."""
+    queue = getattr(client, "_queue", None)
+    disconnected = getattr(client, "_disconnected", None)
+    it = client.messages.__aiter__()
+    while True:
+        if queue is not None and disconnected is not None:
+            while not disconnected.done():
+                try:
+                    message = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                yield message
+        yield await it.__anext__()
 
 
 def _ack_item(item: Item) -> None:
@@ -148,7 +233,8 @@ def replay_threshold() -> timedelta:
 def _new_pipeline() -> OrderedPipeline:
     return OrderedPipeline(_process_item, capacity=settings.mqtt_max_inflight,
                            workers=settings.mqtt_max_concurrency, acker=_ack_item,
-                           process_batch=_process_items_dyn)
+                           process_batch=_process_items_dyn, keys_per_turn=settings.mqtt_keys_per_turn,
+                           group_of=lambda key: key[0])
 
 
 async def _process_items_dyn(items):
@@ -185,6 +271,7 @@ async def run_subscriber() -> None:
                              shards=settings.mqtt_shard_count,
                              persistent_session=settings.mqtt_persistent_session)
                     manual_ack = _enable_manual_ack(client)
+                    _burst_reader(client)
                     # QoS 1 + acknowledge-when-finished = flow control: the broker sends at most its
                     # max_inflight_messages unacknowledged readings and queues the rest (bounded, on its side).
                     await client.subscribe(TOPIC, qos=1)
@@ -194,7 +281,7 @@ async def run_subscriber() -> None:
                     if _cancelling():
                         raise asyncio.CancelledError()
 
-                    async for message in client.messages:
+                    async for message in _drain_messages(client):
                         if _cancelling():
                             raise asyncio.CancelledError()
                         topic = str(message.topic)
@@ -306,11 +393,28 @@ async def _retry_transient(what: str, topic: str, fn, *args, stage: str = "proce
                                  on_retry=lambda n, e: INGEST_RETRIES.labels(stage).inc(), topic=topic[:200])
 
 
-async def _finish_write(topic: str, raw: bytes, received_at: datetime, tenant_id: str, tag, ts: datetime,
-                        write: Awaitable) -> None:
-    """Awaits the (batched, retried — influx.py) Influx write. Failed after the retries → dead letter. Stored →
-    watermark; a reading written well after its own timestamp may belong to windows already processed (downtime
-    detector, predictive engine): noted so they are recomputed."""
+def influx_record(tenant_id: str, tag_id: str, value: float, unit: Any, ts: datetime, machine_id: Optional[str]):
+    """The Influx record of a reading: its line protocol (fast path), or the dict record (non-finite value)."""
+    line = line_protocol(tenant_id, tag_id, machine_id or "", unit or "", value, ts)
+    if line is not None:
+        return line
+    return {"measurement": "sensors",
+            "tags": {"tenant_id": tenant_id, "tag_id": tag_id, "machine_id": machine_id or "", "unit": unit or ""},
+            "fields": {"value": value}, "time": ts.isoformat()}
+
+
+def _start_writes(preps: list["_Prep"]) -> None:
+    """2. Influx: the records of the batch in one write_many; every reading's `fin` is the same task, which
+    completes when the write is durable (watermarks / late notes per reading, dead letters if it failed)."""
+    if not preps:
+        return
+    write = influx.write_many([p.record for p in preps])
+    fin = asyncio.ensure_future(_finish_writes(list(preps), write))
+    for p in preps:
+        p.fin = fin
+
+
+async def _finish_writes(preps: list["_Prep"], write: Awaitable) -> None:
     try:
         await write
     except asyncio.CancelledError:
@@ -318,15 +422,23 @@ async def _finish_write(topic: str, raw: bytes, received_at: datetime, tenant_id
     except Exception as e:  # noqa: BLE001
         if _cancelling():
             raise asyncio.CancelledError() from e
-        MQTT_MESSAGES.labels("error").inc()
-        await dead_letter.record(topic, raw, received_at, "influx", e)
+        for p in preps:
+            MQTT_MESSAGES.labels("error").inc()
+            await dead_letter.record(p.topic, p.raw, p.received_at, "influx", e)
         return
-    written_at = max(received_at, datetime.now(timezone.utc))
-    age = written_at - ts
-    if (tag.machine_id and tag.role in USAGE_ROLES
-            and age.total_seconds() > settings.downtime_settle_s):
-        note_late(tenant_id, tag.machine_id, ts)
-    watermarks.note(tenant_id, tag.id, tag.machine_id, ts, late=age > predictive_late_threshold())
+    now = datetime.now(timezone.utc)
+    late_after = predictive_late_threshold()
+    rollup_late = rollups.late_threshold()
+    for p in preps:
+        written_at = max(p.received_at, now)
+        age = written_at - p.ts
+        tag = p.tag
+        if age > rollup_late:
+            rollups.note_late(p.tenant_id, p.ts)   # behind the 1-minute task's look-back: backfill its aggregates
+        if (tag.machine_id and tag.role in USAGE_ROLES
+                and age.total_seconds() > settings.downtime_settle_s):
+            note_late(p.tenant_id, tag.machine_id, p.ts)
+        watermarks.note(p.tenant_id, tag.id, tag.machine_id, p.ts, late=age > late_after)
 
 
 # mark_seen throttle: machine_id -> (monotonic time of the last call, latest seen_at sent). Within
@@ -384,6 +496,7 @@ class _Prep:
     ts: datetime
     replayed: bool
     fin: Any = None
+    record: Any = None
 
 
 async def _process_reading(topic: str, raw: bytes, received_at: datetime) -> Optional[Awaitable]:
@@ -409,9 +522,10 @@ async def _process_items(items: list[Item]) -> list[Optional[Awaitable]]:
 
 
 async def _process_batch(entries: list[tuple[str, bytes, datetime]]) -> list[Optional[Awaitable]]:
-    """Readings of one tag, in arrival order (what queued up for the tag in the pipeline): each is checked,
-    broadcast and written on its own; the usage accumulators of the run are updated in ONE transaction
-    (usage.processor.process_readings). Returns, per reading, its pending Influx write (or None)."""
+    """Readings of one or (Sprint 7) many tags, in arrival order per tag (what queued up for them in the pipeline):
+    each is checked and broadcast on its own; all of them go to Influx in one request; the machines' last_seen_at in
+    one transaction; the usage accumulators of each tenant in ONE transaction (usage.processor.process_many — or
+    process_readings for a single tag). Returns, per reading, its pending Influx write (or None)."""
     out: list[Optional[Awaitable]] = [None] * len(entries)
     preps: list[_Prep] = []
     for idx, (topic, raw, received_at) in enumerate(entries):
@@ -428,15 +542,20 @@ async def _process_batch(entries: list[tuple[str, bytes, datetime]]) -> list[Opt
             await dead_letter.record(topic, raw, received_at, "process", e)
         if p is not None:
             preps.append(p)
+    _start_writes(preps)
+    # 3. machine status (last_seen_at): one transaction for the machines of the batch (throttled per machine)
+    await _mark_seen_batch(preps)
+    # 4. usage: consecutive readings of the same tag → one group; the groups of one tenant → one transaction
     failed: set[int] = set()
-    group: list[_Prep] = []
-    for p in preps + [None]:                       # consecutive readings of the same tag → one usage batch
-        if group and (p is None or p.tag.id != group[0].tag.id):
-            if group[0].tag.role in USAGE_ROLES:
-                failed |= await _usage(group)
-            group = []
-        if p is not None:
-            group.append(p)
+    by_tag: dict[str, list[_Prep]] = {}             # arrival order kept within each tag
+    for p in preps:
+        if p.tag.role in USAGE_ROLES:
+            by_tag.setdefault(p.tag.id, []).append(p)
+    by_tenant: dict[str, list[list[_Prep]]] = {}
+    for g in by_tag.values():
+        by_tenant.setdefault(g[0].tenant_id, []).append(g)
+    for tgroups in by_tenant.values():
+        failed |= await (_usage(tgroups[0]) if len(tgroups) == 1 else _usage_many(tgroups))
     for p in preps:
         if p.idx in failed:
             continue
@@ -485,8 +604,12 @@ async def _prepare(idx: int, topic: str, raw: bytes, received_at: datetime) -> O
     # 0. The tag must belong to the topic's tenant (fail closed if it can't be checked)
     #    A tag that does not exist is rejected; a check that could not be made (timeout, database
     #    unavailable) is retried, then dead-lettered — never dropped (Sprint 5 QA).
+    # Sprint 7 (scale): a cached tag is resolved without awaiting — every await that hops through a task
+    # (wait_for) costs a full event-loop iteration per reading, and readings of a batch are prepared one by one
+    tag = topology_cache.peek_tag(tenant_id, tag_id)
     try:
-        tag = await _retry_transient("mqtt.tag_lookup", topic, _lookup_tag, tenant_id, tag_id, stage="lookup")
+        if tag is None:
+            tag = await _retry_transient("mqtt.tag_lookup", topic, _lookup_tag, tenant_id, tag_id, stage="lookup")
     except Exception as e:  # noqa: BLE001
         if _cancelling():
             raise asyncio.CancelledError() from e
@@ -512,48 +635,113 @@ async def _prepare(idx: int, topic: str, raw: bytes, received_at: datetime) -> O
             log.warning("mqtt.rejected_revoked_gateway", tenant_id=tenant_id[:8], tag_id=tag_id[:8])
         return None
 
-    log.debug("mqtt.message", tenant_id=tenant_id[:8], tag_id=tag_id[:8], value=value, replayed=replayed)
+    if _DEBUG:                  # Sprint 7: a filtered structlog call still cost a bind per reading (scale profile)
+        log.debug("mqtt.message", tenant_id=tenant_id[:8], tag_id=tag_id[:8], value=value, replayed=replayed)
 
     # 1. Broadcast live readings to WebSocket clients immediately (best effort: a client never costs the reading)
     if not replayed:
+        msg = {"type": "sensor_reading", "tag_id": tag_id, "value": value, "unit": unit,
+               "timestamp": ts.isoformat()}
         try:
-            await asyncio.wait_for(manager.broadcast(tenant_id, {
-                "type":      "sensor_reading",
-                "tag_id":    tag_id,
-                "value":     value,
-                "unit":      unit,
-                "timestamp": ts.isoformat(),
-            }), timeout=2.0)
+            if manager.relay is not None:
+                # ingestion process: the relay only buffers the message (websocket/relay.py) — no timeout task
+                await manager.broadcast(tenant_id, msg)
+            else:
+                await asyncio.wait_for(manager.broadcast(tenant_id, msg), timeout=2.0)
         except Exception as e:  # noqa: BLE001
             log.warning("mqtt.ws_broadcast.error", error=str(e)[:200])
 
     # 2. Persist to InfluxDB at the source timestamp. Batched with the other readings in flight and retried on
     #    transient failures (influx.py); awaited by the pipeline after this tag's turn (the next reading of the
     #    tag does not wait for the HTTP round trip).
-    write = asyncio.ensure_future(influx.write(tenant_id=tenant_id, tag_id=tag_id, value=value, unit=unit,
-                                               ts=ts, machine_id=tag.machine_id))
+    #    Sprint 7: the records of the whole batch go out as one write_many (one future per batch, _start_writes).
     p = _Prep(idx, topic, raw, received_at, tenant_id, tag_id, tag, value, unit, ts, replayed)
-    p.fin = _finish_write(topic, raw, received_at, tenant_id, tag, ts, write)
+    p.record = influx_record(tenant_id, tag_id, value, unit, ts, tag.machine_id)
 
-    # 3. Machine status derived from data (last_seen_at + running) — derived state, best effort
+    return p
+
+
+async def _mark_seen_batch(preps: list[_Prep]) -> None:
+    """3. Machine status derived from data (last_seen_at + running) — derived state, best effort. Per machine, the
+    reading with the latest source timestamp of the batch is what mark_seen would end with (last_seen_at never moves
+    backwards; a fresh one flips unknown/stopped → running); machines throttled (_seen_is_noop) are skipped. All the
+    machines of the batch in one transaction, in machine-id order (Sprint 7: one transaction per reading did not
+    scale)."""
+    best: dict[str, _Prep] = {}
+    for p in preps:
+        mid = p.tag.machine_id
+        if not mid or _seen_is_noop(mid, p.ts, p.received_at):
+            continue
+        b = best.get(mid)
+        if b is None or p.ts > b.ts or (p.ts == b.ts and _is_fresh(p.ts, p.received_at)):
+            best[mid] = p
+    if not best:
+        return
+    changes = []
+    by_tenant: dict[str, list[_Prep]] = {}
+    for mid in sorted(best):
+        by_tenant.setdefault(best[mid].tenant_id, []).append(best[mid])
     try:
-        if not _seen_is_noop(tag.machine_id, ts, received_at):
-            async with AsyncSessionLocal() as db:
-                change = await asyncio.wait_for(
-                    mark_seen(db=db, tenant_id=tenant_id, tag_id=tag_id,
-                              now=received_at, seen_at=ts),
-                    timeout=5.0,
-                )
-            _seen_called(tag.machine_id, ts, received_at)
-            if change is not None:
-                await broadcast_change(change)
+        async with AsyncSessionLocal() as db:
+            async def run():
+                for tid, ps in by_tenant.items():
+                    changes.extend(await mark_seen_many(db, tid, [(p.tag_id, p.ts, p.received_at) for p in ps]))
+                await db.commit()
+                for p in best.values():
+                    _seen_called(p.tag.machine_id, p.ts, p.received_at)
+            await asyncio.wait_for(run(), timeout=5.0)
     except asyncio.TimeoutError:
-        log.warning("mqtt.machine_status.timeout", topic=topic)
+        log.warning("mqtt.machine_status.timeout", machines=len(best))
+        return
     except Exception as e:
         if _cancelling():
             raise asyncio.CancelledError() from e
-        log.warning("mqtt.machine_status.error", topic=topic, error=str(e))
-    return p
+        log.warning("mqtt.machine_status.error", machines=len(best), error=str(e)[:300])
+        return
+    for change in changes:
+        try:
+            await broadcast_change(change)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mqtt.machine_status.broadcast_error", error=str(e)[:200])
+
+
+async def _usage_many(groups: list[list[_Prep]]) -> set[int]:
+    """4. Usage of several tags of ONE tenant (each group = consecutive readings of one tag) in one transaction
+    (usage.processor.process_many). A transient failure is retried (the transaction rolled back: exact); any other
+    failure falls back to one transaction per tag (_usage), which isolates and dead-letters the bad one."""
+    pairs = [(g[0].tag, [(p.value, p.ts, not p.replayed) for p in g]) for g in groups]
+
+    async def many_once():
+        async with AsyncSessionLocal() as db:
+            return await asyncio.wait_for(process_many(db, groups[0][0].tenant_id, pairs),
+                                          timeout=settings.usage_process_timeout_s)
+    try:
+        results = await _retry_transient("mqtt.usage", groups[0][0].topic, many_once, stage="usage")
+    except Exception as e:  # noqa: BLE001
+        if _cancelling():
+            raise asyncio.CancelledError() from e
+        log.warning("mqtt.usage.batch_fallback", tags=len(groups), error=str(e)[:300])
+        failed: set[int] = set()
+        for g in groups:
+            failed |= await _usage(g)
+        return failed
+    for g, outcomes in zip(groups, results):
+        await _usage_broadcast(g, outcomes)
+    return set()
+
+
+async def _usage_broadcast(group: list[_Prep], outcomes) -> None:
+    tag = group[0].tag
+    try:
+        for outcome in outcomes:
+            for u in outcome.updates:
+                usage_broadcaster.add(u)
+            if outcome.status_change is not None:
+                await broadcast_change(outcome.status_change)
+            if outcome.event:
+                log.info("usage.counter_event", tag_id=tag.id[:8], usage_event=outcome.event)
+    except Exception as e:  # noqa: BLE001
+        log.warning("mqtt.usage.broadcast_error", topic=group[0].topic, error=str(e))
 
 
 async def _usage(group: list[_Prep]) -> set[int]:
@@ -599,12 +787,16 @@ async def _usage(group: list[_Prep]) -> set[int]:
 async def _finish(p: _Prep) -> Optional[Awaitable]:
     """5. Evaluate alert rules (with timeout) — live data only."""
     if p.replayed:
-        log.debug("mqtt.alerts.skipped_replay", tag_id=p.tag_id[:8], ts=p.ts.isoformat())
+        if _DEBUG:
+            log.debug("mqtt.alerts.skipped_replay", tag_id=p.tag_id[:8], ts=p.ts.isoformat())
         MQTT_MESSAGES.labels("ok").inc()
         return p.fin
     try:
         # Sprint 7: no session / query for the (many) tags without an active rule (rules.engine.rule_tags)
-        if await asyncio.wait_for(rule_tags.has_rules(p.tenant_id, p.tag_id), timeout=5.0):
+        has = rule_tags.cached(p.tenant_id, p.tag_id)
+        if has is None:
+            has = await asyncio.wait_for(rule_tags.has_rules(p.tenant_id, p.tag_id), timeout=5.0)
+        if has:
             async with AsyncSessionLocal() as db:
                 await asyncio.wait_for(evaluate(db=db, tag_id=p.tag_id, tenant_id=p.tenant_id, value=p.value),
                                        timeout=5.0)

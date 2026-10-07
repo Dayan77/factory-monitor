@@ -24,7 +24,7 @@ export const DEMO_EVENT_URL: string = env.PUBLIC_DEMO_EVENT_URL || "";
 export const LOGIN_URL = `${APP_URL}/login`;
 export const REGISTER_URL = `${APP_URL}/register`;
 
-export interface NavItem { href: string; label: string }
+export interface NavItem { href: string; label: string; /** Rótulo curto no menu do topo entre 1024 e 1279 px */ short?: string }
 
 export const NAV: NavItem[] = [
   { href: "/solucao", label: "Solução" },
@@ -33,6 +33,7 @@ export const NAV: NavItem[] = [
   { href: "/como-funciona", label: "Como funciona" },
   { href: "/seguranca", label: "Segurança" },
   { href: "/planos", label: "Planos" },
+  { href: "/docs", label: "Manual" },
 ];
 
 export const FOOTER_NAV: { title: string; items: NavItem[] }[] = [
@@ -43,6 +44,7 @@ export const FOOTER_NAV: { title: string; items: NavItem[] }[] = [
       { href: "/como-funciona", label: "Como funciona" },
       { href: "/seguranca", label: "Segurança" },
       { href: "/planos", label: "Planos" },
+      { href: "/docs", label: "Documentação" },
     ],
   },
   {

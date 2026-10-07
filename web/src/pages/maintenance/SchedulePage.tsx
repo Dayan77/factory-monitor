@@ -158,7 +158,7 @@ export default function SchedulePage() {
           <div className="col-span-full"><ErrorState title="Não foi possível carregar backlog e capacidade" error={kpis.error} onRetry={() => void kpis.refetch()} /></div>
         ) : kpis.data && (
           <>
-            <Stat label="Backlog" value={formatDec1(kpis.data.backlog_hours)} unit="h"
+            <Stat kpi="backlog" label="Backlog" value={formatDec1(kpis.data.backlog_hours)} unit="h"
               hint={kpis.data.backlog_weeks == null ? "— sem capacidade cadastrada" : `${formatDec1(kpis.data.backlog_weeks)} semana(s) · referência 2–4`}
               tone={kpis.data.backlog_weeks == null ? "neutral" : kpis.data.backlog_weeks > 4 ? "danger" : kpis.data.backlog_weeks < 2 ? "warn" : "ok"} />
             <Stat label="Capacidade da equipe" value={weekly == null ? "—" : formatDec1(weekly)} unit={weekly == null ? undefined : "h/semana"} hint="Técnicos × horas − ausências previstas" />
@@ -171,7 +171,7 @@ export default function SchedulePage() {
               )}
             </div>
             <Stat label="OS vencidas" value={kpis.data.overdue_count} tone={kpis.data.overdue_count > 0 ? "danger" : "neutral"}
-              hint={<Link to="/maintenance/work-orders?quick=overdue&view=list" className="text-ok hover:underline">Ver lista</Link>} />
+              hint={<Link to="/maintenance/work-orders?quick=overdue&view=list" className="text-ok underline underline-offset-2">Ver lista</Link>} />
           </>
         )}
       </section>
@@ -198,7 +198,7 @@ export default function SchedulePage() {
           {pending.length > 0 && (
             <p className="mt-3 border-t border-line pt-3 text-caption text-fg-subtle">
               {pending.length} rascunho(s)/solicitação(ões) ainda não aprovado(s) — fora do backlog.{" "}
-              <Link to="/maintenance/work-orders" className="text-ok hover:underline">Revisar</Link>
+              <Link to="/maintenance/work-orders" className="text-ok underline underline-offset-2">Revisar</Link>
             </p>
           )}
         </Card>
@@ -241,7 +241,7 @@ export default function SchedulePage() {
                           onDragLeave={() => setOver((o) => (o === key ? null : o))}
                           onDrop={(e) => onDrop(e, d, r.id)}
                           className={clsx("h-24 rounded-lg border border-dashed p-1 align-top transition-colors",
-                            over === key ? "border-accent bg-accent/10" : "border-line bg-surface-2/30", d < today && "opacity-70")}>
+                            over === key ? "border-accent bg-accent/10" : d < today ? "border-line bg-surface-2/80" : "border-line bg-surface-2/30")}>
                           <ul className="space-y-1">
                             {cell(d, r.id).map((w) => (
                               <li key={w.id}><MiniCard wo={w} today={today} draggable={w.state === "scheduled"} onOpen={() => set({ wo: w.id }, false)} /></li>

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import clsx from "clsx";
+import { Link } from "react-router-dom";
 import MachineStatusBadge from "@/components/MachineStatusBadge";
 import EmptyState from "@/components/ui/EmptyState";
 import QueryView from "@/components/ui/QueryView";
@@ -47,14 +48,16 @@ export default function LinesPage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <span aria-hidden="true" className={clsx("size-2.5 shrink-0 rounded-full", line.is_active ? "bg-brand-400" : "bg-gray-600")} />
                     <div className="min-w-0">
-                      <p className="truncate font-semibold text-gray-100">{line.name}</p>
-                      <p className="truncate text-xs text-gray-500">
+                      <p className="truncate font-semibold text-gray-100">
+                        <Link to={`/factory/lines/${line.id}`} className="underline-offset-2 hover:underline">{line.name}</Link>
+                      </p>
+                      <p className="truncate text-xs text-fg-muted">
                         {[line.location, line.is_active ? null : "inativa"].filter(Boolean).join(" · ") || "—"}
                       </p>
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-xs text-gray-500">Operando</p>
+                    <p className="text-xs text-fg-muted">Operando</p>
                     <p className="font-mono font-medium tabular-nums text-gray-200">
                       {machinesQ.data ? `${running}/${lineMachines.length}` : "—"}
                     </p>
@@ -71,15 +74,17 @@ export default function LinesPage() {
                       <thead>
                         <tr className="border-b border-gray-800/60">
                           {["Máquina", "Modelo", "Status", "Último sinal"].map((h) => (
-                            <th key={h} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500">{h}</th>
+                            <th key={h} scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-fg-muted">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {lineMachines.map((m) => (
                           <tr key={m.id} className="border-b border-gray-800/40 transition-colors last:border-b-0 hover:bg-gray-800/30">
-                            <td className="px-4 py-3 font-medium text-gray-200">{m.name}</td>
-                            <td className="px-4 py-3 text-gray-500">{m.model ?? "—"}</td>
+                            <td className="px-4 py-3 font-medium text-gray-200">
+                              <Link to={`/factory/machines/${m.id}`} className="underline-offset-2 hover:underline">{m.name}</Link>
+                            </td>
+                            <td className="px-4 py-3 text-fg-muted">{m.model ?? "—"}</td>
                             <td className="px-4 py-3"><MachineStatusBadge status={m.status} size="sm" /></td>
                             <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-400">{formatSeenAgo(m.last_seen_at, now)}</td>
                           </tr>
@@ -88,7 +93,7 @@ export default function LinesPage() {
                     </table>
                   </div>
                 ) : (
-                  <p className="px-5 py-4 text-sm text-gray-500">Nenhuma máquina cadastrada.</p>
+                  <p className="px-5 py-4 text-sm text-fg-muted">Nenhuma máquina cadastrada.</p>
                 )}
               </section>
             );

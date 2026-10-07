@@ -23,65 +23,97 @@ alias dc='docker compose --env-file /opt/factory-monitor/.env -f infra/docker-co
 | `fm_web` | app React (nginx) | Traefik: `app.factoryconnect.tech` |
 | `fm_site` | site estático | Traefik: `factoryconnect.tech` |
 | `fm_mediamtx` | RTSP → HLS | só rede `fm-net` |
-| `fm_prometheus`, `fm_grafana` | profile `monitoring` | Grafana em `127.0.0.1:3000` (túnel SSH) |
+| `fm_prometheus`, `fm_alertmanager`, `fm_grafana`, `fm_node_exporter`, `fm_sql_exporter`, `fm_blackbox` | profile `monitoring` (§8) | Grafana `127.0.0.1:3000`, Alertmanager `127.0.0.1:9093` (túnel SSH) |
 | `fm_demo_plant`, `fm_demo_gateway` | profile `demo`: planta virtual + gateway do tenant DEMO (§10) | nada publicado (rede interna `fm-demo`) |
 
 Arquivos fora do git no VPS: `.env` (segredos), `mqtt/gateways.conf` e `mqtt/certs/` (MQTT),
-`backups/pre-deploy/` (backups automáticos do deploy) e `/var/backups/factory-monitor/` (backups noturnos).
+`backups/pre-deploy/` (backups automáticos do deploy), `backups/metrics/` (idade do backup para o Prometheus),
+`.deploy/` (versão no ar e histórico de deploys) e `/var/backups/factory-monitor/` (backups noturnos).
+Staging (§12): mesmo VPS, checkout `/opt/factory-monitor-staging`, containers `fm_stg_*`.
 
 > Portas publicadas pelo Docker **ignoram o UFW** (o Docker escreve as regras de iptables antes dele).
 > O que limita a exposição é o `ports:` do compose — por isso tudo que é interno é `127.0.0.1:` ou não é publicado.
 
 ## 2. Deploy
 
-Caminho normal: merge na `main` → CI verde → workflow **Deploy** (aguarda aprovação no environment
-`production`) → `scripts/remote_deploy.sh` no VPS por SSH (usuário dedicado, chave em `VPS_SSH_KEY`):
+Caminho normal (detalhes da release em §11):
 
-1. `git merge --ff-only <sha>` (alterações locais no VPS abortam o deploy);
-2. guarda as imagens atuais como `:rollback` e faz o build das novas;
-3. **backup do Postgres** em `backups/pre-deploy/` (mantém 5; `PRE_DEPLOY_BACKUP=0` pula) — falhou → aborta antes das migrations;
-4. `alembic upgrade head` (migrations **antes** do restart);
-5. `up -d`; healthcheck em `/api/health` por até 2 min;
-6. falhou → **rollback automático** de código e imagens (seção 3).
+1. merge na `main` com CI e **Security** verdes;
+2. tag `vX.Y.Z` igual ao `VERSION`, com seção no `CHANGELOG.md` → workflow **Release** constrói, varre (Trivy),
+   gera SBOM e publica `ghcr.io/dayan77/factoryconnect-{server,web,site,edge}:X.Y.Z` com proveniência;
+3. **Actions → Deploy → Run workflow** com `version=vX.Y.Z`, `target=staging` → smoke em
+   `https://staging.factoryconnect.tech` (§12);
+4. mesmo workflow com `target=production` → **aguarda a aprovação do dono do projeto** (environment
+   `production`, *required reviewers*) → `scripts/remote_deploy.sh` no VPS por SSH (usuário dedicado, chave do
+   environment).
 
-Manual (mesmo script, do seu computador): `ssh deploy@VPS 'bash -s' -- <sha> /opt/factory-monitor < scripts/remote_deploy.sh`.
+O que o `remote_deploy.sh <ref>` faz (produção: `/opt/factory-monitor`, staging: `DEPLOY_TARGET=staging`):
 
-Antes de aprovar um deploy, confira:
-- [ ] CI verde no commit (todos os jobs, inclusive `backup` e `infra`);
-- [ ] migrations novas são **compatíveis com o código anterior** (aditivas; nada de `DROP`/rename no mesmo deploy);
+1. resolve a versão: tag `vX.Y.Z` → `FM_VERSION=X.Y.Z`; sha → `sha-<12 hex>`. Produção só aceita commit da
+   `main` (`ALLOW_NON_MAIN=1` para hotfix excepcional). Commits locais no VPS abortam;
+2. `git reset --keep` no commit alvo (preserva arquivos locais não commitados; funciona para frente **e para trás**);
+3. pré-requisitos: credenciais do broker, gateways cadastrados, TLS, `compose config` (§6.4);
+4. imagens: com `FM_IMAGE_PREFIX` no `.env` → `docker compose pull` das imagens da release (login temporário no
+   GHCR com o token do job, logout em seguida); sem ele → build local com a tag da versão. **Nunca `:latest`**;
+5. **backup do Postgres** em `backups/pre-deploy/` (mantém 5; `PRE_DEPLOY_BACKUP=0` pula) — falhou → aborta;
+6. guarda a revisão atual do banco (`alembic current` → `.deploy/<alvo>.alembic-before`);
+7. `alembic upgrade head` com **timeout** (`MIGRATION_TIMEOUT_S`, padrão 600 s; input do workflow) — falhou ou
+   estourou → aborta **sem trocar containers** (a migration que falhou é desfeita pela transação);
+8. `up -d`; healthcheck em `/api/health` por até 2 min;
+9. ok → grava `.deploy/<alvo>.current` (`versão sha`) e `.deploy/history.log`; falhou → **rollback automático**
+   (§3).
+
+Manual (do seu computador, mesmo script):
+`ssh deploy@VPS 'DEPLOY_TARGET=production bash -s' -- v0.7.0 /opt/factory-monitor < scripts/remote_deploy.sh`.
+
+Antes de aprovar um deploy em produção, confira:
+- [ ] a mesma tag rodou em **staging** e passou no smoke (§12);
+- [ ] CI, Security e Release verdes na tag (Trivy sem HIGH/CRITICAL corrigível; SBOM anexado à GitHub Release);
+- [ ] migrations novas são **compatíveis com o código anterior** (expand/contract: aditivas; `DROP`/rename só numa
+      release seguinte, quando nenhum código ativo depende da coluna);
 - [ ] variáveis novas do `.env` já estão no VPS (compare com `.env.prod.example`; o compose falha com
       mensagem clara se faltar `MQTT_USERNAME`/`MQTT_PASSWORD`, por exemplo);
 - [ ] janela combinada se houver mudança no broker MQTT (gateways reconectam).
 
 Depois: `dc ps` (tudo `healthy`), `curl -fsS https://app.factoryconnect.tech/api/health`, painel
-**FactoryConnect — Operação** sem alerta, mensagens MQTT chegando (seção 7).
+**FactoryConnect — Operação** sem alerta, mensagens MQTT chegando (§8), `cat .deploy/production.current`.
 
 ## 3. Rollback
 
-**Automático**: se o healthcheck falhar, `remote_deploy.sh` volta o código (`git reset --keep`) e as imagens
-(`:rollback` → `:latest`) e sobe de novo. A saída do job mostra `rollback saudável` ou pede intervenção.
+**Automático**: se o healthcheck falhar, `remote_deploy.sh` volta o código (`git reset --keep`) e sobe as imagens
+da **versão anterior registrada** (`.deploy/<alvo>.current`; no primeiro deploy versionado, as `:latest` antigas,
+que o deploy novo não sobrescreve). A saída do job mostra `rollback saudável` ou pede intervenção.
 
-**Manual** (o deploy passou no healthcheck mas a versão está ruim):
+**Manual** (o deploy passou no healthcheck, mas a versão está ruim): rode o workflow **Deploy** com a **tag
+anterior** (`version=v0.6.x`) — as imagens dela continuam no GHCR (e no VPS) e o script faz o caminho de volta
+como qualquer deploy (com backup pré-deploy e migrations, que não fazem nada se o schema já está à frente).
+Sem GitHub (emergência), no VPS:
 
 ```bash
-git log --oneline -5                          # escolha o commit bom
-docker tag factory-monitor-server:rollback factory-monitor-server:latest   # se a imagem anterior ainda existe
-docker tag factory-monitor-web:rollback factory-monitor-web:latest
-git reset --keep <sha-bom>
-dc up -d --no-build server web
+# do seu computador (mesmo script do workflow):
+ssh deploy@VPS 'bash -s' -- v0.6.1 /opt/factory-monitor < scripts/remote_deploy.sh
+# ou direto no VPS, sem migrations nem backup (só troca código e containers):
+tail -5 .deploy/history.log                                         # versões e commits que já rodaram
+git reset --keep <sha-bom> && FM_VERSION=<versão-boa> dc up -d --no-build server web site
 ```
-Ou dispare o workflow **Deploy** manualmente apontando para o commit bom (depois de reverter na `main`).
 
-**Migrations**: não são revertidas automaticamente. Como toda migration é aditiva, o código anterior roda
-com o schema novo. Se uma migration destruiu dados, restaure o backup pré-deploy (seção 4.4) com o código
-anterior:
+**Migrations** — não são revertidas automaticamente (por isso a regra expand/contract acima: o código anterior
+roda com o schema novo). Tempo máximo: `MIGRATION_TIMEOUT_S`; cada migration roda numa transação (DDL transacional
+do Postgres), então uma falha no meio desfaz só aquela migration. Para desfazer de propósito:
+
+1. **migration reversível e sem perda** (ex.: coluna nova): com o código anterior no ar,
+   `dc run --rm -T server alembic downgrade <revisão>` — a revisão anterior está em
+   `.deploy/production.alembic-before`;
+2. **migration que apagou/transformou dados**: restaure o backup pré-deploy com o código anterior:
 
 ```bash
 ls -1t backups/pre-deploy/        # o mais recente é o feito antes do deploy problemático
 docker stop fm_server
 RESTORE_CONFIRM=yes RESTORE_SKIP_INFLUX=1 scripts/restore.sh backups/pre-deploy/fm-backup-<UTC>.tar
-dc up -d server
+FM_VERSION=<versão-boa> dc up -d server
 ```
+O backup pré-deploy é só do Postgres (o Influx não muda com migration). Dados escritos entre o backup e o restore
+se perdem — registre a janela no incidente (§9).
 
 ## 4. Backup e restauração
 
@@ -111,8 +143,10 @@ sudo -u fmonitor crontab -e
 ```
 ```cron
 # Backup diário 03:17 (UTC do VPS), 14 cópias locais, cópia cifrada off-site, monitor de cron
-17 3 * * * cd /opt/factory-monitor && BACKUP_DIR=/var/backups/factory-monitor BACKUP_KEEP=14 BACKUP_PASSPHRASE_FILE=/home/fmonitor/.fm-backup-pass BACKUP_UPLOAD_CMD='rclone copy "$1" b2:fm-backups/' BACKUP_PING_URL=https://hc-ping.com/<uuid> scripts/backup.sh 2>&1 | logger -t fm-backup
+17 3 * * * cd /opt/factory-monitor && BACKUP_DIR=/var/backups/factory-monitor BACKUP_KEEP=14 BACKUP_PASSPHRASE_FILE=/home/fmonitor/.fm-backup-pass BACKUP_UPLOAD_CMD='rclone copy "$1" b2:fm-backups/' BACKUP_PING_URL=https://hc-ping.com/<uuid> BACKUP_METRICS_FILE=/opt/factory-monitor/backups/metrics/fm_backup.prom scripts/backup.sh 2>&1 | logger -t fm-backup
 ```
+- `BACKUP_METRICS_FILE` alimenta os alertas `FmBackupTooOld`/`FmBackupFailed` (node-exporter lê
+  `BACKUP_METRICS_DIR`, padrão `/opt/factory-monitor/backups/metrics`, §8).
 - Off-site é obrigatório para considerar o backup confiável (o VPS pode sumir). Qualquer comando serve em
   `BACKUP_UPLOAD_CMD` (`rclone`, `aws s3 cp`, `scp`); o arquivo vai cifrado se `BACKUP_PASSPHRASE_FILE` estiver definido.
 - `BACKUP_PING_URL` (ex. healthchecks.io) avisa quando o backup **não** rodou ou falhou (`/fail`).
@@ -260,19 +294,28 @@ anterior no ar se faltar algum (mensagem `pré-requisitos do MQTT de produção 
 
 ## 8. Observabilidade
 
-### 8.1 Prometheus + Grafana
+### 8.1 Stack (profile `monitoring`)
+| Container | Função |
+|---|---|
+| `fm_prometheus` | coleta e regras (`alerts.yml` = backend, `alerts.platform.yml` = plataforma); retenção 30 dias **ou** 5 GB (`PROMETHEUS_RETENTION`, `PROMETHEUS_RETENTION_SIZE`) |
+| `fm_alertmanager` | agrupa e envia os alertas por **e-mail** (§8.3); UI em `127.0.0.1:9093` |
+| `fm_grafana` | painel **FactoryConnect — Operação**; `127.0.0.1:3000` |
+| `fm_node_exporter` | disco/CPU/memória do VPS + textfile collector (métricas do backup) |
+| `fm_sql_exporter` | consultas de negócio no Postgres: gateways sem contato, dead letters pendentes, demo |
+| `fm_blackbox` | sondas HTTPS públicas (app, site, staging; validade do certificado) e `/health` da planta da demo |
+
 ```bash
-echo 'COMPOSE_PROFILES=monitoring' >> .env      # e GRAFANA_ADMIN_PASSWORD (>= 12 caracteres)
-dc up -d prometheus grafana
-ssh -L 3000:127.0.0.1:3000 deploy@VPS          # no seu computador → http://localhost:3000
+# .env: COMPOSE_PROFILES=monitoring, GRAFANA_ADMIN_PASSWORD (>= 12), ALERT_EMAIL_TO + SMTP_* (§8.3)
+dc up -d prometheus alertmanager grafana node-exporter sql-exporter blackbox-exporter
+ssh -L 3000:127.0.0.1:3000 -L 9093:127.0.0.1:9093 -L 9090:127.0.0.1:9090 deploy@VPS   # Grafana, Alertmanager
 ```
-Painel provisionado **FactoryConnect → FactoryConnect — Operação** (`infra/monitoring/grafana/dashboards/`,
-gerado por `infra/monitoring/tools/build_dashboard.py`). Regras em `infra/monitoring/prometheus/alerts.yml`
-(Prometheus → Alerts). Para receber notificação, crie um *contact point* no Grafana (e-mail/Telegram) e um alerta
-sobre as mesmas consultas. Dev: `make monitoring` (Grafana `:3000`, Prometheus `:9090`). O Prometheus de dev
-coleta o backend local em `host.docker.internal:8000`: suba o uvicorn com `--host 0.0.0.0` (com o padrão
-`127.0.0.1` o container não o alcança e o alvo fica `down`; `infra/tests/test_monitoring.py` pula a coleta).
+(Prometheus não publica porta; para a UI: `docker exec fm_prometheus wget -qO- localhost:9090/api/v1/alerts` ou
+acrescente `127.0.0.1:9090:9090` temporariamente.) Painel provisionado de
+`infra/monitoring/grafana/dashboards/` (gerado por `infra/monitoring/tools/build_dashboard.py`). Dev:
+`make monitoring` (Grafana `:3000`, Prometheus `:9090`; sem Alertmanager/exporters). O Prometheus de dev coleta o
+backend local em `host.docker.internal:8000`: suba o uvicorn com `--host 0.0.0.0`.
 `/metrics` **não** é publicado no Traefik: o Prometheus coleta `server:8000` pela rede interna.
+Papel só de leitura do sql-exporter: docs/go_live.md §7.
 
 ### 8.2 Métricas
 | Métrica | Tipo | Origem |
@@ -292,16 +335,73 @@ coleta o backend local em `host.docker.internal:8000`: suba o uvicorn com `--hos
 | `fm_influx_write_batch_points` | histogram | backend — pontos por requisição de escrita no Influx |
 | `fm_ingest_late_readings_total` | counter | backend — leituras gravadas muito depois do próprio `ts` (buffer do gateway, backlog): as janelas preditivas que elas tocam são recalculadas |
 | `fm_downtime_events_total{kind}` | counter | backend — paradas criadas pela detecção (`stop`) e micro-paradas definitivas (`micro_stop`) |
+| `fm_detector_lag_seconds{detector,tenant_id,entity_id}` / `fm_detector_lag_max_seconds{detector}` / `fm_detector_lagging{detector}` | gauge | backend (Sprint 7, `services/oee/lag.py`) — atraso do detector de paradas e da preditiva em relação aos próprios dados (checkpoint); cresce depois de uma queda longa e volta a 0 no catch-up |
 | `process_resident_memory_bytes`, `process_cpu_seconds_total` | — | prometheus_client (existe) |
+| `fm_gateway_seconds_since_seen{tenant,gateway}`, `fm_gateway_heartbeat_seconds` | gauge | **sql-exporter** (`infra/monitoring/sql-exporter`) — gateways cadastrados (status ≠ `pending`) |
+| `fm_ingest_dead_letters_pending` | gauge | sql-exporter — dead letters ainda não reprocessadas (estoque; o counter acima conta as novas) |
+| `fm_demo_last_data_age_seconds` | gauge | sql-exporter — idade do último dado das máquinas do tenant `demo-publica` (sem linha = demo não instalada) |
+| `fm_backup_last_success_timestamp_seconds`, `_size_bytes`, `_duration_seconds`, `fm_backup_last_failure_timestamp_seconds` | gauge | `scripts/backup.sh` → textfile do **node-exporter** (`BACKUP_METRICS_FILE`) |
+| `node_filesystem_avail_bytes` / `_size_bytes` | gauge | node-exporter — disco do VPS |
+| `probe_success`, `probe_ssl_earliest_cert_expiry`, `probe_duration_seconds` | gauge | **blackbox-exporter** — `https://app…/api/health`, `https://factoryconnect.tech/healthz`, staging e `demo-plant:8091/health` |
 
 Todas as séries existem desde a primeira coleta (rótulos pré-criados, valor 0); `FmMqttNoMessages` também dispara
 se a série sumir com o servidor no ar (`absent()`). `infra/tests/test_monitoring.py` confere que toda métrica
-`fm_*` das regras e do painel é exportada pelo backend.
+`fm_*` das regras e do painel é exportada pelo backend (as da plataforma: pelo exporter indicado — as consultas
+do sql-exporter rodam contra o schema real em `test_sql_exporter_queries_run_against_the_real_schema`).
+**Atenção**: com `MQTT_INGEST=process` ou `PREDICTIVE_WORKER=process`, métricas que nascem dentro dos processos
+filhos (ingestão, detectores) ficam no `WORKER_METRICS_PORT` deles, que hoje só escuta em `127.0.0.1` do
+container — o Prometheus não alcança. Em produção mantenha `MQTT_INGEST=inline` (padrão) até o backend expor
+essas portas (pendência registrada no Sprint 7); `fm_detector_lag_*` vem do processo da API e não é afetada.
 
-### 8.3 Uptime e saúde
+### 8.3 Alertas por e-mail (Alertmanager)
+`infra/monitoring/alertmanager/alertmanager.yml.tmpl` é renderizado na partida por `entrypoint.sh` a partir do
+`.env`: `ALERT_EMAIL_TO` (obrigatório — sem ele o container **não sobe**, e o Prometheus mostra
+`FmAlertmanagerDown`), `ALERT_EMAIL_CRITICAL_TO` (padrão = `ALERT_EMAIL_TO`), `ALERT_EMAIL_FROM` (padrão
+`SMTP_FROM`) e o SMTP já usado pelos leads (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`; SendGrid:
+`smtp.sendgrid.net`, usuário `apikey`). A senha vai para um arquivo próprio no volume, não para a config.
+Roteamento: `critical` repete a cada 1 h, `warning` a cada 12 h; `FmServerDown` suprime os alertas que dependem
+das métricas do backend. Teste de ponta a ponta depois de configurar:
+```bash
+docker exec fm_alertmanager amtool alert add FmTesteManual severity=warning summary="teste do go-live" \
+  --alertmanager.url=http://localhost:9093      # o e-mail chega em ~1 min; some sozinho em 5 min
+```
+Silenciar durante manutenção: `amtool silence add alertname=~".+" --duration=1h --comment="janela"`.
+
+### 8.4 Alertas e o que fazer (runbook)
+| Alerta | Sev. | Significa | Primeiro passo |
+|---|---|---|---|
+| `FmServerDown` | crit | Prometheus não coleta o backend | `dc ps server`, `docker logs fm_server --tail 200`; deploy recente? → §3 |
+| `FmHttp5xxRate` / `FmHttp5xxRateCritical` | warn/crit | > 5% / > 20% de respostas 5xx | painel "p95 por rota"; log `request_id` dos 500 |
+| `FmHttpLatencyP95High` | warn | p95 > 1 s | consultas longas (`pg_stat_activity`, §9), `docker stats` |
+| `FmMqttNoMessages` | warn | nenhuma leitura em 15 min | broker (`docker logs fm_mosquitto`), credenciais, gateways |
+| `FmMqttBacklog`, `FmIngestQueueSaturated` | warn/crit | fila de ingestão crescendo / > 80% | CPU, Influx lento, `MQTT_MAX_CONCURRENCY`; o broker segura o resto |
+| `FmMqttProcessingLagHigh`, `FmIngestionLagHigh` | warn | leituras demorando a ser gravadas | idem; buffer de gateway descarregando é normal por alguns minutos |
+| `FmIngestDeadLetters`, `FmDeadLettersPending` | warn | leituras guardadas em `ingest_dead_letters` | causa no log `ingest.dead_letter`; corrigida: replay (§9) |
+| `FmIngestDropped` | crit | leitura **perdida** | bug: preserve logs, abra incidente (§9) |
+| `FmDetectorLagHigh`, `FmDetectorLagging` | warn | detector de paradas/preditiva atrás dos dados | normal logo depois de uma queda longa (catch-up); persistindo: `docker logs fm_server \| grep -i detector` |
+| `FmGatewayOffline` | warn | gateway sem contato > 6 heartbeats | avise o cliente; energia/rede da planta? `make mqtt-gateway-list`; credencial revogada? |
+| `FmDiskSpaceLow` / `Critical` / `FmDiskWillFillIn24h` | warn/crit | disco do VPS | §9 "Disco"; `docker system df`; retenção do Influx/Prometheus |
+| `FmBackupTooOld`, `FmBackupNeverReported`, `FmBackupFailed` | crit/warn | sem backup completo em 26 h / falhou | `journalctl -t fm-backup --since -2d`; rode `scripts/backup.sh` à mão (§4) |
+| `FmDemoPlantDown`, `FmDemoDataStale` | warn | demo pública parada | §10.4 |
+| `FmPublicEndpointDown` | crit | app/site/staging não responde 200 por HTTPS | Traefik/Easypanel, DNS, certificado |
+| `FmTlsCertificateExpiring` | warn | certificado vence em < 14 dias | renovação do Let's Encrypt no Traefik (logs do Easypanel) |
+| `FmAlertmanagerDown`, `FmNodeExporterDown`, `FmSqlExporterDown` | crit/warn | o próprio monitoramento | `dc ps`, `.env` (ALERT_EMAIL_TO/SMTP), `docker logs fm_<nome>` |
+
+### 8.5 Logs e retenção
+- Containers: driver `json-file` com rotação — até `LOG_MAX_FILE` (5) × `LOG_MAX_SIZE` (20 MB) por container em
+  produção, 3 × 10 MB em staging. Ver: `docker logs fm_server --since 1h`; nada de log fora do Docker.
+- Prometheus: 30 dias ou 5 GB (o que vier primeiro). Alertmanager: 120 h de silêncios/notificações.
+- Backups: `BACKUP_KEEP` (14 locais) + cópia off-site (§4.2). Pré-deploy: 5. Logs do cron: `journalctl -t fm-backup`
+  (retenção do journald do sistema).
+- Dados de aplicação (auditoria, sessões, leads): retenção em docs/privacy.md §4.
+- Retenção do Influx: bucket `sensors` sem expiração em produção (histórico de uso dos componentes); staging 30 dias.
+
+### 8.6 Uptime externo e saúde
 - Containers: `dc ps` — `postgres`, `influxdb`, `mosquitto`, `server`, `site` têm healthcheck (o do Mosquitto
   autentica de verdade).
-- Externo (de fora do VPS, ex. UptimeRobot/healthchecks.io, intervalo 1 min, alerta após 2 falhas):
+- O blackbox-exporter sonda os endpoints públicos **de dentro do VPS** (DNS + Traefik + TLS). Isso não pega o VPS
+  inteiro fora do ar (o próprio Prometheus cai junto), então mantenha **também** um monitor externo
+  (UptimeRobot/healthchecks.io, intervalo 1 min, alerta após 2 falhas):
   - `https://app.factoryconnect.tech/api/health` → 200
   - `https://factoryconnect.tech/healthz` → 200
   - TCP `mqtt.factoryconnect.tech:8883` (handshake TLS)
@@ -410,7 +510,9 @@ curl -fsS https://app.factoryconnect.tech/api/public/demo-status   # "plant_runn
   passa de 60 s ou o relógio da planta se afastou > 5 min da hora de São Paulo. Desvio > 10 min (fuso/horário de
   verão mudou, relógio do host corrigido) → a planta grava o estado e sai com código 3; o `restart: always` a sobe
   realinhada.
-- **Alerta para devops** (parada > 5 min): monitor externo (UptimeRobot/healthchecks.io, tipo *keyword*, a cada
+- **Alerta para devops** (parada > 5 min): com o profile `monitoring`, `FmDemoPlantDown` (sonda do `/health` da
+  planta pelo blackbox) e `FmDemoDataStale` (sem dado do tenant demo há 10 min) chegam por e-mail (§8.4). Além
+  disso, monitor externo (UptimeRobot/healthchecks.io, tipo *keyword*, a cada
   1 min) em `https://app.factoryconnect.tech/api/public/demo-status` esperando `"plant_running":true`, alertando
   após 5 falhas seguidas. O servidor marca `plant_running=false` quando nenhuma leitura da demo chega há
   `DEMO_PLANT_STOPPED_AFTER_S` (300 s) — cobre planta, gateway, broker e ingestão de uma vez — e a faixa da demo
@@ -427,4 +529,75 @@ curl -fsS https://app.factoryconnect.tech/api/public/demo-status   # "plant_runn
   `/data/gateway_credentials.json` do volume `demo-gateway-data`).
 - Desligar a demo: tire `demo` de `COMPOSE_PROFILES` e `dc stop demo-plant demo-gateway` (o site continua com o
   botão; a sessão abre com a faixa "planta simulada temporariamente parada").
+
+## 11. Releases e versionamento
+
+- **SemVer** no arquivo `VERSION` (sem `v`); tag `vX.Y.Z` (pré-release: `vX.Y.Z-rc.N`). MAJOR = quebra a API
+  pública, o protocolo do gateway ou exige ação manual na migração; MINOR = funcionalidade compatível (um sprint);
+  PATCH = correção. Critérios no topo do `CHANGELOG.md` (Keep a Changelog).
+- **Cortar uma release** (na `main`, depois do merge do sprint):
+  ```bash
+  # 1) VERSION + CHANGELOG: mova o conteúdo de [Unreleased] para "## [X.Y.Z] - AAAA-MM-DD"
+  make release-check TAG=vX.Y.Z           # confere VERSION, tag, seção datada e ordem do changelog
+  git commit -am "chore: release vX.Y.Z" && git tag -a vX.Y.Z -m "FactoryConnect X.Y.Z" && git push --follow-tags
+  ```
+  O workflow **Release** (`.github/workflows/release.yml`) então: confere de novo (tag na `main`, VERSION,
+  CHANGELOG) → para cada imagem (`server`, `web`, `site`, `edge` amd64+arm64) build → **Trivy** (HIGH/CRITICAL com
+  correção reprovam antes de publicar) → **SBOM CycloneDX** → push no GHCR com **proveniência SLSA**
+  (`provenance: mode=max`, SBOM do buildx e attestation assinada) → GitHub Release com as notas e os SBOMs.
+- **Tags das imagens**: `ghcr.io/dayan77/factoryconnect-<nome>:X.Y.Z`, `:X.Y` e `:sha-<commit>`; nunca `:latest`.
+  Conferir a origem de uma imagem: `gh attestation verify oci://ghcr.io/dayan77/factoryconnect-server:X.Y.Z --owner Dayan77`.
+- **Visibilidade do pacote**: o primeiro push cria os pacotes como privados; o deploy faz login temporário com o
+  token do job (`packages: read`). Gateways em campo puxam `factoryconnect-edge` — torne só esse pacote público
+  (Packages → factoryconnect-edge → Package settings) ou use um token de leitura no IPC.
+- **Hotfix**: branch da tag (`hotfix/vX.Y.Z+1`), PR para a `main`, release normal. Produção só aceita commits da
+  `main` (`ALLOW_NON_MAIN=1` no script é exceção registrada no incidente).
+
+## 12. Staging (pré-produção no mesmo VPS)
+
+`infra/docker-compose.staging.yml`: projeto compose `fm-staging`, containers `fm_stg_*`, volumes `fm-staging_*`,
+rede `fm-stg-net`, broker próprio (só `127.0.0.1:11883`), routers Traefik `fm-stg-*` para
+`staging.factoryconnect.tech` com `X-Robots-Tag: noindex`. Sem site, sem demo, sem monitoramento próprio (o
+Prometheus da produção sonda `https://staging.factoryconnect.tech/api/health`). Mesmas imagens da produção — o
+que passou em staging vai para a produção sem rebuild. Preparação (uma vez): docs/go_live.md §3.
+
+```bash
+alias dcs='docker compose --env-file /opt/factory-monitor-staging/.env -f infra/docker-compose.staging.yml'
+cd /opt/factory-monitor-staging && dcs ps
+```
+Smoke depois de cada deploy em staging (5 min): login, dashboard, uma máquina com dados (simulador apontando para
+o broker de staging por túnel SSH: `ssh -L 11883:127.0.0.1:11883 deploy@VPS`), um relatório PDF, e
+`curl -sI https://staging.factoryconnect.tech | grep -i -E 'strict-transport|content-security|x-robots'`.
+Banco de staging: dados sintéticos ou cópia **anonimizada** da produção — nunca dados pessoais reais de clientes
+(LGPD, docs/privacy.md). Recriar do zero: `dcs down -v` (apaga só os volumes `fm-staging_*`).
+
+## 13. Segurança da cadeia de suprimentos e cabeçalhos
+
+| O quê | Onde | Quando reprova |
+|---|---|---|
+| Segredos no **histórico inteiro** do git | gitleaks — `.github/workflows/security.yml`, config `.github/security/gitleaks.toml` | qualquer achado fora de `.github/security/gitleaksignore` |
+| Dependências Python (server, edge, scripts) | pip-audit → `scripts/security/audit_gate.py` | qualquer vulnerabilidade sem aceite em `.github/security/audit-allowlist.toml` |
+| Dependências npm (web, site) | `npm audit` → mesmo portão | high/critical sem aceite (moderate/low: aviso) |
+| Imagens (server, web, site, edge) | Trivy no job `docker` do CI e na Release | HIGH/CRITICAL **com correção**, salvo `.github/security/trivyignore` |
+| SBOM CycloneDX | Security (fontes) · CI e Release (imagens) | — (artefatos; anexados à GitHub Release) |
+| Atualizações | Dependabot (`.github/dependabot.yml`): pip, npm, Docker, docker-compose, Actions | — (PRs semanais; segurança imediata) |
+| Cabeçalhos HTTP | `web/nginx/security-headers.conf`, `site/nginx/security-headers.conf`; API: `server/src/services/security/http.py` | `infra/tests/test_security_headers.py` (nginx real + Chromium sem violação de CSP) |
+
+Regras:
+- **Corrigir antes de aceitar**: bump da versão fixada e CI verde. Aceite só sem correção ou com migração grande,
+  sempre com motivo, escopo (`runtime`/`dev`) e `expires` (máx. ~1 ano; vencido reprova o CI).
+- **Segredo encontrado** (gitleaks ou olho humano): **rotacione primeiro** (§5), depois registre o fingerprint em
+  `gitleaksignore` com o comentário do que foi rotacionado e quando. Apagar o commit não basta. O vazamento
+  histórico da senha do VPS (`cc1d1e7`) está registrado assim — conferência no go-live (docs/go_live.md §1).
+- Local: `make security` (gitleaks + pip-audit + npm audit + cabeçalhos), ou só `make deps-audit` / `make secrets-scan`.
+- **CSP**: app com `script-src 'self'` (nenhum script inline — `theme-init.js`/`manifest-init.js` são arquivos);
+  site com o hash SHA-256 de cada script inline do build (`site/scripts/render-nginx.mjs` no `Dockerfile`).
+  Script inline novo no site entra sozinho no próximo build; no app, use arquivo em `public/`.
+  `style-src` mantém `'unsafe-inline'` (atributos `style=` do React/Recharts e CSS embutido do Astro — sem execução).
+- **HSTS** `max-age=63072000; includeSubDomains; preload` em app e site. Antes de submeter `factoryconnect.tech` a
+  hstspreload.org, todos os subdomínios (app, staging, mqtt, www) precisam responder em HTTPS — a inclusão na
+  lista dos navegadores é difícil de desfazer.
+- **TLS**: no caminho principal o TLS termina no Traefik do Easypanel (padrão: TLS 1.2+, cifras modernas; HTTP→HTTPS
+  pelos routers `*-http`). Na alternativa nginx (`infra/nginx/nginx.prod.conf`): só TLS 1.2/1.3, ECDHE+AEAD,
+  sem session tickets, OCSP stapling. Meta no SSL Labs: **A+**.
 

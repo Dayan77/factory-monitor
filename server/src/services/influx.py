@@ -21,6 +21,74 @@ def _rfc3339(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+_ESC_TAG = str.maketrans({",": r"\,", "=": r"\=", " ": r"\ ", "\n": r"\n", "\t": r"\t", "\r": r"\r"})
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _tag_value(v: str) -> str:
+    out = str(v).translate(_ESC_TAG)
+    return out + " " if out.endswith("\\") else out
+
+
+def line_protocol(tenant_id: str, tag_id: str, machine_id: str, unit: str, value: float, ts: datetime
+                  ) -> Optional[str]:
+    """Sprint 7 (scale): the line-protocol of one reading, built directly — byte-for-byte what the client library
+    produces from the equivalent dict record (tags sorted, empty tags left out, the same escaping, whole floats
+    without ".0", nanosecond timestamp), at a fraction of its CPU cost (the dict → Point conversion was a hot spot
+    at 2 400 readings/s). None: a value the fast path does not cover (non-finite) → the caller uses the dict."""
+    import math
+    v = float(value)
+    if not math.isfinite(v):
+        return None
+    sv = str(v)
+    if sv.endswith(".0"):
+        sv = sv[:-2]
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    d = ts - _EPOCH
+    ns = (d.days * 86400 + d.seconds) * 1_000_000_000 + d.microseconds * 1000
+    tags = []
+    if machine_id:
+        tags.append("machine_id=" + _tag_value(machine_id))
+    tags.append("tag_id=" + _tag_value(tag_id))
+    tags.append("tenant_id=" + _tag_value(tenant_id))
+    if unit:
+        tags.append("unit=" + _tag_value(unit))
+    return f"sensors,{','.join(tags)} value={sv} {ns}"
+
+
+class _GroupWaiter:
+    """The future-like handle _drain settles for each record of a write_many() group: the group's future completes
+    when its last record is settled (an exception if any record failed)."""
+
+    __slots__ = ("fut", "left", "error")
+
+    def __init__(self, fut: "asyncio.Future", n: int) -> None:
+        self.fut, self.left, self.error = fut, n, None
+
+    def done(self) -> bool:
+        return self.fut.done()
+
+    def _settle(self) -> None:
+        self.left -= 1
+        if self.left <= 0 and not self.fut.done():
+            if self.error is None:
+                self.fut.set_result(None)
+            else:
+                self.fut.set_exception(self.error)
+
+    def set_result(self, _value) -> None:
+        self._settle()
+
+    def set_exception(self, e: BaseException) -> None:
+        if self.error is None:
+            self.error = e
+        self._settle()
+
+    def cancel(self) -> None:
+        self.fut.cancel()
+
+
 class InfluxService:
     """Lazily creates the async client inside the running event loop.
 
@@ -67,6 +135,11 @@ class InfluxService:
     ) -> None:
         tenant_id = ensure_uuid(tenant_id, "tenant_id")
         tag_id = ensure_uuid(tag_id, "tag_id")
+        line = line_protocol(tenant_id, tag_id, machine_id or "", unit or "", value,
+                             ts or datetime.now(timezone.utc))
+        if line is not None:
+            await self._enqueue(line)
+            return
         record = {
             "measurement": "sensors",
             "tags": {
@@ -79,6 +152,25 @@ class InfluxService:
             "time":      (ts or datetime.now(timezone.utc)).isoformat(),
         }
         await self._enqueue(record)
+
+    def write_many(self, records: list) -> "asyncio.Future":
+        """Sprint 7 (scale): queues several records (line-protocol strings from line_protocol() or dict records) and
+        returns ONE future that completes when all of them are written — or fails with the first error if any of
+        them could not be (the others may be stored: Influx writes are idempotent, a replay is harmless). One future
+        per MQTT batch instead of one task + one future per reading."""
+        loop = asyncio.get_running_loop()
+        if self._queue_loop is not loop:
+            self._pending, self._draining, self._queue_loop = [], False, loop
+        fut = loop.create_future()
+        if not records:
+            fut.set_result(None)
+            return fut
+        waiter = _GroupWaiter(fut, len(records))
+        self._pending.extend((r, waiter) for r in records)
+        if not self._draining:
+            self._draining = True
+            self._drain_task = loop.create_task(self._drain(), name="influx_write_drain")
+        return fut
 
     async def _enqueue(self, record: dict) -> None:
         loop = asyncio.get_running_loop()
@@ -165,21 +257,49 @@ class InfluxService:
         if stop is None:
             stop = datetime.now(timezone.utc)
 
-        flux = f"""
-        from(bucket: "{settings.influx_bucket}")
-          |> range(start: {_rfc3339(start)}, stop: {_rfc3339(stop)})
-          |> filter(fn: (r) => r["_measurement"] == "sensors")
-          |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
-          |> filter(fn: (r) => r["tag_id"] == "{tag_id}")
-          |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
-          |> yield(name: "mean")
-        """
-        tables = await self._client.query_api().query(flux, org=settings.influx_org)
+        # Sprint 7 (docs/performance.md §5): long ranges read the 1-minute / hourly aggregates for the covered part
+        from . import influx_downsampling as ds
+        cov = await ds.read_coverage(cached=True) if settings.influx_downsampling else None
+        rows = []
+        for src, a, b in ds.plan_history(start, stop, ds.duration_s(window), cov):
+            rows += await self._history_part(src, tenant_id, tag_id, a, b, window)
+        return rows
 
+    async def _history_part(self, src: str, tenant_id: str, tag_id: str, start: datetime, stop: datetime,
+                            window: str) -> list[dict]:
+        if src == "raw":
+            flux = f"""
+            from(bucket: "{settings.influx_bucket}")
+              |> range(start: {_rfc3339(start)}, stop: {_rfc3339(stop)})
+              |> filter(fn: (r) => r["_measurement"] == "sensors")
+              |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
+              |> filter(fn: (r) => r["tag_id"] == "{tag_id}")
+              |> filter(fn: (r) => r["_field"] == "value")
+              |> aggregateWindow(every: {window}, fn: mean, createEmpty: false)
+              |> yield(name: "mean")
+            """
+        else:
+            # exact mean of the window from the aggregates: Σsum / Σcount
+            flux = f"""
+            from(bucket: "{settings.influx_bucket}_{src}")
+              |> range(start: {_rfc3339(start)}, stop: {_rfc3339(stop)})
+              |> filter(fn: (r) => r["_measurement"] == "sensors")
+              |> filter(fn: (r) => r["tenant_id"] == "{tenant_id}")
+              |> filter(fn: (r) => r["tag_id"] == "{tag_id}")
+              |> filter(fn: (r) => r["_field"] == "sum" or r["_field"] == "count")
+              |> group(columns: ["_field"])
+              |> aggregateWindow(every: {window}, fn: sum, createEmpty: false)
+              |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
+              |> filter(fn: (r) => r.count > 0.0)
+              |> map(fn: (r) => ({{_time: r._time, _value: r.sum / r.count}}))
+              |> yield(name: "mean")
+            """
+        tables = await self._client.query_api().query(flux, org=settings.influx_org)
         rows = []
         for table in tables:
             for record in table.records:
                 rows.append({"timestamp": record.get_time().isoformat(), "value": record.get_value()})
+        rows.sort(key=lambda r: r["timestamp"])
         return rows
 
     async def latest(self, tenant_id: str, tag_ids: list[str]) -> dict[str, float]:

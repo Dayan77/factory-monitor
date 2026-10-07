@@ -258,7 +258,8 @@ export type Capability =
   | "layout.edit"           // plant map editor (sprint6 §1.1: admin, manager)
   | "onboarding.admin"      // onboarding wizard (sprint6 §4: admin of the tenant)
   | "reports.schedule"      // scheduled reports (reports.md §4: manager; admin always)
-  | "operator.tablet";      // operator tablet PWA (sprint6 §3)
+  | "operator.tablet"       // operator tablet PWA (sprint6 §3)
+  | "users.admin";          // users, invitations and tenant security policy (Sprint 7: admin)
 
 const CAPS: Record<Capability, string[]> = {
   "maintenance.view": [...PLANNERS, "production_supervisor", "technician"],
@@ -279,6 +280,7 @@ const CAPS: Record<Capability, string[]> = {
   "onboarding.admin": ["admin", "superadmin"],
   "reports.schedule": ["manager", "admin", "superadmin"],
   "operator.tablet": ["operator", "production_supervisor", "manager", "admin", "superadmin"],
+  "users.admin": ["admin", "superadmin"],
 };
 
 export function can(u: RoleCarrier | null | undefined, cap: Capability): boolean {

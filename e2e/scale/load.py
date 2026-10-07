@@ -26,9 +26,13 @@ Run (repo root; starts its own broker on BROKER_PORT, its own server on API_PORT
     TENANTS=1 LINES=2 MACHINES=5 DURATION_S=60 .venv/bin/python e2e/scale/load.py   # smoke
 
 Env: TENANTS (5), LINES (4), MACHINES (10), HISTORY_DAYS (30), DURATION_S (1800), SPEED (1), PUBLISHERS (4),
-API_CONC (4), API_PORT (8160), BROKER_PORT (8162), DB (fm_scale), KEEP_DB (0), INGEST (process | inline),
-SHARDS (2: ingestion processes), BROKER_CONF (e2e/scale/mosquitto.conf), OUT (e2e/scale/result.json).
-Exit code 0 = targets met.
+API_CONC (4; 0 = no API probes), REPORTS (1; 0 = no report probe), API_PORT (8160), BROKER_PORT (8162),
+DB (fm_scale), KEEP_DB (0: drop the database and the InfluxDB buckets at the end), INGEST (process | inline),
+SHARDS (ingestion processes; 1 is the best on a 4-vCPU host — docs/performance.md §3), BROKER_CONF
+(e2e/scale/mosquitto.conf), DIRECT (1: talk to the Postgres/InfluxDB containers by their docker-network IP, as the
+server does in production, instead of through docker-proxy on localhost), SCALE_BUCKET (fm_scale_<API_PORT>: the
+harness writes to its own InfluxDB bucket, never to the dev bucket), API_CACHE_TTL_S (server response cache; 0 =
+measure uncached), OUT (e2e/scale/result.json). Exit code 0 = targets met.
 """
 from __future__ import annotations
 
@@ -60,21 +64,40 @@ DURATION_S = float(os.getenv("DURATION_S", "1800"))
 SPEED = float(os.getenv("SPEED", "1"))
 PUBLISHERS = int(os.getenv("PUBLISHERS", "4"))
 API_CONC = int(os.getenv("API_CONC", "4"))
+REPORTS = os.getenv("REPORTS", "1") == "1"
 PORT = int(os.getenv("API_PORT", "8160"))
 BROKER_PORT = int(os.getenv("BROKER_PORT", "8162"))
 DB = os.getenv("DB", "fm_scale")
 KEEP_DB = os.getenv("KEEP_DB", "0") == "1"
 INGEST = os.getenv("INGEST", "process")                 # inline | process (MQTT ingestion in its own processes)
-SHARDS = int(os.getenv("SHARDS", "2"))
+SHARDS = int(os.getenv("SHARDS", "1"))
 METRICS_PORT = int(os.getenv("WORKER_METRICS_PORT", "8170"))   # ingestion shard k: +k; detector worker: +100
 API = f"http://127.0.0.1:{PORT}"
 BROKER = "127.0.0.1"
 BROKER_NAME = f"fm_scale_mosq_{BROKER_PORT}"
 CLIENT_ID = f"fm-scale-{PORT}"
-PG = dict(host=os.getenv("POSTGRES_HOST", "localhost"), port=int(os.getenv("POSTGRES_PORT", "5432")),
+def _container_ip(name: str):
+    """IP of a dev container on its docker network — the harness talks to Postgres/InfluxDB directly, as the
+    server does in production (docker network), instead of through docker-proxy on localhost, which costs ~0.3 ms
+    of CPU per round trip and becomes the bottleneck at 2 600 readings/s (docs/performance.md). DIRECT=0: localhost."""
+    if os.getenv("DIRECT", "1") != "1":
+        return None
+    try:
+        ip = subprocess.run(["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+                             name], capture_output=True, text=True, timeout=10).stdout.strip()
+        return ip or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+_PG_IP = _container_ip("fm_postgres")
+_INFLUX_IP = _container_ip("fm_influxdb")
+PG = dict(host=os.getenv("POSTGRES_HOST", _PG_IP or "localhost"), port=int(os.getenv("POSTGRES_PORT", "5432")),
           user=os.getenv("POSTGRES_USER", "fm_user"), password=os.getenv("POSTGRES_PASSWORD", "fm_dev_password"))
-INFLUX = dict(url=os.getenv("INFLUX_URL", "http://localhost:8086"), token=os.getenv("INFLUX_TOKEN", "dev-token-change-me"),
-              org=os.getenv("INFLUX_ORG", "factory-monitor"), bucket=os.getenv("INFLUX_BUCKET", "sensors"))
+# Own InfluxDB bucket (created at the start, deleted at the end unless KEEP_DB=1): the load never mixes with the dev
+# bucket `sensors` (and the downsampling buckets/tasks of services/influx_downsampling.py get their own names).
+INFLUX = dict(url=os.getenv("INFLUX_URL", f"http://{_INFLUX_IP or 'localhost'}:8086"), token=os.getenv("INFLUX_TOKEN", "dev-token-change-me"),
+              org=os.getenv("INFLUX_ORG", "factory-monitor"), bucket=os.getenv("SCALE_BUCKET", f"fm_scale_{PORT}"))
 OUT = Path(os.getenv("OUT", str(Path(__file__).parent / "result.json")))
 # broker config: the dev one with a larger in-flight window (BROKER_CONF=infra/mosquitto/mosquitto.conf for the
 # default window of 100 — docs/performance.md shows the difference)
@@ -107,7 +130,9 @@ def server_env() -> dict:
                APP_ENV="development", LOG_LEVEL="WARNING",
                APP_SECRET_KEY=os.getenv("APP_SECRET_KEY", "scale-harness-secret-not-used-elsewhere"),
                ENCRYPTION_KEY="", MEDIAMTX_API_URL="http://127.0.0.1:9", SEED_DEMO_PLANT="0", DEMO_BOT_ENABLED="false",
-               RATE_LIMIT_ENABLED="false", SOURCE_TS_MAX_AGE_S=str(400 * 86400))
+               RATE_LIMIT_ENABLED="false", SOURCE_TS_MAX_AGE_S=str(400 * 86400),
+               # access tokens last 15 min in production (docs/security.md); the probes re-login on 401 anyway
+               JWT_ACCESS_TOKEN_EXPIRE_MINUTES=os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "240"))
     return env
 
 
@@ -128,6 +153,33 @@ async def drop_db() -> None:
         await c.execute(f'DROP DATABASE IF EXISTS "{DB}" WITH (FORCE)')
     finally:
         await c.close()
+
+
+def _influx_api(method: str, path: str, **kw) -> httpx.Response:
+    return httpx.request(method, INFLUX["url"] + path, headers={"Authorization": f"Token {INFLUX['token']}"},
+                         timeout=30, **kw)
+
+
+def influx_org_id() -> str:
+    return _influx_api("GET", "/api/v2/orgs", params={"org": INFLUX["org"]}).json()["orgs"][0]["id"]
+
+
+def drop_buckets() -> None:
+    """Deletes the harness bucket and its downsampling buckets/tasks (name prefix = the harness bucket)."""
+    org = influx_org_id()
+    for b in _influx_api("GET", "/api/v2/buckets", params={"orgID": org, "limit": 100}).json().get("buckets", []):
+        if b["name"] == INFLUX["bucket"] or b["name"].startswith(INFLUX["bucket"] + "_"):
+            _influx_api("DELETE", f"/api/v2/buckets/{b['id']}")
+    for t in _influx_api("GET", "/api/v2/tasks", params={"orgID": org, "limit": 500}).json().get("tasks", []):
+        if t["name"].startswith(f"fm_downsample_{INFLUX['bucket']}"):
+            _influx_api("DELETE", f"/api/v2/tasks/{t['id']}")
+
+
+def recreate_bucket() -> None:
+    drop_buckets()
+    r = _influx_api("POST", "/api/v2/buckets", json={"orgID": influx_org_id(), "name": INFLUX["bucket"],
+                                                      "retentionRules": [{"type": "expire", "everySeconds": 7776000}]})
+    r.raise_for_status()
 
 
 def start_broker() -> None:
@@ -311,9 +363,12 @@ async def api_probe(tokens: list[dict], stop: asyncio.Event, lat: dict, conc: in
                     except httpx.HTTPError as e:
                         code = type(e).__name__
                     dt = time.perf_counter() - t0
-                    lat.setdefault(name, []).append(dt)
-                    if code != 200:
+                    if code == 200:                     # latency of answers only (an error is not a fast answer)
+                        lat.setdefault(name, []).append(dt)
+                    else:
                         lat.setdefault(name + "_errors", []).append(code)
+                        if code == 401:
+                            t["token"] = await asyncio.to_thread(login, t)
                 k += 1
 
     await asyncio.gather(*(worker(w) for w in range(conc)))
@@ -332,11 +387,14 @@ async def report_probe(tokens: list[dict], stop: asyncio.Event, lat: dict) -> No
                     r = await c.post("/api/reports/generate", headers={"Authorization": f"Bearer {t['token']}"},
                                      json={"code": code, "scope_type": scope, "scope_id": sid, "format": "json"})
                     err = None if r.status_code == 200 else f"{r.status_code} {r.text[:120]}"
+                    if r.status_code == 401:
+                        t["token"] = await asyncio.to_thread(login, t)
                 except httpx.HTTPError as e:
                     err = type(e).__name__
-                lat.setdefault(f"report_{code}", []).append(time.perf_counter() - t0)
                 if err:
                     lat.setdefault(f"report_{code}_errors", []).append(err)
+                else:
+                    lat.setdefault(f"report_{code}", []).append(time.perf_counter() - t0)
             for _ in range(30):
                 if stop.is_set():
                     break
@@ -381,10 +439,13 @@ async def main() -> int:
     report: dict = {"config": dict(tenants=TENANTS, lines=LINES, machines=MACHINES, history_days=HISTORY_DAYS,
                                    duration_s=DURATION_S, speed=SPEED, publishers=PUBLISHERS, api_conc=API_CONC,
                                    ingest=INGEST, shards=SHARDS, broker_conf=str(BROKER_CONF.name),
-                                   machines_total=TENANTS * LINES * MACHINES,
+                                   machines_total=TENANTS * LINES * MACHINES, direct_db=bool(_PG_IP),
+                                   api_cache_ttl_s=float(os.getenv("API_CACHE_TTL_S", "10")), reports=REPORTS,
+                                   cpus=os.cpu_count(), loadavg_start=os.getloadavg()[0],
                                    readings_per_s=TENANTS * LINES * MACHINES * 13 * SPEED)}
     print("config", report["config"], flush=True)
     start_broker()
+    recreate_bucket()
     await recreate_db()
     env = server_env()
     subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=SERVER, env=env, check=True,
@@ -428,9 +489,11 @@ async def main() -> int:
         ws_lat: list = []
         stop = asyncio.Event()
         await asyncio.sleep(max(0.0, wall_t0 - time.time()) + 15)       # API probes once the stream is flowing
-        probes = [asyncio.create_task(api_probe(tokens, stop, lat, API_CONC)),
-                  asyncio.create_task(report_probe(tokens, stop, lat)),
-                  asyncio.create_task(ws_probe(tokens[0], stop, ws_lat))]
+        probes = [asyncio.create_task(ws_probe(tokens[0], stop, ws_lat))]
+        if API_CONC > 0:
+            probes.append(asyncio.create_task(api_probe(tokens, stop, lat, API_CONC)))
+        if REPORTS:
+            probes.append(asyncio.create_task(report_probe(tokens, stop, lat)))
         samples = []
         while any(p.is_alive() for p in procs):
             await asyncio.sleep(10)
@@ -487,12 +550,17 @@ async def main() -> int:
                    "no_loss": report["load"]["dropped"] == 0 and stored >= published * 0.999}
         for k in ("overview", "oee_30d", "pareto_30d", "plans_status"):
             targets[f"{k}_p95_lt_500ms"] = (report["api_load"].get(k) or {}).get("p95_ms", 1e9) < 500
+        targets["api_errors_lt_0_1pct"] = sum(len(v) - 1 if isinstance(v[-1], str) and v[-1].startswith("…") else len(v)
+                                               for k, v in lat.items() if k.endswith("_errors")) \
+            <= 0.001 * sum(len(v) for k, v in lat.items() if not k.endswith("_errors"))
         report["targets"] = targets
+        report["config"]["loadavg_end"] = os.getloadavg()[0]
     finally:
         stop_server(proc)
         stop_broker()
         if not KEEP_DB:
             await drop_db()
+            drop_buckets()
     OUT.write_text(json.dumps(report, indent=1, default=str))
     print(json.dumps({k: v for k, v in report.items() if k != "load"}, indent=1, default=str))
     print("load", {k: v for k, v in report["load"].items() if k != "samples"})

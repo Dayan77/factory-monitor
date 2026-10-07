@@ -15,6 +15,7 @@ import type {
 } from "./types";
 import { normalizeOverview } from "./efficiency";
 import { DEMO_WRITE_MSG, demoAllowsRequest, tokenIsDemo } from "@/utils/demo";
+import { TOKENS_EVENT } from "@/utils/jwt";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -36,13 +37,43 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 });
 
 // ── Auto-refresh on 401 ───────────────────────────────────────────
+// The server rotates the refresh token on every use and treats a second use of the old one as theft (the whole
+// session is revoked — docs/security.md). Several tabs of the same browser share localStorage, so a refresh must
+// never be sent twice with the same token: it runs under a cross-tab lock (Web Locks API when available) and, once
+// inside, a tab whose stored refresh token changed meanwhile just adopts the tokens the other tab obtained.
 let _refreshing: Promise<string> | null = null;
+
+/** Paths the refresh flow never touches (public auth endpoints answer 401 for bad credentials / codes). */
+const NO_REFRESH = /\/api\/auth\/(login|refresh|mfa\/verify|password-reset|invitations|register)/;
+
+async function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = (navigator as Navigator & { locks?: { request: (n: string, cb: () => Promise<T>) => Promise<T> } }).locks;
+  return locks?.request ? locks.request("fm-token-refresh", fn) : fn();
+}
+
+export async function refreshTokens(staleRefresh: string | null): Promise<string> {
+  return withRefreshLock(async () => {
+    const current = localStorage.getItem("refresh_token");
+    const access = localStorage.getItem("access_token");
+    // another tab already rotated while we waited for the lock
+    if (current && staleRefresh && current !== staleRefresh && access) return access;
+    if (!current) throw new Error("no refresh token");
+    const res = await axios.post<{ access_token: string; refresh_token: string }>(
+      `${BASE_URL}/api/auth/refresh`, { refresh_token: current },
+    );
+    localStorage.setItem("access_token", res.data.access_token);
+    localStorage.setItem("refresh_token", res.data.refresh_token);
+    // the realtime socket re-authenticates in place (no reconnect, no gap in the live data)
+    window.dispatchEvent(new CustomEvent(TOKENS_EVENT, { detail: res.data.access_token }));
+    return res.data.access_token;
+  });
+}
 
 api.interceptors.response.use(
   (res) => res,
   async (error: AxiosError) => {
     const original = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-    if (error.response?.status !== 401 || original._retry) {
+    if (error.response?.status !== 401 || !original || original._retry || NO_REFRESH.test(original.url ?? "")) {
       return Promise.reject(error);
     }
 
@@ -51,21 +82,12 @@ api.interceptors.response.use(
     if (!_refreshing) {
       const refresh = localStorage.getItem("refresh_token");
       if (!refresh) {
-        _logout();
+        sessionExpired();
         return Promise.reject(error);
       }
-      _refreshing = axios
-        .post<{ access_token: string; refresh_token: string }>(
-          `${BASE_URL}/api/auth/refresh`,
-          { refresh_token: refresh }
-        )
-        .then((res) => {
-          localStorage.setItem("access_token",  res.data.access_token);
-          localStorage.setItem("refresh_token", res.data.refresh_token);
-          return res.data.access_token;
-        })
+      _refreshing = refreshTokens(refresh)
         .catch(() => {
-          _logout();
+          sessionExpired();
           return Promise.reject(new Error("Session expired"));
         })
         .finally(() => { _refreshing = null; });
@@ -77,12 +99,32 @@ api.interceptors.response.use(
   }
 );
 
-function _logout() {
+/** sessionStorage key read by the login screen to explain why the user is there. */
+export const SESSION_EXPIRED_KEY = "fm-session-expired";
+
+/** Where the login screen sends the user back after a session expiry (same-origin app paths only). */
+export function safeNext(next: string | null | undefined): string | null {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  if (/^\/(login|op\/login|esqueci-senha|redefinir-senha|convite)(\/|\?|$)/.test(next)) return null;
+  return next;
+}
+
+/**
+ * The session can no longer be renewed (refresh token expired, revoked from another device, password changed):
+ * clear it and go to the login, keeping the current screen to come back to after signing in again.
+ */
+export function sessionExpired(): void {
   const demo = tokenIsDemo(localStorage.getItem("access_token"));
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
   // an expired demo session (2 h) goes back to the public site, where "Ver demonstração" opens a new one
-  window.location.replace(demo ? "/?demo=expired" : "/login");
+  if (demo) { window.location.replace("/?demo=expired"); return; }
+  const here = window.location.pathname + window.location.search;
+  try { sessionStorage.setItem(SESSION_EXPIRED_KEY, "1"); } catch { /* storage blocked */ }
+  const op = here === "/op" || here.startsWith("/op/") || here.startsWith("/op?");
+  const next = safeNext(here);
+  const target = op ? "/op/login" : "/login";
+  window.location.replace(next && !op ? `${target}?next=${encodeURIComponent(next)}` : target);
 }
 
 // ── Typed API calls ───────────────────────────────────────────────
@@ -182,6 +224,8 @@ export const plantsApi = {
 
 export const positionsApi = {
   list: (machineId: string) => api.get<Position[]>("/api/positions/", { params: { machine_id: machineId } }),
+  /** Every position of the tenant (global search). */
+  listAll: () => api.get<Position[]>("/api/positions/"),
   get: (id: string) => api.get<PositionDetail>(`/api/positions/${id}`),
   install: (id: string, componentId: string) =>
     api.post<PositionDetail>(`/api/positions/${id}/install`, { component_id: componentId }),

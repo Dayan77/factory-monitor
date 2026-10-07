@@ -58,6 +58,12 @@ RED = [{"color": "green", "value": None}, {"color": "red", "value": 0.05}]
 LAT = [{"color": "green", "value": None}, {"color": "orange", "value": 0.5}, {"color": "red", "value": 1}]
 BACKLOG = [{"color": "green", "value": None}, {"color": "orange", "value": 100}, {"color": "red", "value": 1000}]
 UP = [{"color": "red", "value": None}, {"color": "green", "value": 1}]
+QUEUE = [{"color": "green", "value": None}, {"color": "orange", "value": 0.5}, {"color": "red", "value": 0.8}]
+ANY = [{"color": "green", "value": None}, {"color": "red", "value": 1}]
+LAG = [{"color": "green", "value": None}, {"color": "orange", "value": 900}, {"color": "red", "value": 1800}]
+BACKUP = [{"color": "green", "value": None}, {"color": "orange", "value": 26 * 3600}, {"color": "red", "value": 48 * 3600}]
+DISK = [{"color": "red", "value": None}, {"color": "orange", "value": 0.05}, {"color": "green", "value": 0.15}]
+CERT = [{"color": "red", "value": None}, {"color": "orange", "value": 7 * 86400}, {"color": "green", "value": 14 * 86400}]
 
 
 def build() -> dict:
@@ -104,9 +110,62 @@ def build() -> dict:
            [(f"sum by (kind) (increase(fm_downtime_events_total{{{J}}}[1h]))", "{{kind}}")], 0, 40,
            desc="Paradas abertas pela detecção automática (kind: stop | micro_stop | …)"),
 
-        row("Processo", 48),
-        ts("Memória residente", [(f"process_resident_memory_bytes{{{J}}}", "{{instance}}")], 0, 49, unit="bytes"),
-        ts("CPU", [(f"rate(process_cpu_seconds_total{{{J}}}[5m])", "{{instance}}")], 12, 49, unit="percentunit"),
+        row("Pipeline de ingestão", 48),
+        stat("Fila de ingestão", f"max(fm_ingest_queue_depth{{{J}}}) / clamp_min(max(fm_ingest_queue_capacity{{{J}}}), 1)",
+             0, 49, unit="percentunit", thresholds=QUEUE, desc="Leituras aceitas e não terminadas / MQTT_MAX_INFLIGHT"),
+        stat("Dead letters (24 h)", f"sum(increase(fm_ingest_dead_letters_total{{{J}}}[24h]))", 4, 49,
+             thresholds=ANY, desc="Leituras que falharam depois das repetições (tabela ingest_dead_letters)"),
+        stat("Dead letters pendentes", 'max(fm_ingest_dead_letters_pending{job="fm-postgres"})', 8, 49,
+             thresholds=ANY, desc="Ainda não reprocessadas (sql-exporter)"),
+        stat("Leituras perdidas (24 h)", f"sum(increase(fm_ingest_dropped_total{{{J}}}[24h]))", 12, 49,
+             thresholds=ANY, desc="Nem processadas nem em dead letter — deve ser sempre 0"),
+        stat("Atraso máx. detector de paradas", f'max(fm_detector_lag_max_seconds{{{J},detector="downtime"}})', 16, 49,
+             unit="s", thresholds=LAG),
+        stat("Atraso máx. preditiva", f'max(fm_detector_lag_max_seconds{{{J},detector="predictive"}})', 20, 49,
+             unit="s", thresholds=LAG),
+        ts("Latência da ingestão (recebida → gravada)",
+           [(f"histogram_quantile({q}, sum by (le) (rate(fm_ingest_latency_seconds_bucket{{{J}}}[5m])))",
+             f"p{int(q * 100)}") for q in (0.5, 0.95, 0.99)], 0, 53, unit="s"),
+        ts("Fila, não confirmadas e repetições",
+           [(f"max(fm_ingest_queue_depth{{{J}}})", "fila"), (f"max(fm_ingest_unacked{{{J}}})", "QoS 1 sem ack"),
+            (f"sum by (stage) (rate(fm_ingest_retries_total{{{J}}}[5m]))", "repetições {{stage}}/s")], 12, 53),
+        ts("Atraso dos detectores (máximo por detector)",
+           [(f"max by (detector) (fm_detector_lag_max_seconds{{{J}}})", "{{detector}}"),
+            (f"max by (detector) (fm_detector_lagging{{{J}}})", "acima do limite: {{detector}}")], 0, 61, unit="s",
+           desc="Quanto o detector está atrás dos próprios dados (checkpoint) — cresce depois de uma queda longa"),
+        ts("Dead letters por etapa (por hora)",
+           [(f"sum by (stage) (increase(fm_ingest_dead_letters_total{{{J}}}[1h]))", "{{stage}}")], 12, 61),
+
+        row("Gateways e demo", 69),
+        ts("Gateways: segundos desde o último contato",
+           [('max by (tenant, gateway) (fm_gateway_seconds_since_seen{job="fm-postgres"})', "{{tenant}} · {{gateway}}")],
+           0, 70, unit="s", desc="Alerta FmGatewayOffline: acima de 6 heartbeats (mínimo 3 min)"),
+        ts("Demo pública: idade do último dado e /health da planta",
+           [('max(fm_demo_last_data_age_seconds{job="fm-postgres"})', "idade do dado (s)"),
+            ('max(probe_success{job="blackbox-demo"})', "planta /health (1 = ok)")], 12, 70),
+
+        row("Plataforma (VPS, backup, sondas públicas)", 78),
+        stat("Último backup", 'time() - max(fm_backup_last_success_timestamp_seconds)', 0, 79, unit="s",
+             thresholds=BACKUP, desc="Idade do último backup completo (scripts/backup.sh → textfile do node-exporter)"),
+        stat("Disco livre (mín.)", 'min(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} '
+             '/ node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"})', 4, 79,
+             unit="percentunit", thresholds=DISK),
+        stat("Endpoints públicos OK", 'min(probe_success{job="blackbox-public"})', 8, 79, thresholds=UP,
+             desc="app /api/health, site /healthz e staging, por HTTPS (blackbox-exporter)"),
+        stat("Certificado TLS expira em", 'min(probe_ssl_earliest_cert_expiry{job="blackbox-public"}) - time()', 12, 79,
+             unit="s", thresholds=CERT),
+        stat("Alertas disparando", 'count(ALERTS{alertstate="firing"}) or vector(0)', 16, 79, thresholds=ANY),
+        stat("Alertmanager no ar", 'max(up{job="alertmanager"})', 20, 79, thresholds=UP),
+        ts("Disco livre por ponto de montagem",
+           [('min by (mountpoint) (node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"} '
+             '/ node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs"})', "{{mountpoint}}")],
+           0, 83, unit="percentunit"),
+        ts("Sondas públicas (duração)",
+           [('max by (instance) (probe_duration_seconds{job="blackbox-public"})', "{{instance}}")], 12, 83, unit="s"),
+
+        row("Processo", 91),
+        ts("Memória residente", [(f"process_resident_memory_bytes{{{J}}}", "{{instance}}")], 0, 92, unit="bytes"),
+        ts("CPU", [(f"rate(process_cpu_seconds_total{{{J}}}[5m])", "{{instance}}")], 12, 92, unit="percentunit"),
     ]
     return {
         "uid": "fm-ops", "title": "FactoryConnect — Operação", "tags": ["factoryconnect", "ops"],

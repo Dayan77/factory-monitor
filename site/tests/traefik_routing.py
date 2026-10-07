@@ -2,7 +2,8 @@
 """Testa de verdade o roteamento de domínios de infra/docker-compose.prod.yml com Traefik.
 
 Sobe um Traefik local (v3 e v2) lendo os labels REAIS de site/web/server do compose de produção
-(web e server viram stubs nginx que ecoam a requisição; o site serve site/dist com site/nginx.conf)
+(web e server viram stubs nginx que ecoam a requisição; o site serve site/dist com o nginx gerado por
+site/scripts/render-nginx.mjs, como no build da imagem)
 e confere: apex → site, www → apex, rotas antigas do app no apex → app.factoryconnect.tech
 (mesmo caminho/query, POST → 308), app → web/api e HTTP → HTTPS.
 
@@ -52,7 +53,7 @@ def stub(name: str) -> list[str]:
     return ["sh", "-c", f"printf '%s' '{conf}' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
 
 
-def test_compose(cfg: dict, image: str) -> dict:
+def test_compose(cfg: dict, image: str, ngx: Path) -> dict:
     def labels(svc: str, port80: bool = False) -> dict:
         # `config --format json` já devolve "$" escapado como "$$" — reaproveitado sem mexer.
         l = dict(cfg["services"][svc]["labels"])
@@ -74,8 +75,8 @@ def test_compose(cfg: dict, image: str) -> dict:
             },
             "site": {
                 "image": "nginx:1.30.5-alpine",
-                "environment": {"SITE_CONNECT_SRC": "https://app.factoryconnect.tech"},
-                "volumes": [f"{SITE / 'nginx.conf'}:/etc/nginx/templates/default.conf.template:ro",
+                "volumes": [f"{ngx / 'default.conf'}:/etc/nginx/conf.d/default.conf:ro",
+                            f"{ngx / 'security-headers.conf'}:/etc/nginx/snippets/security-headers.conf:ro",
                             f"{SITE / 'dist'}:/usr/share/nginx/html:ro"],
                 "labels": labels("site"), "networks": [NET],
             },
@@ -138,10 +139,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         cfg = prod_config(tmp)
+        ngx = tmp / "nginx"
+        sh("node", str(SITE / "scripts/render-nginx.mjs"), "--dist", str(SITE / "dist"), "--out", str(ngx))
         for image in IMAGES:
             print(f"\n[{image}]")
             cf = tmp / "compose.json"
-            cf.write_text(json.dumps(test_compose(cfg, image)))
+            cf.write_text(json.dumps(test_compose(cfg, image, ngx)))
             try:
                 sh("docker", "compose", "-f", str(cf), "up", "-d")
                 for _ in range(40):  # espera o Traefik carregar os routers

@@ -118,12 +118,16 @@ async def lifespan(app: FastAPI):
     ingest = (settings.mqtt_ingest or "inline").lower()
     if ingest == "inline":
         tasks.append(asyncio.create_task(run_subscriber(), name="mqtt_subscriber"))
+        from .services.influx_downsampling import run_late_rollups
+        tasks.append(asyncio.create_task(run_late_rollups(), name="influx_late_rollups"))
         tasks.append(asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"))
     elif ingest == "process":
         n = max(1, int(settings.mqtt_ingest_shards))
         for k in range(n):
             tasks.append(asyncio.create_task(supervise_worker("src.ingest_worker", {
-                "MQTT_SHARD_INDEX": str(k), "MQTT_SHARD_COUNT": str(n)}), name=f"ingest_worker_{k}"))
+                "MQTT_SHARD_INDEX": str(k), "MQTT_SHARD_COUNT": str(n),
+                "DB_POOL_SIZE": str(settings.ingest_db_pool_size), "DB_MAX_OVERFLOW": "6"}),
+                name=f"ingest_worker_{k}"))
     mode = (settings.predictive_worker or "process").lower()
     detectors_out = settings.detectors_in_worker and mode in ("process", "external")
     if detectors_out:
@@ -132,6 +136,9 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(run_downtime_detector(), name="downtime_detector"))
         tasks.append(asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"))
     tasks.append(asyncio.create_task(run_lag_sampler(), name="detector_lag_sampler"))
+    if mode == "inline" and settings.influx_downsampling:
+        from .services.influx_downsampling import run_rollup_maintainer
+        tasks.append(asyncio.create_task(run_rollup_maintainer(), name="influx_rollups"))
     if settings.predictive_enabled and mode == "inline":
         tasks.append(asyncio.create_task(run_predictive_engine(), name="predictive_engine"))
     elif settings.predictive_enabled or detectors_out:

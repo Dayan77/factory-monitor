@@ -30,6 +30,7 @@ log = structlog.get_logger()
 
 async def main() -> None:
     from .services.influx import influx
+    from .services.influx_downsampling import run_late_rollups
     from .services.mqtt_subscriber import run_subscriber
     from .services.oee.detector import run_late_flusher
     from .services.usage.broadcaster import usage_broadcaster
@@ -52,7 +53,8 @@ async def main() -> None:
     tasks = [asyncio.create_task(run_invalidation_listener(invalidate), name="cache_invalidation"),
              asyncio.create_task(run_subscriber(), name="mqtt_subscriber"),
              asyncio.create_task(usage_broadcaster.run(), name="usage_ws_broadcaster"),
-             asyncio.create_task(run_late_flusher(), name="downtime_late_flusher")]
+             asyncio.create_task(run_late_flusher(), name="downtime_late_flusher"),
+             asyncio.create_task(run_late_rollups(), name="influx_late_rollups")]
     gathered = asyncio.gather(*tasks)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -1,3 +1,4 @@
+import { formatDec2 } from "@/utils/format";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import clsx from "clsx";
@@ -298,7 +299,7 @@ function MachineProductRow({ mp, machineId, canEdit }: { mp: MachineProduct; mac
       <TD numeric>
         {canEdit ? <input aria-label={`Peças por ciclo de ${mp.product_name}`} inputMode="numeric" value={ppc} onChange={(e) => setPpc(e.target.value)} className={clsx(inputClass, "w-20 text-right")} /> : mp.parts_per_cycle}
       </TD>
-      <TD numeric>{mp.ideal_time_per_part_s ? mp.ideal_time_per_part_s.toFixed(2).replace(".", ",") : "—"}</TD>
+      <TD numeric>{mp.ideal_time_per_part_s ? `${formatDec2(mp.ideal_time_per_part_s)} s` : "—"}</TD>
       <TD>
         {mp.is_default ? <Badge tone="accent">Padrão</Badge> : canEdit ? (
           <Button size="sm" variant="ghost" onClick={() => save.mutate({ mpId: mp.id, body: { product_id: mp.product_id, ideal_cycle_time_s: mp.ideal_cycle_time_s, parts_per_cycle: mp.parts_per_cycle, is_default: true } })}>Tornar padrão</Button>

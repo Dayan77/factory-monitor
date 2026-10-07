@@ -48,6 +48,12 @@ class RuleTagsCache:
         self.generation += 1
         self._by_tenant.clear()
 
+    def cached(self, tenant_id: str, tag_id: str) -> Optional[bool]:
+        """has_rules without awaiting when the tenant's set is cached (None: not cached) — the MQTT hot path."""
+        import time
+        hit = self._by_tenant.get(tenant_id)
+        return (tag_id in hit[1]) if hit is not None and hit[0] > time.monotonic() else None
+
     async def has_rules(self, tenant_id: str, tag_id: str) -> bool:
         import time
         hit = self._by_tenant.get(tenant_id)

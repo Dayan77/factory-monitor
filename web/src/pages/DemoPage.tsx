@@ -34,7 +34,7 @@ export default function DemoPage() {
           <div role="status" aria-busy="true" className="flex flex-col items-center gap-3">
             <span className="size-6 animate-spin rounded-full border-2 border-brand-400 border-t-transparent" />
             <p className="text-sm text-gray-300">Abrindo demonstração…</p>
-            <p className="text-xs text-gray-500">Dados de uma planta virtual, somente leitura.</p>
+            <p className="text-xs text-fg-muted">Dados de uma planta virtual, somente leitura.</p>
           </div>
         )}
       </div>

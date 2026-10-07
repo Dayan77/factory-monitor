@@ -9,6 +9,6 @@ describe("titleFor", () => {
     expect(titleFor("/dashboard")).toBe("Raio-X");
     expect(titleFor("/reports/shift")).toBe("Relatórios");
     expect(titleFor("/settings/production")).toBe("Configurações");
-    expect(titleFor("/nope")).toBe("Factory Monitor");
+    expect(titleFor("/nope")).toBe("FactoryConnect");
   });
 });

@@ -47,6 +47,14 @@ async def tick_tenant(db: AsyncSession, tenant_id: str, now: Optional[datetime] 
     last = _last_full.get(tenant_id)
     due = force_plans or last is None or (now - last).total_seconds() >= settings.maintenance_plan_recompute_s
     changed = usage_mark is not None and usage_mark != _last_usage_seen.get(tenant_id)
+    # Sprint 7: the urgent stages first, committed and delivered on their own — a slow plan recompute (many plans,
+    # a usage backlog after a long outage) can never delay an emergency call or an escalation, nor take them down
+    # with it when the tenant's tick hits its timeout
+    out["emergency"] = await _stage(db, tenant_id, "emergency", lambda: emergency_calls(db, tenant_id, now)) or 0
+    out["escalations"] = await _stage(db, tenant_id, "escalations", lambda: escalations(db, tenant_id, now)) or 0
+    out["overdue"] = await _stage(db, tenant_id, "overdue", lambda: overdue_work_orders(db, tenant_id, now)) or 0
+    await db.commit()
+    await notif.deliver_pending(db)
     if due or changed:
         plans = await _stage(db, tenant_id, "plans", lambda: run_plan_engine(db, tenant_id, now=now))
         out["plans"] = len(plans) if plans is not None else 0
@@ -55,10 +63,6 @@ async def tick_tenant(db: AsyncSession, tenant_id: str, now: Optional[datetime] 
         _last_full[tenant_id] = now
         if usage_mark is not None:
             _last_usage_seen[tenant_id] = usage_mark
-    # each stage in its own savepoint: a bad plan can never suppress an emergency call or an escalation
-    out["emergency"] = await _stage(db, tenant_id, "emergency", lambda: emergency_calls(db, tenant_id, now)) or 0
-    out["escalations"] = await _stage(db, tenant_id, "escalations", lambda: escalations(db, tenant_id, now)) or 0
-    out["overdue"] = await _stage(db, tenant_id, "overdue", lambda: overdue_work_orders(db, tenant_id, now)) or 0
     await db.commit()
     await notif.deliver_pending(db)
     tz = await mu.tenant_tz(db, tenant_id)
@@ -80,17 +84,24 @@ async def _stage(db: AsyncSession, tenant_id: str, name: str, fn):
 
 async def component_alerts(db: AsyncSession, tenant_id: str, now: datetime) -> int:
     n = 0
-    for c in await components_life(db, tenant_id, now=now):
+    cands = [(c, f"component_life:{c['component_id']}:{c['alert']}")
+             for c in await components_life(db, tenant_id, now=now) if c["alert"] is not None]
+    # Sprint 7 (performance): one query for the alerts already sent, planners looked up once per line
+    seen = {k for (k,) in (await db.execute(select(Notification.group_key).where(
+        Notification.tenant_id == tenant_id, Notification.group_key.in_([k for _, k in cands])).distinct())).all()
+            } if cands else set()
+    lines: dict[str, Optional[str]] = {}
+    planners_of: dict[Optional[str], list] = {}
+    for c, key in cands:
         alert = c["alert"]
-        if alert is None:
+        if key in seen:
             continue
-        key = f"component_life:{c['component_id']}:{alert}"
-        seen = (await db.execute(select(Notification.id).where(Notification.tenant_id == tenant_id,
-                                                               Notification.group_key == key).limit(1))).first()
-        if seen:
-            continue
-        line_id = await machine_line(db, tenant_id, c["machine_id"])
-        planners = await notif.users_with_roles(db, tenant_id, ("maintenance_planner",), line_id)
+        if c["machine_id"] not in lines:
+            lines[c["machine_id"]] = await machine_line(db, tenant_id, c["machine_id"])
+        line_id = lines[c["machine_id"]]
+        if line_id not in planners_of:
+            planners_of[line_id] = await notif.users_with_roles(db, tenant_id, ("maintenance_planner",), line_id)
+        planners = planners_of[line_id]
         label = "vida nominal atingida" if alert == "nominal_reached" else "≥ 80 % da vida"
         await notif.notify(db, tenant_id, planners, "component_life",
                            f"{c['position_name']} ({c['manufacturer'] or ''} {c['serial_number'] or ''}): {label} "

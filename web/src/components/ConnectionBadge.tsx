@@ -15,7 +15,8 @@ export default function ConnectionBadge() {
       role="status"
       aria-label={`Tempo real: ${LABEL[status]}`}
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+        // fixed width: "Conectando…" → "Ao vivo" must not shift the header (CLS)
+        "inline-flex min-w-[6.25rem] items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium",
         status === "connected"     && "bg-brand-500/15 text-brand-400",
         status === "connecting"    && "bg-yellow-500/15 text-yellow-400",
         status === "disconnected"  && "bg-red-500/15 text-red-400"

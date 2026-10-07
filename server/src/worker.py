@@ -31,11 +31,23 @@ async def main() -> None:
     from .services.predictive.engine import run_predictive_engine
     from .websocket.relay import enable_publisher
 
+    if settings.worker_nice > 0:
+        # Sprint 7 (docs/performance.md §2): detectors/predictive/rollups are background work — under CPU pressure
+        # the API and the MQTT ingestion go first (their latency is user-facing); the detectors catch up (bounded)
+        import os
+        try:
+            os.nice(settings.worker_nice)
+        except OSError:  # pragma: no cover
+            pass
     if settings.worker_metrics_port:
         from prometheus_client import start_http_server
         start_http_server(settings.worker_metrics_port + 100, addr="127.0.0.1")
     enable_publisher()
     coros = {}
+    if settings.influx_downsampling:
+        # Sprint 7: Influx retention + downsampling buckets/tasks (idempotent) and the history backfill
+        from .services.influx_downsampling import run_rollup_maintainer
+        coros["influx_rollups"] = run_rollup_maintainer
     if settings.predictive_enabled:
         coros["predictive_engine"] = run_predictive_engine
     if settings.detectors_in_worker:

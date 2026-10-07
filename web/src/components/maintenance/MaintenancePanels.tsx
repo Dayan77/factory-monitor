@@ -60,7 +60,7 @@ export function AssetMaintenance({ machineId, positionId, compact = false }: { m
     <div className={compact ? "space-y-4" : "grid gap-x-8 gap-y-4 lg:grid-cols-2 [&>*]:min-w-0"}>
       {can(user, "maintenance.view") && (
         <div>
-          <h4 className="text-overline uppercase text-fg-subtle">Planos</h4>
+          <h3 className="text-overline uppercase text-fg-subtle">Planos</h3>
           {status.isPending ? <Skeleton className="mt-2 h-12" /> : status.isError ? <p className="text-caption text-danger">Não foi possível carregar os planos.</p>
             : plans.length === 0 ? <p className="text-caption text-fg-subtle">Nenhum plano {positionId ? "nesta posição" : "nesta máquina"}.</p>
             : <ul className="divide-y divide-line">{plans.slice(0, compact ? 3 : 6).map((p) => <PlanLine key={p.plan_id} p={p} />)}</ul>}
@@ -68,14 +68,14 @@ export function AssetMaintenance({ machineId, positionId, compact = false }: { m
       )}
       <div className="space-y-4">
       <div>
-        <h4 className="text-overline uppercase text-fg-subtle">OS abertas</h4>
+        <h3 className="text-overline uppercase text-fg-subtle">OS abertas</h3>
         {wos.isPending ? <Skeleton className="mt-2 h-10" /> : wos.isError ? <p className="text-caption text-danger">Não foi possível carregar as OS.</p>
           : open.length === 0 ? <p className="text-caption text-fg-subtle">Nenhuma OS aberta.</p>
           : <ul>{open.slice(0, 6).map((w) => <WoLine key={w.id} wo={w} today={today} />)}</ul>}
       </div>
       {can(user, "maintenance.failures") && (
         <div>
-          <h4 className="text-overline uppercase text-fg-subtle">Falhas recentes</h4>
+          <h3 className="text-overline uppercase text-fg-subtle">Falhas recentes</h3>
           {failures.isPending ? <Skeleton className="mt-2 h-10" /> : recentFailures.length === 0 ? <p className="text-caption text-fg-subtle">Nenhuma falha registrada.</p> : (
             <ul>
               {recentFailures.map((f) => (

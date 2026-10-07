@@ -373,3 +373,52 @@ def test_ws_closed_when_session_revoked_and_reauth(app, monkeypatch):
             ws.receive_text()
         assert exc.value.code == 4401
     _ = asyncio
+
+
+async def test_account_reauth_is_throttled(client, st):
+    """A stolen access token cannot turn the account area into a password / TOTP oracle: wrong current passwords
+    (password change, MFA enrolment, deletion) and wrong codes lock like the login (429 + Retry-After, audited)."""
+    t = (await login(client, st.email("manager"))).json()
+    h = bearer(t["access_token"])
+    for _ in range(5):
+        r = await client.post("/api/account/mfa/enroll", json={"password": "Errada-Senha#0001"}, headers=h)
+        assert r.status_code == 403
+    # locked even with the right password, on every endpoint that checks it
+    r = await client.post("/api/account/mfa/enroll", json={"password": STRONG}, headers=h)
+    assert r.status_code == 429 and int(r.headers["Retry-After"]) >= 1
+    r = await client.post("/api/account/password", json={"current_password": STRONG, "new_password": STRONG2},
+                          headers=h)
+    assert r.status_code == 429
+    r = await client.request("DELETE", "/api/account", json={"password": STRONG, "confirm": "EXCLUIR"}, headers=h)
+    assert r.status_code == 429
+    acts = await audit_actions(st.users["manager"]["id"])
+    assert acts.count("account.reauth_failed") == 5
+
+    # codes: wrong TOTP codes on confirm lock too; the lock is shared with the login MFA step
+    from src.services.security import throttle
+    from src.db import AsyncSessionLocal
+    async with AsyncSessionLocal() as s:
+        await throttle.reset(s, throttle.hkey("acct-pw", st.users["manager"]["id"]))
+        await s.commit()
+    r = await client.post("/api/account/mfa/enroll", json={"password": STRONG}, headers=h)
+    assert r.status_code == 200
+    for _ in range(5):
+        assert (await client.post("/api/account/mfa/confirm", json={"code": "000000"}, headers=h)).status_code == 422
+    from src.services.security import totp
+    good = totp.code_at(r.json()["secret"])
+    r = await client.post("/api/account/mfa/confirm", json={"code": good}, headers=h)
+    assert r.status_code == 429
+
+
+async def test_last_admin_check_counts_admins_by_roles(client, st):
+    """A second admin that holds `admin` only in roles[] (primary role manager) lets the first one leave."""
+    from src.db import AsyncSessionLocal
+    from src.models import User
+    async with AsyncSessionLocal() as s:
+        u = await s.get(User, st.users["manager"]["id"])
+        u.roles = ["manager", "admin"]
+        await s.commit()
+    t = (await login(client, st.email("admin"))).json()
+    r = await client.request("DELETE", "/api/account", json={"password": STRONG, "confirm": "EXCLUIR"},
+                             headers=bearer(t["access_token"]))
+    assert r.status_code == 204, r.text

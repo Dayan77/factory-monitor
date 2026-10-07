@@ -55,7 +55,8 @@ describe("PlantMapPage (sprint6 §1)", () => {
     expect(await screen.findByTestId("auto-layout-banner")).toHaveTextContent("Layout automático");
     const markers = await screen.findAllByTestId("map-marker");
     expect(markers.map((m) => m.dataset.state)).toEqual(["failure", "stopped", "running"]);
-    expect(markers[0]).toHaveAccessibleName(/Envasadora E-01: falha — EQP-01 · há 8 min/);
+    // the name is the visible text (WCAG 2.5.3) + sr-only extras; jsdom joins elements with a space
+    expect(markers[0]).toHaveAccessibleName(/Envasadora E-01 ?: falha — EQP-01 · há 8 min/);
     expect(markers[1]).toHaveAccessibleName(/parada — sem motivo · há 6 min/);
     expect(within(markers[2]).getByText(/OEE 81,2/)).toBeInTheDocument();
     for (const m of markers) expect(m.querySelector("svg[data-icon]")).not.toBeNull();

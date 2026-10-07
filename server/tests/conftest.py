@@ -39,6 +39,11 @@ os.environ.setdefault("INFLUX_TOKEN", "dev-token-change-me")      # docker dev d
 os.environ.setdefault("INFLUX_ORG", "factory-monitor")
 os.environ.setdefault("INFLUX_BUCKET", "sensors")
 os.environ["APP_ENV"] = "test"
+# Sprint 7: tests read the raw bucket (the dev bucket `sensors` is shared with the dev stack, whose worker may have
+# created its downsampling buckets); test_influx_downsampling.py enables it on its own buckets.
+os.environ.setdefault("INFLUX_DOWNSAMPLING", "false")
+# Sprint 7: the response cache of the hot endpoints is off in tests (test_response_cache.py turns it on)
+os.environ.setdefault("API_CACHE_TTL_S", "0")
 # No persistent MQTT session from test servers on the shared dev broker (the broker would keep queueing every
 # reading for a client id that never comes back); tests of the persistent session use their own ids and clean up.
 os.environ.setdefault("MQTT_PERSISTENT_SESSION", "false")

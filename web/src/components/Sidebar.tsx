@@ -1,8 +1,10 @@
+import { useEffect, useRef } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { useAuthStore } from "@/store/auth";
 import { can, type Capability } from "@/utils/maintenance";
 import { isDemoBlockedPath, isDemoUser } from "@/utils/demo";
+import { roleList } from "@/utils/roles";
 
 const ICON_RAIOX = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
@@ -150,9 +152,15 @@ const ICON_MAIL = (
       </svg>
     );
 
+const ICON_USERS = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6" />
+      </svg>
+    );
+
 interface NavItem { label: string; to: string; icon: JSX.Element; cap?: Capability; hide?: (u: { role?: string | null; roles?: string[] | null } | null) => boolean }
 
-const NAV: { section: string; items: NavItem[] }[] = [
+export const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Eficiência",
     items: [
@@ -204,9 +212,20 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS },
       { label: "Planos de manutenção", to: "/settings/maintenance-plans", icon: ICON_PLANS, cap: "maintenance.plan" },
       { label: "Gateways", to: "/settings/gateways", icon: ICON_GATEWAY, cap: "gateways.view" },
+      { label: "Usuários e convites", to: "/settings/users", icon: ICON_USERS, cap: "users.admin" },
     ],
   },
 ];
+
+/** Menu entries the user can open (role capabilities, demo restrictions) — also feeds the command palette. */
+export function visibleNav(user: Parameters<typeof can>[0]): { section: string; items: NavItem[] }[] {
+  const demo = isDemoUser(user as Parameters<typeof isDemoUser>[0]);
+  return NAV.map((group) => ({
+    ...group,
+    // demo (sprint6 §5): no administration, users, gateways, settings or cameras
+    items: group.items.filter((it) => (!it.cap || can(user, it.cap)) && (!it.hide || !it.hide(user ?? null)) && !(demo && isDemoBlockedPath(it.to))),
+  })).filter((group) => group.items.length > 0);
+}
 
 const ADMIN_NAV = {
   label: "Admin",
@@ -220,16 +239,6 @@ const ADMIN_NAV = {
   ),
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  operator:   "Operador",
-  manager:    "Gestor",
-  admin:      "Administrador",
-  superadmin: "Super Admin",
-  maintenance_planner: "Planejador de manutenção",
-  technician: "Técnico de manutenção",
-  production_supervisor: "Supervisor de produção",
-  demo_viewer: "Visitante da demonstração",
-};
 
 interface SidebarProps {
   /** Mobile drawer state (ignored at md+ where the sidebar is always visible). */
@@ -241,6 +250,20 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const demo = isDemoUser(user);
+  const asideRef = useRef<HTMLElement>(null);
+
+  // phone drawer: focus moves into it when it opens, Esc closes it (focus goes back to the menu button)
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    // after the visibility transition starts (a still-hidden element cannot take focus)
+    const t = window.setTimeout(() => asideRef.current?.querySelector<HTMLElement>("nav a")?.focus(), 60);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") { e.preventDefault(); onClose?.(); }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => { window.clearTimeout(t); document.removeEventListener("keydown", onKey); opener?.focus?.(); };
+  }, [open, onClose]);
 
   function handleLogout() {
     logout();
@@ -264,11 +287,13 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
       />
     )}
     <aside
+      ref={asideRef}
       id="app-sidebar"
       className={clsx(
-        "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-line bg-surface transition-transform duration-300 ease-out-soft",
-        "md:static md:translate-x-0",
-        open ? "translate-x-0" : "-translate-x-full"
+        "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-line bg-surface transition-[transform,visibility] duration-300 ease-out-soft",
+        "md:visible md:static md:translate-x-0",
+        // closed drawer (phone): off screen AND out of the tab order / accessibility tree
+        open ? "visible translate-x-0" : "invisible -translate-x-full"
       )}
     >
       {/* Logo */}
@@ -279,20 +304,14 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           </svg>
         </span>
         <div>
-          <p className="text-sm font-semibold text-fg">Factory Monitor</p>
+          <p className="text-sm font-semibold text-fg">FactoryConnect</p>
           <p className="text-xs text-fg-subtle">Indústria 4.0</p>
         </div>
       </div>
 
       {/* Nav */}
       <nav aria-label="Principal" className="flex-1 space-y-0.5 overflow-y-auto p-3">
-        {NAV.map((group) => ({
-          ...group,
-          // demo (sprint6 §5): no administration, users, gateways, settings or cameras
-          items: group.items.filter((it) => (!it.cap || can(user, it.cap)) && (!it.hide || !it.hide(user)) && !(demo && isDemoBlockedPath(it.to))),
-        }))
-          .filter((group) => group.items.length > 0)
-          .map((group) => (
+        {visibleNav(user).map((group) => (
           <div key={group.section} className="pb-2">
             <p className="px-3 pb-1 pt-2 text-overline uppercase text-fg-subtle">{group.section}</p>
             {group.items.map((item) => (
@@ -341,22 +360,28 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
       {/* Footer */}
       <div className="border-t border-line p-4 space-y-3">
-        <div className="flex items-center gap-3">
-          <div className="size-8 rounded-full bg-surface-2 flex items-center justify-center text-xs font-bold text-fg-muted shrink-0">
+        <NavLink
+          to={demo ? "/dashboard" : "/account"}
+          onClick={onClose}
+          className={({ isActive }) => clsx("-m-1 flex items-center gap-3 rounded-lg p-1 transition-colors hover:bg-surface-2", isActive && !demo && "bg-accent/15")}
+          data-testid="account-link"
+        >
+          <div className="size-8 rounded-full bg-surface-2 flex items-center justify-center text-xs font-bold text-fg-muted shrink-0" aria-hidden="true">
             {initials}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-fg">{user?.name ?? "—"}</p>
-            <p className="truncate text-xs text-fg-subtle">
-              {(user?.roles?.length ? user.roles : [user?.role ?? ""]).map((r) => ROLE_LABELS[r] ?? r).join(" · ")}
+            <p className="truncate text-sm font-medium text-fg">{!demo && <span className="sr-only">Minha conta: </span>}{user?.name ?? "—"}</p>
+            <p className="truncate text-xs text-fg-muted">
+              {roleList(user) || "—"}
             </p>
           </div>
-        </div>
+        </NavLink>
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 min-h-10 text-xs text-fg-subtle hover:bg-surface-2 hover:text-fg transition-colors"
+          type="button"
+          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 min-h-10 text-xs text-fg-muted hover:bg-surface-2 hover:text-fg transition-colors"
         >
-          <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="size-4" aria-hidden="true">
             <path fillRule="evenodd" d="M3 4.25A2.25 2.25 0 0 1 5.25 2h5.5A2.25 2.25 0 0 1 13 4.25v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 0-.75-.75h-5.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 0 0 .75-.75v-2a.75.75 0 0 1 1.5 0v2A2.25 2.25 0 0 1 10.75 18h-5.5A2.25 2.25 0 0 1 3 15.75V4.25z" clipRule="evenodd" />
             <path fillRule="evenodd" d="M19 10a.75.75 0 0 0-.75-.75H8.704l1.048-1.096a.75.75 0 1 0-1.004-1.115l-2.5 2.25a.75.75 0 0 0 0 1.115l2.5 2.25a.75.75 0 1 0 1.004-1.115l-1.048-1.097h9.546A.75.75 0 0 0 19 10z" clipRule="evenodd" />
           </svg>

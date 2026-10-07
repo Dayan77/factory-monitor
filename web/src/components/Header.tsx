@@ -1,5 +1,8 @@
+import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
+import { displayTimeZone } from "@/utils/format";
 import ConnectionBadge from "./ConnectionBadge";
+import { PaletteButton } from "./CommandPalette";
 import ThemeToggle from "./ThemeToggle";
 import NotificationBell from "./notifications/NotificationCenter";
 
@@ -33,6 +36,8 @@ const TITLES: Record<string, string> = {
   "/alerts": "Alertas",
   "/ai": "Assistente de IA",
   "/admin": "Administração",
+  "/account": "Minha conta",
+  "/settings/users": "Usuários e convites",
 };
 
 interface Props {
@@ -46,11 +51,16 @@ export function titleFor(pathname: string): string {
   if (pathname.startsWith("/factory/")) return "Fábrica";
   if (pathname.startsWith("/onboarding/")) return "Implantação";
   const section = "/" + (pathname.split("/")[1] ?? "");
-  return TITLES[section] ?? "Factory Monitor";
+  return TITLES[section] ?? "FactoryConnect";
 }
 
 export default function Header({ onMenu, menuOpen = false }: Props) {
   const { pathname } = useLocation();
+  const title = titleFor(pathname);
+  // every screen has its own document title (WCAG 2.4.2; browser history, tabs, screen readers)
+  useEffect(() => {
+    document.title = title === "FactoryConnect" ? title : `${title} · FactoryConnect`;
+  }, [title]);
 
   return (
     <header className="flex h-16 items-center justify-between gap-3 border-b border-line bg-surface/85 px-4 backdrop-blur supports-[backdrop-filter]:bg-surface/70 sm:px-6">
@@ -70,13 +80,15 @@ export default function Header({ onMenu, menuOpen = false }: Props) {
           </button>
         )}
         <h1 className="truncate text-heading text-fg">
-          {titleFor(pathname)}
+          {title}
         </h1>
       </div>
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+        <PaletteButton />
         <ConnectionBadge />
         <span className="hidden text-caption text-fg-subtle lg:inline">
           {new Date().toLocaleDateString("pt-BR", {
+            timeZone: displayTimeZone(),
             weekday: "short",
             day: "2-digit",
             month: "short",

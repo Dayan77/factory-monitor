@@ -2,6 +2,7 @@
  * Efficiency charts (Recharts). One y-axis per chart (never dual-axis); token colors so both themes
  * work; each chart sits in a ChartFrame with an accessible summary and a data table.
  */
+import { formatDec1 } from "@/utils/format";
 
 import {
   Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ReferenceLine,
@@ -46,7 +47,7 @@ function TrendTooltip({ active, payload, label }: TooltipProps<number, string>) 
   return (
     <Box
       title={String(label)}
-      rows={payload.map((p) => ({ color: p.color, name: String(p.name), value: p.value == null ? "—" : `${Number(p.value).toFixed(1).replace(".", ",")}%` }))}
+      rows={payload.map((p) => ({ color: p.color, name: String(p.name), value: p.value == null ? "—" : `${formatDec1(Number(p.value))}\u00a0%` }))}
     />
   );
 }

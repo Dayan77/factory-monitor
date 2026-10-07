@@ -63,7 +63,7 @@
 }
 
 @utility container-x { @apply mx-auto w-full max-w-6xl px-5 sm:px-6 lg:px-8; }
-@utility btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors duration-150 min-h-11; }
+@utility btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors duration-150 min-h-11; }
 @utility btn-primary { @apply btn bg-brand-700 text-white hover:bg-brand-800 dark:bg-brand-400 dark:text-[#04130b] dark:hover:bg-brand-300; }
 @utility btn-ghost { @apply btn border border-line text-fg hover:bg-surface-2; }
 @utility eyebrow { @apply text-xs font-semibold uppercase tracking-[0.14em] text-accent; }
@@ -91,3 +91,32 @@
 @keyframes flow { to { stroke-dashoffset: -28; } }
 @keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* Documentação (manual em markdown): tipografia de leitura longa, tabelas roláveis no celular. */
+@layer components {
+  .prose-doc { @apply max-w-[72ch] text-[1.0625rem] leading-[1.75] text-muted; }
+  .prose-doc > :first-child { @apply mt-0; }
+  .prose-doc h1 { @apply mb-6 text-3xl font-bold text-fg sm:text-4xl; }
+  .prose-doc h2 { @apply mt-14 mb-4 text-2xl font-semibold text-fg; scroll-margin-top: 5.5rem; }
+  .prose-doc h3 { @apply mt-10 mb-3 text-lg font-semibold text-fg; scroll-margin-top: 5.5rem; }
+  .prose-doc h4 { @apply mt-6 mb-2 font-semibold text-fg; }
+  .prose-doc a[id]:empty { display: block; position: relative; top: -5.5rem; visibility: hidden; }
+  .prose-doc p, .prose-doc ul, .prose-doc ol, .prose-doc blockquote, .prose-doc pre { @apply mb-5; }
+  .prose-doc ul { @apply list-disc space-y-1.5 pl-6; }
+  .prose-doc ol { @apply list-decimal space-y-1.5 pl-6; }
+  .prose-doc li > ul, .prose-doc li > ol { @apply mt-1.5 mb-0; }
+  .prose-doc a[href] { @apply font-medium text-accent underline underline-offset-2; }
+  .prose-doc strong { @apply font-semibold text-fg; }
+  .prose-doc code { @apply rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[0.875em] text-fg; }
+  .prose-doc pre { @apply overflow-x-auto rounded-xl border border-line bg-surface p-4 text-sm leading-relaxed; }
+  .prose-doc pre code { @apply bg-transparent p-0; }
+  .prose-doc blockquote { @apply rounded-r-xl border-l-4 border-accent bg-surface px-5 py-3 text-fg; }
+  .prose-doc blockquote > :last-child { @apply mb-0; }
+  .prose-doc hr { @apply my-10 border-line; }
+  .prose-doc table { @apply mb-6 block w-full max-w-full overflow-x-auto border-collapse text-[0.9375rem] leading-snug; }
+  .prose-doc .doc-table { @apply mb-6 max-w-full overflow-x-auto rounded-md; }
+  .prose-doc .doc-table > table { @apply mb-0 table; }
+  .prose-doc thead th { @apply border-b-2 border-line bg-surface px-3 py-2 text-left font-semibold whitespace-nowrap text-fg; }
+  .prose-doc td { @apply border-b border-line px-3 py-2 align-top; min-width: 8rem; }
+  .prose-doc .doc-ref { @apply font-medium text-fg; }
+}

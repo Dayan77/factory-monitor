@@ -438,3 +438,90 @@ Legenda: ✅ confere exatamente com a spec e o exemplo numérico; ⚠️ confere
 3. **A-4, A-5, A-15** — indefinidos com `null` + `reason` (uma linha cada).
 4. **A-6, A-7, A-19** — campos e flags que a spec exige e as telas/relatórios precisam para não mostrar dado sem aviso.
 5. Demais (Baixa/Info) junto com a revisão de código do módulo.
+
+---
+
+## Verificação Sprint 7
+
+Reverificação independente (papel `reliability-engineer`, 07/10/2026) das correções do Sprint 7 (A-2, A-4 … A-20) e
+das correções do Sprint 6 (A-1, A-3, A-5), sobre a árvore de trabalho do branch do Sprint 7 (checkpoint `e8442e5` +
+alterações em andamento). Método: (1) leitura do código citado em cada item contra a decisão normativa de
+[`kpis.md`](kpis.md) "Decisões Sprint 7"; (2) execução dos testes das correções; (3) **sondas novas**, que tentam
+quebrar cada correção com combinações que os testes das correções não cobrem —
+[`docs/scenarios/test_audit_verification_s7.py`](scenarios/test_audit_verification_s7.py).
+
+Execuções (todas verdes, salvo o `xfail` de A-19b, de propósito):
+
+| Comando | Resultado |
+|---|---|
+| `.venv/bin/python -m pytest -q docs/scenarios` | todos passam (264 no fechamento desta seção, incluindo as 11 sondas abaixo); 1 xfailed (A-19b, de propósito) |
+| `cd server && FM_TEST_DB=fm_test_docs ../.venv/bin/python -m pytest -q tests/test_audit_s7.py tests/test_kpi_spec_cases.py tests/test_detector_late_rewind.py` | 36 passed |
+| `cd server && FM_TEST_DB=fm_test_docs ../.venv/bin/python -m pytest -q tests/test_detector_catchup.py tests/test_backlog_engines.py tests/test_break_fault_s5.py tests/test_reports_core.py` | 34 passed (S7-16/S7-17: quedas longas, resultado idêntico ao contínuo) |
+
+### Resultado por item
+
+| # | Veredito | Evidência (código lido · teste) |
+|---|---|---|
+| A-1 | ✅ confirmado | `engine.components`: `eq_brk` (pausas `PLN-03`/`MNT-02` ∩ POT) unido aos eventos de equipamento. Sondas V1 (calendário + falha sobreposta → D_eq 90 min, não 120) e V2 (mesmo caso com evento declarado) → Ao = 0,8 |
+| A-2 | ✅ confirmado | `usage/core.rate_window` com `installed_at` e início dos dados; U3 com instalação antiga → 70 dias, `low_confidence`; V9 (2,5 dias com 60 h de instalação) |
+| A-3 | ✅ confirmado | `evaluate_plans` passa `window_days`; `< 3` dias → `insufficient_data` |
+| A-4 | ✅ confirmado | V6: MTBF, Ai e λ ficam `null` **juntos** (não há mais campo contraditório); n = 0 com tempo → λ = 0 |
+| A-5 | ✅ confirmado | `kpi.pareto` → `[]` com PBT = 0, também `by=category` |
+| A-6 | ✅ confirmado | `engine.outside_production` (calendário + `DowntimeEvent` planejado) nas duas APIs; proxy removido do relatório; `test_audit_s7.py::test_A6_A20_*` |
+| A-7 | ✅ confirmado | `estimated` pela topologia nas linhas por posição/tipo/fabricante; `test_A7_*` |
+| A-8 | ✅ confirmado | λc = 1,25 por 10⁶ ciclos (R5); ciclos sem fonte → `null`; n = 0 → 0 (V6) |
+| A-9 | ✅ confirmado | 9 400 h, `excluded_no_usage = 1`; V7: todos com idade 0 → `null` + `insufficient_data` |
+| A-10 | ✅ confirmado | `make_rate_fn` em horas completas: ao vivo = recálculo = nominal = 20 000/dia |
+| A-11 | ✅ confirmado | concluída após o período → `not_done`; concluída dentro do período após o prazo → `late` |
+| A-12 | ✅ confirmado (com observação O-2) | intervalo semiaberto, ordenação determinística → "new" |
+| A-13 | ✅ confirmado | `line_pri_fallback` no OEE da linha/planta |
+| A-14 | ✅ confirmado | parcial 440/450; V3: falha atravessando a refeição do **calendário** → só a parte fora da pausa em D_eq; V4: `planned_stop` sem código cai em `PLN-04` (fora de T_req, não D_eq) |
+| A-15 | ✅ confirmado | `reason = no_running_time` |
+| A-16 | ✅ confirmado | `operating_seconds(..., now)`; `test_A16_*` |
+| A-17 | ✅ confirmado | `test_conformance` passa os casos de §6 pelas funções do servidor |
+| A-18 | ✅ confirmado | `< 3` dias → `rate_per_day = null`, `p_reason = insufficient_data`; `< 14` → `low_confidence` |
+| A-19 | ⚠️ **corrigido com ressalva — item novo A-19b** | a cadência ao vivo agora vem das leituras brutas (60 pç/h no contraexemplo), mas sem o filtro de plausibilidade; ver abaixo |
+| A-20 | ✅ confirmado | `mart_min` 20 min com 2 de 3 reparos apontados; nenhum apontado → `mart_reason = no_repair_times` |
+
+V5 (falha aberta, cálculo às 13:30 → Ao = 390/420) confirma que T_req e D_eq param no `now` do motor.
+
+### A-19b — Cadência ao vivo do mapa sem o filtro de plausibilidade · Média · ⬜ aberto
+
+- **Spec**: kpis.md S7-13 — cadência ao vivo pelas leituras brutas com "regras de delta de domain.md §3.3"; a regra 4
+  (filtro de plausibilidade, DEVE) descarta um delta `> max_rate × Δt × 1,5 + 10`, mantém `prev` e registra
+  `counter_glitch`.
+- **Código**: `server/src/services/layout/service.py:live_parts` chama `counter_delta(a, b, cmax)` **sem** `dt_s` nem
+  `max_rate_per_s`, então só as regras 1–3 valem; também não mantém o `prev` aceito depois de um glitch. O
+  pipeline de ingestão (`server/src/services/usage/processor.py`, `counter_step` com `max_rate`) filtra o mesmo glitch,
+  portanto PQ/GQ do turno, OEE e uso **não** são afetados — só o número ao vivo do mapa.
+- **Contraexemplo** (`test_A19b_*`): 1 peça/min nos últimos 15 min (leituras 1 000 … 1 015, contador de 16 bits) com
+  **uma** leitura corrompida de 60 000 no minuto 7; PRI 30 s → limite de 16 peças por minuto. O salto vira +58 994 e a
+  volta a 1 008 é lida como rollover (60 000 ≥ 0,9 × 65 535): +6 544. Código: **65 551 peças → 262 204 pç/h** no
+  marcador, com `cadence_source = counter` (sem aviso), por 15 min. Spec: glitch descartado → **15 peças → 60 pç/h**.
+- **Impacto**: o mapa é a tela "o que está acontecendo agora" e fica na TV da fábrica; um número absurdo desacredita o
+  produto no piloto (pilot.md H2). Leitura corrompida isolada é rara, mas acontece com CLP reiniciando, troca de
+  palavra de 32 bits lida em duas metades (Modbus) ou gateway com registrador errado.
+- **Correção sugerida**: em `live_parts`, usar `counter_step` (ou `counter_delta` com `dt_s` entre leituras e
+  `max_rate` de `usage/core.resolve_max_rate` — tag, senão `2 / PRI` da máquina, senão o padrão do servidor),
+  mantendo o `prev` aceito. Quando corrigido: apagar `test_A19b_live_cadence_glitch_code_today`, tirar o `xfail` de
+  `test_A19b_live_cadence_glitch_spec` e marcar este item como corrigido.
+
+### Observações (não mudam KPI; sem ação obrigatória)
+
+- **O-1 — Viés da leitura de base da cadência ao vivo.** `live_parts` usa como base a última leitura até o início da
+  janela (busca até 10 min antes). Com gateway que publica por mudança, está certo (o contador não mudou entre a base e
+  o início da janela). Com leitura periódica, as peças entre a base e o início da janela entram na conta: viés de no
+  máximo um intervalo de leitura (ex.: leitura a cada 15 s a 60 pç/h → ≤ 0,25 peça → ≤ 1 pç/h). Aceitável; documentar
+  se algum cliente usar intervalo de leitura longo para contadores.
+- **O-2 — Falha no instante exato de uma remoção sem sucessor.** Com o intervalo semiaberto (S7-7), uma falha
+  registrada exatamente no instante em que o componente foi removido, sem componente novo instalado na posição, fica
+  sem componente (sonda V8) — continua contando para a posição e a máquina, mas não para o MTTF/MCBF do componente
+  removido. No fluxo normal (troca = remoção + instalação no mesmo instante, ou falha registrada antes da remoção) não
+  acontece. Se ocorrer no piloto, a correção é na entrada (OS de troca grava `component_id` na falha), não na fórmula.
+- **O-3 — Sem leituras do contador na janela.** Com a base presente e nenhuma leitura nos últimos 15 min a cadência
+  ao vivo é 0 pç/h (`cadence_source = counter`); com gateway por mudança isso é verdade (nada produzido). Gateway sem
+  contato já tem precedência no marcador (`offline`, sprint6.md §1.2), então o 0 não aparece como "rodando".
+
+**Conclusão**: dos 20 itens, **19 confirmados corrigidos** e **1 (A-19) corrigido com ressalva**, que gerou o item
+aberto **A-19b** (Média, só a exibição ao vivo do mapa; nenhum KPI calculado é afetado). As fórmulas de OEE, Ao,
+MTBF/MCBF/MTTR/MART, λ, MTTF, PMP, cumprimento, backlog, RUL e planos conferem com a especificação e com as sondas.

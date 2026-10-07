@@ -1,0 +1,47 @@
+# Consultas do sql_exporter (ver sql_exporter.yml). Nomes de métrica = contrato com prometheus/alerts.platform.yml
+# e o painel do Grafana (infra/tests/test_monitoring.py confere).
+collector_name: fm_platform
+
+metrics:
+  # Gateways cadastrados (online/offline; "pending" = nunca cadastrou) — segundos desde o último heartbeat.
+  - metric_name: fm_gateway_seconds_since_seen
+    type: gauge
+    help: "Segundos desde o último contato do gateway (heartbeat/config/leitura) com o servidor."
+    key_labels: [tenant, gateway]
+    values: [seconds_since_seen]
+    query: |
+      SELECT t.slug AS tenant, g.name || ' (' || left(g.id::text, 8) || ')' AS gateway,
+             EXTRACT(EPOCH FROM (now() - g.last_seen_at))::float8 AS seconds_since_seen
+      FROM gateways g JOIN tenants t ON t.id = g.tenant_id
+      WHERE g.status <> 'pending' AND g.last_seen_at IS NOT NULL
+
+  - metric_name: fm_gateway_heartbeat_seconds
+    type: gauge
+    help: "Intervalo de heartbeat configurado no gateway."
+    key_labels: [tenant, gateway]
+    values: [heartbeat_s]
+    query: |
+      SELECT t.slug AS tenant, g.name || ' (' || left(g.id::text, 8) || ')' AS gateway,
+             g.heartbeat_s::float8 AS heartbeat_s
+      FROM gateways g JOIN tenants t ON t.id = g.tenant_id
+      WHERE g.status <> 'pending' AND g.last_seen_at IS NOT NULL
+
+  # Leituras em dead letter ainda não reprocessadas (a métrica do servidor conta as novas; esta, o estoque).
+  - metric_name: fm_ingest_dead_letters_pending
+    type: gauge
+    help: "Leituras em ingest_dead_letters ainda não reprocessadas (replayed_at nulo)."
+    values: [pending]
+    query: |
+      SELECT count(*)::float8 AS pending FROM ingest_dead_letters WHERE replayed_at IS NULL
+
+  # Demonstração pública: idade do último dado das máquinas do tenant demo (0 linhas = demo não instalada,
+  # e o alerta não dispara). Slug padrão do servidor: DEMO_TENANT_SLUG=demo-publica.
+  - metric_name: fm_demo_last_data_age_seconds
+    type: gauge
+    help: "Segundos desde o último dado recebido de uma máquina do tenant da demo pública."
+    values: [age]
+    query: |
+      SELECT EXTRACT(EPOCH FROM (now() - max(m.last_seen_at)))::float8 AS age
+      FROM machines m JOIN tenants t ON t.id = m.tenant_id
+      WHERE t.slug = 'demo-publica'
+      HAVING max(m.last_seen_at) IS NOT NULL

@@ -1,10 +1,13 @@
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react";
 import clsx from "clsx";
+import { useScrollFocusable } from "@/hooks/useScrollFocusable";
 
 /** Horizontal-scroll wrapper + table with token styles. */
 export function Table({ className, caption, children, ...rest }: HTMLAttributes<HTMLTableElement> & { caption?: string }) {
+  const { ref, overflows } = useScrollFocusable<HTMLDivElement>();
   return (
-    <div className="-mx-4 overflow-x-auto sm:mx-0">
+    <div ref={ref} className="-mx-4 overflow-x-auto focus-visible:outline-offset-[-2px] sm:mx-0"
+      {...(overflows ? { tabIndex: 0, role: "region", "aria-label": `${caption ?? "Tabela"} (role para os lados)` } : {})}>
       <table className={clsx("w-full min-w-[36rem] border-collapse text-body", className)} {...rest}>
         {caption && <caption className="sr-only">{caption}</caption>}
         {children}

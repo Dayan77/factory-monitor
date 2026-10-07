@@ -6,6 +6,7 @@ gateway da demo, isolados numa rede interna, com versão fixa, restart, healthch
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -36,13 +37,17 @@ def test_demo_services_are_pinned_restarted_and_healthchecked():
     svc = _config()["services"]
     for name in ("demo-plant", "demo-gateway"):
         s = svc[name]
-        assert s["image"] == "factory-monitor-edge:0.6.0" and not s["image"].endswith(":latest")
+        # prefixo do registro (FM_IMAGE_PREFIX do .env) ou build local; a tag acompanha FM_VERSION do deploy
+        assert re.fullmatch(r"(factory-monitor|ghcr\.io/[a-z0-9-]+/factoryconnect)-edge:0\.6\.0", s["image"]), s["image"]
         assert s["restart"] == "always"
         assert "ports" not in s                                  # nada publicado no VPS
     hc = svc["demo-plant"]["healthcheck"]["test"]
     assert "http://127.0.0.1:8091/health" in " ".join(hc)
     assert svc["demo-gateway"]["depends_on"]["demo-plant"]["condition"] == "service_healthy"
     assert 'ARG PYTHON_IMAGE=python:3.12.15-slim' in (ROOT / "edge/Dockerfile").read_text()   # base fixada
+    # no deploy (FM_VERSION exportado pelo remote_deploy.sh) a imagem da demo é a da mesma release
+    svc = _config(FM_VERSION="0.7.0")["services"]
+    assert svc["demo-plant"]["image"].endswith("-edge:0.7.0") and svc["demo-gateway"]["image"].endswith("-edge:0.7.0")
 
 
 def test_demo_network_is_internal_and_isolates_the_plant():

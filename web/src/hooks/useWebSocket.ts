@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { authApi } from "@/services/api";
+import { authApi, refreshTokens } from "@/services/api";
+import { TOKENS_EVENT, tokenExpiryMs } from "@/utils/jwt";
 import {
   applyDowntimeToList, applyMachineStatus, applyMachineStatusToTree, applyUsageToMachineUsage, applyUsageToPosition,
   parseRealtimeMessage, realtimeSocketParams, reconnectActionFor,
@@ -47,6 +48,30 @@ export function useRealtimeConnection(tenantId: string | undefined) {
     let destroyed = false;
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let renewTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Session renewal without dropping the socket (docs/security.md §1.1): the server closes the socket when the
+    // access token expires unless the client sends {"type":"reauth","token"}. ~45 s before the expiry the tab renews
+    // the pair (the refresh rotates under the cross-tab lock) and the new token goes over the open socket.
+    function planRenewal() {
+      clearTimeout(renewTimer);
+      const exp = tokenExpiryMs(localStorage.getItem("access_token"));
+      if (exp == null) return;
+      const wait = exp - Date.now() - 45_000;
+      if (wait <= 0) return;
+      renewTimer = setTimeout(() => {
+        void refreshTokens(localStorage.getItem("refresh_token")).catch(() => undefined);
+      }, Math.min(wait, 2 ** 31 - 1));
+    }
+    function sendReauth(token: string | null | undefined) {
+      if (token && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "reauth", token }));
+      planRenewal();
+    }
+    const onTokens = (e: Event) => sendReauth((e as CustomEvent<string>).detail);
+    // another tab renewed: same storage, adopt its token
+    const onStorage = (e: StorageEvent) => { if (e.key === "access_token" && e.newValue) sendReauth(e.newValue); };
+    window.addEventListener(TOKENS_EVENT, onTokens);
+    window.addEventListener("storage", onStorage);
     let wasConnected = false;
     let kpiTimer: ReturnType<typeof setTimeout> | undefined;
     let mapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,6 +150,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
       ws.onopen = () => {
         if (destroyed) return;
         setStatus("connected");
+        planRenewal();
         attempt = 0;
         // after a reconnect, resync anything we may have missed while offline
         if (wasConnected) {
@@ -190,6 +216,9 @@ export function useRealtimeConnection(tenantId: string | undefined) {
     return () => {
       destroyed = true;
       clearTimeout(retry);
+      clearTimeout(renewTimer);
+      window.removeEventListener(TOKENS_EVENT, onTokens);
+      window.removeEventListener("storage", onStorage);
       clearTimeout(kpiTimer);
       clearTimeout(mapTimer);
       if (ws) {

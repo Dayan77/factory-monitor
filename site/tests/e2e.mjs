@@ -26,6 +26,9 @@ const PAGES = [
   ["/", "início"], ["/solucao", "solução"], ["/para-manutencao", "manutenção"], ["/para-producao", "produção"],
   ["/como-funciona", "como funciona"], ["/seguranca", "segurança"], ["/planos", "planos"], ["/sobre", "sobre"],
   ["/contato", "contato"], ["/privacidade", "privacidade"],
+  ["/docs", "documentação"], ["/docs/indicadores", "manual: indicadores"], ["/docs/operador", "manual: operador"],
+  ["/docs/supervisor", "manual: supervisor"], ["/docs/planejador", "manual: planejador"], ["/docs/tecnico", "manual: técnico"],
+  ["/docs/gerente", "manual: gerente"], ["/docs/administrador", "manual: administrador"],
 ];
 const VIEWPORTS = { desktop: { width: 1366, height: 900 }, mobile: { width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } };
 const FORBIDDEN = [/Metal[uú]rgica Fonseca/i, /Pl[aá]sticos Norte/i, /Alimentos BomDia/i, /depoimento/i, /Resultados reais/i, /R\$\s?\d/];
@@ -292,7 +295,7 @@ await check("demo CTA in header, home hero and Como funciona point to the app /d
     assert.equal(st, `${APP}/api/public/demo-status`);
   }
   assert.equal(await page.locator('a[data-demo-cta="header"]:visible').count(), 1, "header CTA visible at 1366");
-  assert.equal(await page.getAttribute('a[data-demo-cta="header"]:visible', "aria-label"), "Ver demonstração");
+  assert.equal(await page.getAttribute('a[data-demo-cta="header"]:visible', "aria-label"), "Ver demo — abrir a demonstração");
   assert.equal(await page.isVisible('a[data-demo-cta="hero"]'), true);
   await page.goto(BASE + "/como-funciona", { waitUntil: "networkidle" });
   assert.equal(await page.getAttribute('a[data-demo-cta="como-funciona"]', "href"), `${APP}/demo`);

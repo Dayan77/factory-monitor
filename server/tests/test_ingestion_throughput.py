@@ -96,7 +96,8 @@ async def test_concurrent_influx_writes_are_coalesced_and_each_caller_learns_its
     real = influx._send
 
     async def picky(records):
-        if any(r["tags"]["tag_id"] == bad for r in records):
+        # records are line-protocol strings (Sprint 7 fast path) or dicts (non-finite values)
+        if any((f"tag_id={bad}" in r) if isinstance(r, str) else r["tags"]["tag_id"] == bad for r in records):
             raise RuntimeError("422 field type conflict")
         await real(records)
 

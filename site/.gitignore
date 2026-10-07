@@ -5,3 +5,4 @@ test-results/
 
 # o .gitignore da raiz ignora lib/ (Python); aqui é código-fonte
 !src/lib/
+nginx-out/

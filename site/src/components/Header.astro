@@ -4,7 +4,8 @@ import DemoButton from "./DemoButton.astro";
 import { NAV, LOGIN_URL, REGISTER_URL } from "../lib/site";
 
 const current = Astro.url.pathname.replace(/\.html$/, "").replace(/\/$/, "") || "/";
-const isActive = (href: string) => current === href;
+const isActive = (href: string) => current === href || (href !== "/" && current.startsWith(`${href}/`));
+const currentAttr = (href: string) => (current === href ? "page" : isActive(href) ? "true" : undefined);
 ---
 <header class="sticky top-0 z-50 border-b border-line/70 bg-bg/85 backdrop-blur supports-[backdrop-filter]:bg-bg/70">
   <div class="container-x flex h-16 items-center justify-between gap-4 xl:max-w-7xl">
@@ -16,12 +17,14 @@ const isActive = (href: string) => current === href;
           <li>
             <a
               href={item.href}
-              aria-current={isActive(item.href) ? "page" : undefined}
+              aria-current={currentAttr(item.href)}
               class:list={[
-                "rounded-md px-3 py-2 text-sm font-medium transition-colors hover:text-fg",
+                "rounded-md px-1.5 py-2 text-[0.8125rem] font-medium transition-colors hover:text-fg xl:whitespace-nowrap xl:px-2.5 xl:text-sm",
                 isActive(item.href) ? "text-fg" : "text-muted",
               ]}
-            >{item.label}</a>
+            >{item.short
+                ? <><span class="xl:hidden">{item.short}<span class="sr-only"> ({item.label})</span></span><span class="hidden xl:inline">{item.label}</span></>
+                : item.label}</a>
           </li>
         ))}
       </ul>
@@ -49,7 +52,7 @@ const isActive = (href: string) => current === href;
       <ul class="grid gap-1">
         {NAV.map((item) => (
           <li>
-            <a href={item.href} aria-current={isActive(item.href) ? "page" : undefined}
+            <a href={item.href} aria-current={currentAttr(item.href)}
                class="block rounded-lg px-3 py-3 text-base font-medium text-fg hover:bg-surface-2">{item.label}</a>
           </li>
         ))}

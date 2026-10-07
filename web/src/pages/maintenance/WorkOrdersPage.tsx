@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useScrollFocusable } from "@/hooks/useScrollFocusable";
 import clsx from "clsx";
 import { Card } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -69,8 +70,10 @@ function WoCard({ wo, today, onOpen }: { wo: WorkOrder; today: string; onOpen: (
 }
 
 function Board({ list, today, onOpen }: { list: WorkOrder[]; today: string; onOpen: (id: string) => void }) {
+  const { ref, overflows } = useScrollFocusable<HTMLDivElement>();
   return (
-    <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
+    <div ref={ref} className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0"
+      {...(overflows ? { tabIndex: 0, role: "region", "aria-label": "Quadro de OS por estado (role para os lados)" } : {})}>
       <div className="grid min-w-[72rem] grid-cols-6 gap-3">
         {COLUMNS.map((c) => {
           const items = list.filter((w) => c.states.includes(w.state));

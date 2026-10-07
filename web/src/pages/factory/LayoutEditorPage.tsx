@@ -330,6 +330,7 @@ function Editor({ layout, plantId, lines, onPublished }: EditorProps) {
       <Card padded={false} className="order-2 p-3 lg:order-1">
         <h3 className="mb-1 text-caption font-semibold uppercase tracking-wide text-fg-subtle">Não posicionadas ({tray.length})</h3>
         <p className="mb-2 text-caption text-fg-subtle">Arraste para o mapa (ou selecione e toque em “Colocar”).</p>
+        <p className="mb-2 text-caption text-fg-subtle" id="editor-keys">Teclado: Enter na lista coloca no mapa; no mapa, Enter seleciona (Shift+Enter soma), setas movem (Shift = passo maior), Delete remove, Ctrl+Z desfaz.</p>
         {tray.length === 0 ? <p className="text-caption text-ok">Todas as máquinas estão no mapa.</p> : (
           <ul className="max-h-[60vh] space-y-1.5 overflow-y-auto" data-testid="editor-tray">
             {tray.map((t) => (
@@ -398,8 +399,20 @@ function Editor({ layout, plantId, lines, onPublished }: EditorProps) {
             const name = m.kind === "machine" ? machineName.get(m.machine_id ?? "")?.name ?? "Máquina" : m.kind === "line_label" ? lineName.get(m.line_id ?? "") ?? "Linha" : m.label ?? "";
             return (
               <div key={key} data-marker data-testid="editor-marker" data-key={key}
+                role="button" tabIndex={0} aria-pressed={isSel}
+                aria-label={`${name}${m.kind === "line_label" ? " (rótulo de linha)" : m.kind === "area_label" ? " (rótulo de área)" : ""} — posição ${Math.round(m.x * 100)} %, ${Math.round(m.y * 100)} %`}
                 onPointerDown={(e) => onMarkerDown(e, key)} onPointerMove={onMarkerMove} onPointerUp={onMarkerUp}
-                className={clsx("absolute z-10 cursor-move touch-none", isSel && "z-20")} style={style}>
+                // keyboard: Enter/Space selects (Shift adds to the selection); then arrows move, Delete removes
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  if (e.shiftKey) {
+                    const next = new Set(selected);
+                    if (next.has(key)) next.delete(key); else next.add(key);
+                    setSelected(next);
+                  } else setSelected(new Set([key]));
+                }}
+                className={clsx("absolute z-10 cursor-move touch-none rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent", isSel && "z-20")} style={style}>
                 {preview && lv ? (
                   <div className={clsx("pointer-events-none rounded-lg", isSel && "ring-4 ring-accent")}>
                     <MachineMarker marker={{ ...m, x: 0.5, y: 0.5, rotation_deg: 0 }} machine={lv} now={now} />

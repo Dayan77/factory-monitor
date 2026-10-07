@@ -466,14 +466,17 @@ function Step8({ onDone, common }: { onDone: (d?: Record<string, unknown>) => vo
             {ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
           </select>
         </Field>
-        <Field label="Senha inicial (a pessoa troca no 1º acesso)" htmlFor="ob-u-pass" hint="Mínimo 8 caracteres.">
-          <input id="ob-u-pass" type="password" required minLength={8} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className={inputClass} />
+        <Field label="Senha inicial (a pessoa troca no 1º acesso)" htmlFor="ob-u-pass" hint="Mínimo 12 caracteres; nada de nome, e-mail ou nome da empresa.">
+          <input id="ob-u-pass" type="password" required minLength={12} autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} className={inputClass} />
         </Field>
         <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
           <Button type="submit" loading={add.isPending}>Adicionar usuário</Button>
           {add.isError && <p role="alert" className="text-caption text-danger">{apiErrorMessage(add.error, "Não foi possível adicionar.")}</p>}
         </div>
       </form>
+      <p className="text-caption text-fg-muted">
+        Prefere que cada pessoa crie a própria senha? <Link to="/settings/users" className="font-medium text-ok underline underline-offset-2">Convide por e-mail em Usuários e convites</Link> (o link vale 7 dias).
+      </p>
     </StepShell>
   );
 }

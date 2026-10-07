@@ -1,18 +1,26 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Link, Navigate, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Layout from "@/components/Layout";
+import RouteFallback from "@/components/RouteFallback";
+const Layout = lazy(() => import("@/components/Layout"));
 import ProtectedRoute from "@/components/ProtectedRoute";
 import RequireCapability from "@/components/RequireCapability";
-import LandingPage from "@/pages/LandingPage";
-import LoginPage from "@/pages/LoginPage";
-import RegisterPage from "@/pages/RegisterPage";
-import DemoPage from "@/pages/DemoPage";
-import RaioXPage from "@/pages/efficiency/RaioXPage";
-import StopsPage from "@/pages/efficiency/StopsPage";
-import LinesPage from "@/pages/LinesPage";
-import MachinesPage from "@/pages/MachinesPage";
-import AlertsPage from "@/pages/AlertsPage";
+// Every screen is its own chunk (route-level code splitting): the login does not download charts, the operator
+// tablet does not download the planner screens. Recharts / hls.js / qrcode only come with the screens that use them.
+const LandingPage = lazy(() => import("@/pages/LandingPage"));
+const LoginPage = lazy(() => import("@/pages/LoginPage"));
+const RegisterPage = lazy(() => import("@/pages/RegisterPage"));
+const DemoPage = lazy(() => import("@/pages/DemoPage"));
+const ForgotPasswordPage = lazy(() => import("@/pages/auth/ForgotPasswordPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/auth/ResetPasswordPage"));
+const InvitePage = lazy(() => import("@/pages/auth/InvitePage"));
+const AccountPage = lazy(() => import("@/pages/account/AccountPage"));
+const UsersPage = lazy(() => import("@/pages/settings/UsersPage"));
+const RaioXPage = lazy(() => import("@/pages/efficiency/RaioXPage"));
+const StopsPage = lazy(() => import("@/pages/efficiency/StopsPage"));
+const LinesPage = lazy(() => import("@/pages/LinesPage"));
+const MachinesPage = lazy(() => import("@/pages/MachinesPage"));
+const AlertsPage = lazy(() => import("@/pages/AlertsPage"));
 const AiChatPage = lazy(() => import("@/pages/AiChatPage"));
 const SensorsPage = lazy(() => import("@/pages/SensorsPage"));
 const AdminPage = lazy(() => import("@/pages/AdminPage"));
@@ -57,21 +65,13 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
-function RouteFallback() {
-  return (
-    <div role="status" aria-busy="true" className="flex min-h-[50vh] items-center justify-center">
-      <span className="sr-only">Carregando…</span>
-      <span className="size-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-    </div>
-  );
-}
 
 function NotFoundPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface px-4 text-center text-fg">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-canvas px-4 text-center text-fg">
       <h1 className="text-lg font-semibold">Página não encontrada</h1>
-      <Link to="/" className="text-sm text-accent underline">Ir para o início</Link>
-    </div>
+      <Link to="/" className="text-sm font-medium text-ok underline">Ir para o início</Link>
+    </main>
   );
 }
 
@@ -86,6 +86,9 @@ export default function App() {
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/op/login" element={<OperatorLoginPage />} />
+          <Route path="/esqueci-senha" element={<ForgotPasswordPage />} />
+          <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
+          <Route path="/convite" element={<InvitePage />} />
           {/* Destino do "Ver demonstração" do site público ({APP_URL}/demo) */}
           <Route path="/demo"     element={<DemoPage />} />
 
@@ -139,6 +142,8 @@ export default function App() {
               <Route path="/alerts"    element={<AlertsPage />} />
               <Route path="/ai"        element={<AiChatPage />} />
               <Route path="/admin"     element={<AdminPage />} />
+              <Route path="/account"   element={<AccountPage />} />
+              <Route path="/settings/users" element={<RequireCapability cap="users.admin"><UsersPage /></RequireCapability>} />
             </Route>
           </Route>
           {/* Rota desconhecida: nunca uma página em branco */}

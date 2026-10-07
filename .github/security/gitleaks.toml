@@ -1,0 +1,58 @@
+# Configuração do gitleaks (varredura de segredos) — CI: .github/workflows/security.yml (histórico COMPLETO).
+#   docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.30.1 git /repo \
+#     --config /repo/.github/security/gitleaks.toml --gitleaks-ignore-path /repo/.github/security/gitleaksignore --redact
+# Regras padrão do gitleaks + regras do projeto. Achados aceitos ficam em gitleaksignore (fingerprint + motivo),
+# nunca num allowlist genérico que esconderia um segredo novo no mesmo arquivo.
+title = "FactoryConnect"
+
+[extend]
+useDefault = true
+
+# Senha/token como valor PADRÃO de os.environ.get / getenv (foi assim que a senha do VPS vazou em cc1d1e7).
+[[rules]]
+id = "fm-secret-env-default"
+description = "Segredo embutido como valor padrão de variável de ambiente"
+regex = '''(?i)(?:environ\.get|getenv)\(\s*["'][A-Z0-9_]*(?:PASS|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY)[A-Z0-9_]*["']\s*,\s*["']([^"'\s]{6,})["']\s*\)'''
+secretGroup = 1
+keywords = ["environ.get", "getenv"]
+  [[rules.allowlists]]
+  description = "valores de DEV documentados (containers locais/CI efêmeros, nunca usados em produção)"
+  regexes = ['''^(?:fm_dev_password|dev-token-change-me|change-me.*|changeme.*)$''']
+
+# Conexão SSH com senha literal (paramiko.connect(..., password="..."))
+[[rules]]
+id = "fm-ssh-password-literal"
+description = "Senha SSH literal em código"
+regex = '''(?i)\.connect\([^)]*password\s*=\s*["']([^"'\s]{6,})["']'''
+secretGroup = 1
+keywords = ["password"]
+
+# Segredo literal atribuído em script shell (VAR='...' comando) — o vazamento de cc1d1e7 (scripts/dev_cycle.sh)
+[[rules]]
+id = "fm-shell-secret-assignment"
+description = "Senha/token literal atribuído em script shell, Makefile ou Dockerfile"
+path = '''(?:\.sh|\.bash|(?:^|/)Makefile|(?:^|/)Dockerfile[^/]*)$'''
+regex = '''(?:^|[\s;&|(])[A-Za-z0-9_]*(?:PASS|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY)[A-Za-z0-9_]*=["']?([^"'\s$`{}()<>]{6,})'''
+secretGroup = 1
+keywords = ["pass", "secret", "token", "api_key"]
+  [[rules.allowlists]]
+  regexes = ['''^(?:fm_dev_password|dev-token-change-me|ci-only.*|change-me.*|changeme.*)$''']
+
+# Credencial em URL (scheme://user:senha@host) — exceto exemplos e serviços de dev/CI
+[[rules]]
+id = "fm-credential-in-url"
+description = "Usuário e senha embutidos em URL"
+regex = '''(?i)\b(?:postgres(?:ql)?(?:\+asyncpg)?|mqtts?|amqp|redis|https?)://[a-z0-9_.-]+:([^@\s/'"$<>{}]{6,})@[a-z0-9.-]+'''
+secretGroup = 1
+keywords = ["://"]
+  [[rules.allowlists]]
+  regexes = ['''^(?:fm_dev_password|password|senha|secret|changeme|change-me|ci-only.*|x{6,})$''']
+
+[allowlist]
+description = "Artefatos gerados e dependências de terceiros"
+paths = [
+  '''(?:^|/)node_modules/''',
+  '''(?:^|/)package-lock\.json$''',
+  '''(?:^|/)dist/''',
+  '''\.(?:png|jpg|jpeg|gif|ico|woff2?|ttf|pdf|xlsx)$''',
+]

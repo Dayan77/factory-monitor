@@ -32,7 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import get_current_user, require_roles, verify_password
 from ...db import get_db
 from ...models import AuthSession, MfaRecoveryCode, TenantSecuritySettings, User, UserRole
-from ...services.security import passwords, privacy, sessions, totp
+from ...config import settings
+from ...services.security import passwords, privacy, sessions, throttle, totp
 from ...services.security.notify import audit
 from ...services.validation import is_uuid
 
@@ -114,6 +115,34 @@ def _wrong_password() -> HTTPException:
     return HTTPException(status_code=403, detail="Senha atual incorreta.")
 
 
+# Re-authentication inside the account area (current password, TOTP / recovery code) is throttled per user like
+# the login: whoever holds a stolen access token cannot use these endpoints as a password / code oracle.
+def _reauth_key(kind: str, user: User) -> str:
+    return throttle.hkey("acct-" + kind if kind == "pw" else "mfa", user.id)
+
+
+async def _reauth_guard(db: AsyncSession, user: User, kind: str) -> None:
+    wait = await throttle.locked(db, _reauth_key(kind, user))
+    if wait > 0:
+        raise HTTPException(status_code=429, detail="Muitas tentativas. Aguarde e tente novamente.",
+                            headers=throttle.retry_after(wait))
+
+
+async def _reauth_failed(db: AsyncSession, user: User, kind: str, request: Request, exc: HTTPException):
+    lock = await throttle.failure(db, _reauth_key(kind, user), settings.login_max_failures_account)
+    await audit(db, user.tenant_id, user.id, "account.reauth_failed", "user", user.id,
+                {"factor": "password" if kind == "pw" else "mfa", "lock_s": int(lock)}, request=request)
+    await db.commit()
+    raise exc
+
+
+async def _check_password(db: AsyncSession, u: User, password: str, request: Request) -> None:
+    await _reauth_guard(db, u, "pw")
+    if not verify_password(password, u.password_hash):
+        await _reauth_failed(db, u, "pw", request, _wrong_password())
+    await throttle.reset(db, _reauth_key("pw", u))
+
+
 @router.get("/me")
 async def get_me(user: Me, db: DB):
     return {"id": user.id, "tenant_id": user.tenant_id, "email": user.email, "name": user.name,
@@ -134,10 +163,7 @@ async def patch_me(body: ProfileIn, user: Me, request: Request, db: DB):
 @router.post("/password", status_code=204)
 async def change_password(body: PasswordIn, user: Me, request: Request, db: DB):
     u = await _reload(db, user)
-    if not verify_password(body.current_password, u.password_hash):
-        await audit(db, u.tenant_id, u.id, "account.password_change_failed", "user", u.id, request=request)
-        await db.commit()
-        raise _wrong_password()
+    await _check_password(db, u, body.current_password, request)
     try:
         await passwords.set_password(db, u, body.new_password)
     except passwords.PasswordPolicyError as e:
@@ -192,8 +218,7 @@ async def mfa_status(user: Me, db: DB):
 @router.post("/mfa/enroll")
 async def mfa_enroll(body: PasswordOnly, user: Me, request: Request, db: DB):
     u = await _reload(db, user)
-    if not verify_password(body.password, u.password_hash):
-        raise _wrong_password()
+    await _check_password(db, u, body.password, request)
     if u.mfa_enabled_at is not None:
         raise HTTPException(status_code=409, detail="MFA já está ativo. Desative antes de cadastrar outro.")
     secret = totp.new_secret()
@@ -218,9 +243,11 @@ async def mfa_confirm(body: CodeIn, user: Me, request: Request, db: DB):
     secret = totp.decrypt(u.mfa_pending_enc)
     if secret is None:
         raise HTTPException(status_code=409, detail="Nenhum cadastro de MFA em andamento.")
+    await _reauth_guard(db, u, "mfa")
     step = totp.verify(secret, body.code)
     if step is None:
-        raise HTTPException(status_code=422, detail="Código inválido.")
+        await _reauth_failed(db, u, "mfa", request, _bad_code())
+    await throttle.reset(db, _reauth_key("mfa", u))
     u.mfa_secret_enc, u.mfa_pending_enc = u.mfa_pending_enc, None
     u.mfa_enabled_at = datetime.now(timezone.utc)
     u.mfa_last_step = step
@@ -228,6 +255,10 @@ async def mfa_confirm(body: CodeIn, user: Me, request: Request, db: DB):
     await audit(db, u.tenant_id, u.id, "account.mfa_enabled", "user", u.id, request=request)
     await db.commit()
     return {"enabled": True, "recovery_codes": codes}
+
+
+def _bad_code() -> HTTPException:
+    return HTTPException(status_code=422, detail="Código inválido.")
 
 
 def _check_code(u: User, code: str) -> Optional[int]:
@@ -240,9 +271,11 @@ async def mfa_new_codes(body: CodeIn, user: Me, request: Request, db: DB):
     u = await _reload(db, user)
     if u.mfa_enabled_at is None:
         raise HTTPException(status_code=409, detail="MFA não está ativo.")
+    await _reauth_guard(db, u, "mfa")
     step = _check_code(u, body.code)
     if step is None:
-        raise HTTPException(status_code=422, detail="Código inválido.")
+        await _reauth_failed(db, u, "mfa", request, _bad_code())
+    await throttle.reset(db, _reauth_key("mfa", u))
     u.mfa_last_step = step
     codes = await _new_codes(db, u.id)
     await audit(db, u.tenant_id, u.id, "account.mfa_recovery_regenerated", "user", u.id, request=request)
@@ -255,15 +288,16 @@ async def mfa_disable(body: DisableIn, user: Me, request: Request, db: DB):
     u = await _reload(db, user)
     if u.mfa_enabled_at is None:
         raise HTTPException(status_code=409, detail="MFA não está ativo.")
-    if not verify_password(body.password, u.password_hash):
-        raise _wrong_password()
+    await _check_password(db, u, body.password, request)
+    await _reauth_guard(db, u, "mfa")
     step = _check_code(u, body.code)
     if step is None:
         rc = (await db.execute(select(MfaRecoveryCode).where(
             MfaRecoveryCode.user_id == u.id, MfaRecoveryCode.code_hash == totp.hash_recovery(body.code),
             MfaRecoveryCode.used_at.is_(None)))).scalar_one_or_none()
         if rc is None:
-            raise HTTPException(status_code=422, detail="Código inválido.")
+            await _reauth_failed(db, u, "mfa", request, _bad_code())
+    await throttle.reset(db, _reauth_key("mfa", u))
     if await _mfa_required(db, u):
         raise HTTPException(status_code=422, detail="O tenant exige MFA para administradores.")
     u.mfa_secret_enc = u.mfa_pending_enc = None
@@ -292,14 +326,13 @@ async def delete_account(body: DeleteIn, user: Me, request: Request, db: DB):
     """Self-service deletion: the account is anonymized (history kept under a pseudonym, docs/privacy.md §3).
     The last active admin of a tenant cannot delete himself (another admin must exist first)."""
     u = await _reload(db, user)
-    if not verify_password(body.password, u.password_hash):
-        raise _wrong_password()
+    await _check_password(db, u, body.password, request)
     if u.role == UserRole.superadmin:
         raise HTTPException(status_code=422, detail="Conta superadmin não é excluída por aqui.")
     if "admin" in u.role_set:
         others = (await db.execute(select(func.count(User.id)).where(
             User.tenant_id == u.tenant_id, User.id != u.id, User.is_active.is_(True),
-            User.role == UserRole.admin))).scalar_one()
+            (User.role == UserRole.admin) | User.roles.any("admin")))).scalar_one()
         if not others:
             raise HTTPException(status_code=422, detail="Você é o único administrador ativo: promova outro antes.")
     await privacy.anonymize_user(db, u, u.id, "self_service")

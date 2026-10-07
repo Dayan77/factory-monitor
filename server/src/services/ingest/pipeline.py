@@ -61,7 +61,8 @@ Acker = Callable[[Item], None]
 
 class OrderedPipeline:
     def __init__(self, process: Processor, *, capacity: int, workers: int, acker: Optional[Acker] = None,
-                 batch_per_turn: int = 64, process_batch=None) -> None:
+                 batch_per_turn: int = 64, process_batch=None, keys_per_turn: int = 1,
+                 group_of: Optional[Callable[[Hashable], Hashable]] = None) -> None:
         self._process = process
         # optional: process_batch(items of one key, in order) -> [awaitable | None per item] (one turn at once)
         self._process_batch = process_batch
@@ -69,6 +70,12 @@ class OrderedPipeline:
         self.capacity = max(1, int(capacity))
         self.n_workers = max(1, int(workers))
         self._batch = max(1, batch_per_turn)
+        # Sprint 7 (scale): with process_batch, one turn may serve up to `keys_per_turn` ready keys at once (the
+        # readings of many tags in one batch: one database transaction instead of one per reading). Keys are split
+        # by group_of(key) (the tenant) and the groups run concurrently, so a stuck tenant never holds another
+        # tenant's readings of the same turn.
+        self._keys_per_turn = max(1, int(keys_per_turn))
+        self._group_of = group_of
         self._slots = asyncio.Semaphore(self.capacity)
         self._queues: dict[Hashable, deque[Item]] = {}
         self._ready: asyncio.Queue = asyncio.Queue()
@@ -142,6 +149,9 @@ class OrderedPipeline:
     async def _worker(self, k: int) -> None:
         while True:
             key = await self._ready.get()
+            if self._process_batch is not None and self._keys_per_turn > 1:
+                await self._multi_turn(key)
+                continue
             q = self._queues.get(key)
             if self._process_batch is not None and q:
                 batch = [q.popleft() for _ in range(min(len(q), self._batch))]
@@ -157,6 +167,29 @@ class OrderedPipeline:
                 self._queues.pop(key, None)
                 self._scheduled.discard(key)
                 INGEST_ACTIVE_TAGS.set(len(self._queues))
+
+    async def _multi_turn(self, first: Hashable) -> None:
+        keys = [first]
+        while len(keys) < self._keys_per_turn and not self._ready.empty():
+            keys.append(self._ready.get_nowait())
+        groups: dict[Hashable, list[Item]] = {}
+        for key in keys:
+            q = self._queues.get(key)
+            if q:
+                g = self._group_of(key) if self._group_of is not None else None
+                groups.setdefault(g, []).extend(q.popleft() for _ in range(min(len(q), self._batch)))
+        if len(groups) == 1:
+            await self._run_batch(next(iter(groups.values())))
+        elif groups:
+            await asyncio.gather(*(self._run_batch(items) for items in groups.values()))
+        for key in keys:
+            q = self._queues.get(key)
+            if q:
+                self._ready.put_nowait(key)            # more readings of this tag: back of the line (fairness)
+            else:
+                self._queues.pop(key, None)
+                self._scheduled.discard(key)
+        INGEST_ACTIVE_TAGS.set(len(self._queues))
 
     async def _run_batch(self, items: list[Item]) -> None:
         try:

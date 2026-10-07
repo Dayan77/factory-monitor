@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { format } from "date-fns";
-import { ptBR } from "date-fns/locale";
+import { formatDateTime } from "@/utils/format";
 import clsx from "clsx";
 import SeverityBadge from "@/components/SeverityBadge";
 import EmptyState from "@/components/ui/EmptyState";
@@ -34,7 +33,7 @@ export default function AlertsPage() {
               onClick={() => setFilter(f)}
               className={clsx(
                 "min-h-11 rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-                filter === f ? "bg-brand-500 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                filter === f ? "bg-accent text-accent-fg" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
               )}
             >
               {FILTER_LABEL[f]}
@@ -66,7 +65,7 @@ function AlertList({ events, filter }: { events: AlertEvent[]; filter: Filter })
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500" aria-live="polite">{filtered.length} alertas</p>
+      <p className="text-xs text-fg-muted" aria-live="polite">{filtered.length} alertas</p>
       {resolve.isError && (
         <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-2 text-xs text-red-300">
           Não foi possível marcar o alerta como resolvido. Tente novamente.
@@ -110,11 +109,11 @@ function AlertList({ events, filter }: { events: AlertEvent[]; filter: Filter })
                     <span className="rounded-full bg-brand-500/10 px-2 py-0.5 text-xs text-brand-400">Resolvido</span>
                   )}
                 </div>
-                {alert.machine_name && <p className="mt-0.5 text-xs text-gray-500">{alert.machine_name}</p>}
+                {alert.machine_name && <p className="mt-0.5 text-xs text-fg-muted">{alert.machine_name}</p>}
                 {alert.message && <p className="mt-1.5 text-sm text-gray-300">{alert.message}</p>}
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-muted">
                   <time dateTime={alert.triggered_at}>
-                    {format(new Date(alert.triggered_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                    {formatDateTime(alert.triggered_at)}
                   </time>
                   {!alert.resolved_at && (
                     <button

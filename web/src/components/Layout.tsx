@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { usePlant } from "@/hooks/useEfficiency";
 import { normalizeCatalogParams } from "@/utils/deepLinks";
+import { usePlantClock } from "@/hooks/usePlantClock";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import { useAuthStore } from "@/store/auth";
 import { useRealtimeConnection } from "@/hooks/useWebSocket";
 import EmergencyAlert from "./notifications/EmergencyAlert";
+import CommandPalette from "./CommandPalette";
+import RouteFallback from "./RouteFallback";
 import DemoBanner, { DemoBlocked, useIsDemo } from "./DemoBanner";
 import { isDemoBlockedPath } from "@/utils/demo";
 
@@ -39,21 +42,30 @@ export default function Layout() {
   const tenantId = useAuthStore((s) => s.user?.tenant_id);
   useRealtimeConnection(tenantId);
   useCatalogDeepLinks();
+  usePlantClock();
   const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
   const demo = useIsDemo();
   const { pathname } = useLocation();
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas print:block print:h-auto print:overflow-visible">
-      <div className="contents print:hidden"><Sidebar open={navOpen} onClose={() => setNavOpen(false)} /></div>
+      <a href="#conteudo" className="sr-only z-[70] rounded-lg bg-accent px-4 py-2 font-medium text-accent-fg focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
+        Pular para o conteúdo
+      </a>
+      <div className="contents print:hidden"><Sidebar open={navOpen} onClose={closeNav} /></div>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden print:block print:overflow-visible">
         <DemoBanner />
         <div className="contents print:hidden"><Header onMenu={() => setNavOpen((v) => !v)} menuOpen={navOpen} /></div>
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 print:overflow-visible print:p-0">
-          {demo && isDemoBlockedPath(pathname) ? <DemoBlocked /> : <Outlet />}
+        <main id="conteudo" tabIndex={-1} className="flex-1 overflow-y-auto p-4 focus:outline-none sm:p-6 print:overflow-visible print:p-0">
+          {/* lazy screens load inside the shell: menu and header stay in place */}
+          <Suspense fallback={<RouteFallback />}>
+            {demo && isDemoBlockedPath(pathname) ? <DemoBlocked /> : <Outlet />}
+          </Suspense>
         </main>
       </div>
       <EmergencyAlert />
+      <CommandPalette />
     </div>
   );
 }

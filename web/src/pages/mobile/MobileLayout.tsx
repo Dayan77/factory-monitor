@@ -7,6 +7,7 @@ import EmergencyAlert from "@/components/notifications/EmergencyAlert";
 import { useRealtimeConnection } from "@/hooks/useWebSocket";
 import { useOfflineSync, useQueueState } from "@/hooks/useTechnician";
 import { useAuthStore } from "@/store/auth";
+import { usePlantClock } from "@/hooks/usePlantClock";
 import { registerServiceWorker } from "@/services/pwa";
 import { clearFailed } from "@/services/offline";
 import { can } from "@/utils/maintenance";
@@ -53,12 +54,20 @@ export default function MobileLayout() {
   const user = useAuthStore((s) => s.user);
   const offlineUser = useAuthStore((s) => s.offline);
   useRealtimeConnection(user?.tenant_id);
+  usePlantClock();
 
   useEffect(() => {
     void registerServiceWorker();
-    // warm the execution screen chunk so it is cached for offline use
-    void import("./WorkOrderExecPage");
-    void import("./TodayLogPage");
+    // warm the execution screen chunks (cached for offline use even where the service worker is unavailable) —
+    // once the list is on screen and the phone is idle, never competing with the first paint
+    const warm = () => { void import("./WorkOrderExecPage"); void import("./TodayLogPage"); };
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(warm, { timeout: 5000 });
+      return () => w.cancelIdleCallback?.(id);
+    }
+    const t = window.setTimeout(warm, 2500);
+    return () => window.clearTimeout(t);
   }, []);
 
   return (

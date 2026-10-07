@@ -1,4 +1,5 @@
 import ExportMenu from "@/components/reports/ExportMenu";
+import KpiInfo from "@/components/ui/KpiInfo";
 import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from "recharts";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -102,9 +103,9 @@ function ReliabilityTable({ rows, group }: { rows: ReliabilityRow[]; group: Reli
           <TH>{GROUPS.find((g) => g.value === group)?.label}</TH>
           <TH numeric>n</TH>
           {mttf ? (
-            <><TH numeric>MTTF</TH><TH numeric>Falhas · suspensões</TH><TH numeric>Em serviço</TH></>
+            <><TH numeric><span className="inline-flex items-center gap-1.5">MTTF <KpiInfo kpi="mttf" /></span></TH><TH numeric>Falhas · suspensões</TH><TH numeric>Em serviço</TH></>
           ) : (
-            <><TH numeric>MTBF</TH><TH numeric>MCBF (ciclos)</TH><TH numeric>MTTR</TH><TH numeric>Restabelecidas</TH><TH numeric>Incipientes</TH></>
+            <><TH numeric><span className="inline-flex items-center gap-1.5">MTBF <KpiInfo kpi="mtbf" /></span></TH><TH numeric><span className="inline-flex items-center gap-1.5">MCBF (ciclos) <KpiInfo kpi="mcbf" /></span></TH><TH numeric><span className="inline-flex items-center gap-1.5">MTTR <KpiInfo kpi="mttr" /></span></TH><TH numeric>Restabelecidas</TH><TH numeric>Incipientes</TH></>
           )}
         </tr>
       </THead>

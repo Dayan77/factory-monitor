@@ -47,6 +47,8 @@ class UsageBucket(Base):
     __tablename__ = "usage_buckets"
     __table_args__ = (
         Index("ix_usage_buckets_tenant_bucket", "tenant_id", "bucket_start"),
+        # Sprint 7 (migration c6d7e8f9a0b1): first data / pace window per entity
+        Index("ix_usage_buckets_entity_start", "scope", "entity_id", "bucket_start"),
     )
 
     scope:        Mapped[str]      = mapped_column(String(16), primary_key=True)

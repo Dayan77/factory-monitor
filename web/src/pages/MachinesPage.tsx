@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { formatDateTime } from "@/utils/format";
 import clsx from "clsx";
 import MachineStatusBadge from "@/components/MachineStatusBadge";
 import EmptyState from "@/components/ui/EmptyState";
@@ -60,7 +61,7 @@ export default function MachinesPage() {
               className={clsx(
                 "min-h-11 whitespace-nowrap px-3 py-2 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
                 statusFilter === f.value
-                  ? "bg-brand-500 text-white"
+                  ? "bg-accent text-accent-fg"
                   : "bg-gray-800 text-gray-400 hover:bg-gray-700"
               )}
             >
@@ -93,7 +94,7 @@ export default function MachinesPage() {
           );
           return (
             <>
-              <p className="text-xs text-gray-500" aria-live="polite">
+              <p className="text-xs text-fg-muted" aria-live="polite">
                 {filtered.length} de {machines.length} máquinas
               </p>
               {filtered.length === 0 ? (
@@ -131,7 +132,7 @@ function MachineCard({ machine: m, lineName }: { machine: Machine; lineName?: st
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-semibold text-gray-100">{m.name}</p>
-          <p className="truncate text-xs text-gray-500">{[m.model, lineName].filter(Boolean).join(" · ") || "—"}</p>
+          <p className="truncate text-xs text-fg-muted">{[m.model, lineName].filter(Boolean).join(" · ") || "—"}</p>
         </div>
         <span className="shrink-0"><MachineStatusBadge status={m.status} /></span>
       </div>
@@ -141,9 +142,9 @@ function MachineCard({ machine: m, lineName }: { machine: Machine; lineName?: st
       <p
         className={clsx(
           "flex items-center gap-1.5 text-xs tabular-nums",
-          age == null ? "text-gray-500" : age > 60 ? "text-yellow-400" : "text-gray-400"
+          age == null ? "text-fg-muted" : age > 60 ? "text-yellow-400" : "text-gray-400"
         )}
-        title={m.last_seen_at ? new Date(m.last_seen_at).toLocaleString("pt-BR") : undefined}
+        title={m.last_seen_at ? formatDateTime(m.last_seen_at) : undefined}
       >
         <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5" aria-hidden="true">
           <path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm.75-13a.75.75 0 0 0-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 0 0 0-1.5h-3.25V5z" clipRule="evenodd" />

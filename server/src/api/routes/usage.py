@@ -10,7 +10,9 @@ from ...auth import get_current_user, require_roles
 from ...db import get_db
 from ...models import Component, Machine, Position, User, UserRole
 from ...services.usage import queries as uq
-from ...services.usage.recompute import (RecomputeBusy, RecomputeJob, get_job, recompute_usage,
+from ...config import settings
+from ...services.usage.recompute import (RecomputeBusy, RecomputeJob, get_job, history_beyond_retention,
+                                         recompute_usage,
                                          start_recompute_job, tenant_slot)
 from ...services.validation import is_uuid
 from ..schemas_assets import RecomputeJobOut, RecomputeOut, UsageHistoryOut, UsagePoint
@@ -112,7 +114,16 @@ async def recompute(user: CurrentUser, db: DB, apply: bool = False, background: 
     """Rebuilds the tenant's accumulators from the raw readings in InfluxDB (domain.md §3.5).
     apply=false (default) only reports differences; apply=true replaces them.
     background=true (recommended for long histories) returns 202 with a job id at once — poll
-    GET /api/usage/recompute/jobs/{job_id}. One recompute per tenant at a time (409)."""
+    GET /api/usage/recompute/jobs/{job_id}. One recompute per tenant at a time (409).
+    Sprint 7: apply=true is refused (409) when the tenant has usage older than the raw retention (it would be lost)."""
+    if apply:
+        oldest = await history_beyond_retention(db, user.tenant_id)
+        if oldest is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "message": f"O histórico de uso começa em {oldest:%d/%m/%Y}, mas as leituras brutas só são guardadas "
+                           f"por {settings.influx_raw_retention_days} dias: recalcular apagaria o uso anterior. "
+                           "Use apply=false para comparar.", "reason": "beyond_raw_retention",
+                "oldest_usage": oldest.isoformat()})
     if background:
         try:
             job = start_recompute_job(user.tenant_id, apply)

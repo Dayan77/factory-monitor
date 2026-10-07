@@ -126,7 +126,7 @@ async function runMocked(browser) {
         localStorage.setItem("fm-theme", t);
       }, theme);
 
-      await page.goto(`${BASE}/factory`);
+      await page.goto(`${BASE}/factory/list`); // /factory is the plant map since sprint 6
       await page.getByTestId("line-card").first().waitFor();
       check((await page.getAttribute("html", "data-theme")) === theme, `html data-theme=${theme}`);
       check((await page.getByTestId("line-card").first().textContent()).includes("Linha de Montagem"), "line with failure listed first");
@@ -134,7 +134,8 @@ async function runMocked(browser) {
 
       await page.getByTestId("line-card").first().click();
       await page.getByText("Cadência média").waitFor();
-      check(page.url().endsWith("/factory/lines/line-1"), "drill-down to /factory/lines/:id");
+      // the drill-down keeps the period in the query since sprint 6 (?period=…): compare the path
+      check(new URL(page.url()).pathname === "/factory/lines/line-1", "drill-down to /factory/lines/:id", page.url());
       const fill = await page.locator(".recharts-bar-rectangle path, .recharts-bar-rectangle rect").first().evaluate((el) => getComputedStyle(el).fill);
       check(fill && fill !== "rgb(0, 0, 0)" && fill !== "none", `chart bars resolve token colour (${fill})`);
       await shot(page, `line-${theme}-${vpName}`);
@@ -142,7 +143,7 @@ async function runMocked(browser) {
       await page.getByTestId("machine-tile").first().click();
       await page.getByRole("heading", { name: "Estação de Fixação" }).waitFor();
       await page.getByText("Motor do fuso").filter({ visible: true }).first().waitFor();
-      check(page.url().endsWith("/factory/machines/m-1"), "drill-down to /factory/machines/:id");
+      check(new URL(page.url()).pathname === "/factory/machines/m-1", "drill-down to /factory/machines/:id", page.url());
       await page.waitForTimeout(300);
       // live usage over the WebSocket
       if (socket) {
@@ -164,7 +165,7 @@ async function runMocked(browser) {
       await opener.click();
       const dialog = page.getByRole("dialog");
       await dialog.getByText("DEMO-0002").first().waitFor();
-      check(page.url().includes("?pos=p-2"), "drawer state in URL (?pos=)");
+      check(new URL(page.url()).searchParams.get("pos") === "p-2", "drawer state in URL (?pos=)", page.url());
       check(await dialog.getByText("21/11/2026").isVisible(), "projected end date shown");
       await shot(page, `drawer-${theme}-${vpName}`);
       await page.keyboard.press("Escape");
@@ -208,7 +209,7 @@ async function runReal(browser) {
   await page.getByLabel(/senha/i).fill(process.env.E2E_PASSWORD ?? "Admin@1234");
   await page.getByRole("button", { name: /entrar/i }).click();
   await page.waitForURL(/dashboard/);
-  await page.goto(`${BASE}/factory`);
+  await page.goto(`${BASE}/factory/list`);
   await page.getByTestId("line-card").first().waitFor();
   check((await page.getByTestId("line-card").count()) > 0, "tree loaded from /api/plants/tree");
   await shot(page, "real-factory");

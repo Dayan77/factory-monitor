@@ -293,9 +293,13 @@ async def components_life(db: AsyncSession, tenant_id: str, plant_id: Optional[s
                              .where(Component.tenant_id == tenant_id, Component.removed_at.is_(None),
                                     Machine.id.in_(mids)))).all()
     tzs = await mu.machine_tz(db, tenant_id, mids)
+    default_tz = await mu.tenant_tz(db, tenant_id) if any(m.id not in tzs for _, _, m in rows) else None
+    # Sprint 7 (performance): every component of the scope with a fixed number of queries
+    details = await uq.component_usage_details(db, tenant_id, [c for c, _, _ in rows],
+                                               {c.id: tzs.get(m.id) or default_tz for c, _, m in rows}, now)
     out = []
     for c, p, m in rows:
-        d = await uq.component_usage_detail(db, tenant_id, c, tzs.get(m.id) or await mu.tenant_tz(db, tenant_id), now)
+        d = details[c.id]
         life = d["life_consumed_pct"]
         nominal = {k: v for k, v in (c.nominal_life or {}).items() if isinstance(v, (int, float)) and v > 0}
         out.append({

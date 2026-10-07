@@ -20,8 +20,17 @@ export function registerServiceWorker(): Promise<ServiceWorkerRegistration | nul
   if (registration) return registration;
   if (!swSupported()) return (registration = Promise.resolve(null));
   const url = import.meta.env.PROD ? "/sw.js" : "/sw.js?dev=1";
-  registration = navigator.serviceWorker
-    .register(url, { scope: "/" })
+  // after the page has loaded and gone idle: installing the worker precaches the app chunks, which must not compete
+  // with the first paint of the screen the technician / operator opened
+  const idle = new Promise<void>((resolve) => {
+    const go = () => {
+      const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+      if (ric) ric(() => resolve(), { timeout: 3000 }); else setTimeout(resolve, 1000);
+    };
+    if (document.readyState === "complete") go(); else window.addEventListener("load", go, { once: true });
+  });
+  registration = idle
+    .then(() => navigator.serviceWorker.register(url, { scope: "/" }))
     .then((reg) => {
       navigator.serviceWorker.addEventListener("message", onWorkerMessage);
       return reg;

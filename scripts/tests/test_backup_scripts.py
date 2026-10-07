@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import stat
+import time
 import subprocess
 import tarfile
 from pathlib import Path
@@ -158,6 +159,40 @@ def test_success_pings_and_uploads_archive_and_checksum(env):
     names = sorted(p.name for p in up.iterdir())
     assert len(names) == 2 and names[0].endswith(".tar") and names[1].endswith(".tar.sha256")
     assert ping_log.read_text().split()[-1] == "https://hc.example/abc"
+
+
+def _prom(path: Path) -> dict[str, float]:
+    out = {}
+    for line in path.read_text().splitlines():
+        if line and not line.startswith("#"):
+            k, v = line.split()
+            out[k] = float(v)
+    return out
+
+
+def test_success_writes_textfile_metrics_for_the_backup_age_alert(env):
+    m = env["tmp"] / "metrics" / "fm_backup.prom"
+    before = int(time.time())
+    proc = run(BACKUP, env, BACKUP_METRICS_FILE=str(m))
+    assert proc.returncode == 0, proc.stderr
+    vals = _prom(m)
+    assert before <= vals["fm_backup_last_success_timestamp_seconds"] <= time.time() + 1
+    out = Path(proc.stdout.strip().splitlines()[-1])
+    assert vals["fm_backup_last_size_bytes"] == out.stat().st_size > 0
+    assert vals["fm_backup_last_duration_seconds"] >= 0
+    assert oct(m.stat().st_mode & 0o777) == "0o644" and oct(m.parent.stat().st_mode & 0o777) == "0o755", \
+        "node-exporter (nobody) precisa ler o arquivo"
+    assert not list(m.parent.glob("*.tmp"))
+
+
+def test_failure_writes_failure_metric_and_keeps_last_success(env):
+    m = env["tmp"] / "metrics" / "fm_backup.prom"
+    assert run(BACKUP, env, BACKUP_METRICS_FILE=str(m)).returncode == 0
+    ok_ts = _prom(m)["fm_backup_last_success_timestamp_seconds"]
+    proc = run(BACKUP, env, BACKUP_METRICS_FILE=str(m), BACKUP_UPLOAD_CMD="exit 3")
+    assert proc.returncode != 0
+    assert _prom(m)["fm_backup_last_success_timestamp_seconds"] == ok_ts, "falha não pode parecer backup novo"
+    assert _prom(m.parent / "fm_backup_failure.prom")["fm_backup_last_failure_timestamp_seconds"] >= ok_ts
 
 
 def test_upload_failure_fails_the_run_but_keeps_local_copy(env):

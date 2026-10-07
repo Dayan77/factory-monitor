@@ -174,34 +174,93 @@ async def component_data_since(db: AsyncSession, tenant_id: str, component: Comp
 
 async def component_usage_detail(db: AsyncSession, tenant_id: str, component: Component,
                                  tz: ZoneInfo, now: Optional[datetime] = None) -> dict:
+    return (await component_usage_details(db, tenant_id, [component], {component.id: tz}, now))[component.id]
+
+
+_FIRST_BUCKETS_SQL = text("""
+SELECT e.sc, e.eid::text,
+       (SELECT min(b.bucket_start) FROM usage_buckets b
+         WHERE b.scope = e.sc AND b.entity_id = e.eid AND b.tenant_id = CAST(:tid AS uuid)) AS first
+  FROM unnest(CAST(:sc AS varchar[]), CAST(:eid AS uuid[])) AS e(sc, eid)
+""")
+
+
+async def first_buckets(db: AsyncSession, tenant_id: str, entities: Iterable[tuple[str, str]]
+                        ) -> dict[tuple[str, str], Optional[datetime]]:
+    """First usage bucket of each (scope, entity_id) — one statement, one index probe per entity
+    (ix_usage_buckets_entity_start, migration c6d7e8f9a0b1)."""
+    ents = sorted({(sc, str(e)) for sc, e in entities if e})
+    if not ents:
+        return {}
+    rows = (await db.execute(_FIRST_BUCKETS_SQL, {"tid": tenant_id, "sc": [x[0] for x in ents],
+                                                  "eid": [x[1] for x in ents]})).all()
+    return {(sc, eid): first for sc, eid, first in rows}
+
+
+async def component_usage_details(db: AsyncSession, tenant_id: str, components: list[Component],
+                                  tz_of: dict[str, ZoneInfo], now: Optional[datetime] = None) -> dict[str, dict]:
+    """component_usage_detail for many components with a fixed number of queries (Sprint 7, performance: it was
+    ~7 queries per component — the plan/maintenance engine and /api/maintenance/components evaluate every component
+    of a tenant). Same numbers: S7-2 history days from installation and the first data of the component, its
+    position and its machine; S7-5 complete hourly buckets."""
     now = now or datetime.now(timezone.utc)
-    usage = (await component_usages(db, tenant_id, [component]))[component.id]
-    life, life_measure = component_life(component, usage)
-    # S7-2 (audit A-2): days of history = min(14, since installation, since the first data of the position/machine);
-    # complete hourly buckets only (S7-5, audit A-10)
-    if component.installed_at is not None:
-        since = await component_data_since(db, tenant_id, component)
-        ws, we, history_days = rate_window(now, component.installed_at, since or now)
-    else:
-        ws = we = now
-        history_days = 0.0
-    wsum = await window_sums(db, tenant_id, "component", [component.id], ws, we) if history_days > 0 else {}
-    window_usage = _usage_dict({m: v for (eid, m), v in wsum.items()})
-    r = rul(now.astimezone(tz).date(), _nominal(component), usage, window_usage, history_days)
-    return {
-        **usage,
-        "life_consumed_pct": life,
-        "life_measure": life_measure,
-        "life_reason": None if life is not None else "no_nominal_life",
-        "projected_end_date": r.date,
-        "rul_days": r.days,
-        "rul_measure": r.measure,
-        "rul_reason": r.reason,
-        "rate_per_day": r.rate_per_day,
-        "rate_window_days": history_days,
-        "low_confidence": r.low_confidence,
-        "overdue": r.overdue,
-    }
+    if not components:
+        return {}
+    usages = await component_usages(db, tenant_id, components)
+    pid_of = {c.id: (c.position_id or c.last_position_id) for c in components}
+    pids = sorted({p for p in pid_of.values() if p})
+    mid_of_pos = {pid: mid for pid, mid in (await db.execute(select(Position.id, Position.machine_id).where(
+        Position.id.in_(pids), Position.tenant_id == tenant_id)))} if pids else {}
+    mids = sorted({m for m in mid_of_pos.values() if m})
+    firsts = await first_buckets(db, tenant_id, [("component", c.id) for c in components if c.installed_at]
+                                 + [("position", p) for p in pids] + [("machine", m) for m in mids])
+    spans = {mid: v for mid, v in (await db.execute(select(MachineDataSpan.machine_id, func.min(MachineDataSpan.start))
+                                                    .where(MachineDataSpan.tenant_id == tenant_id,
+                                                           MachineDataSpan.machine_id.in_(mids))
+                                                    .group_by(MachineDataSpan.machine_id))).all()} if mids else {}
+    plan: dict[str, tuple[datetime, datetime, float]] = {}
+    for c in components:
+        if c.installed_at is None:
+            plan[c.id] = (now, now, 0.0)
+            continue
+        pid = pid_of[c.id]
+        mid = mid_of_pos.get(pid) if pid else None
+        cands = [x for x in (firsts.get(("component", c.id)), firsts.get(("position", pid)) if pid else None,
+                             firsts.get(("machine", mid)) if mid else None, spans.get(mid) if mid else None)
+                 if x is not None]
+        since = min(cands) if cands else None
+        plan[c.id] = rate_window(now, c.installed_at, since or now)
+    by_window: dict[tuple[datetime, datetime], list[str]] = {}
+    for cid, (ws, we, days) in plan.items():
+        if days > 0:
+            by_window.setdefault((ws, we), []).append(cid)
+    wsums: dict[str, dict[str, float]] = {}
+    for (ws, we), ids in by_window.items():
+        for (eid, m), v in (await window_sums(db, tenant_id, "component", ids, ws, we)).items():
+            wsums.setdefault(eid, {})[m] = v
+    out = {}
+    for c in components:
+        usage = usages[c.id]
+        life, life_measure = component_life(c, usage)
+        history_days = plan[c.id][2]
+        window_usage = _usage_dict(wsums.get(c.id, {}) if history_days > 0 else {})
+        tz = tz_of.get(c.id) or ZoneInfo(DEFAULT_TIMEZONE)
+        r = rul(now.astimezone(tz).date(), _nominal(c), usage, window_usage, history_days)
+        out[c.id] = {
+            **usage,
+            "life_consumed_pct": life,
+            "life_measure": life_measure,
+            "life_reason": None if life is not None else "no_nominal_life",
+            "projected_end_date": r.date,
+            "rul_days": r.days,
+            "rul_measure": r.measure,
+            "rul_reason": r.reason,
+            "rate_per_day": r.rate_per_day,
+            "rate_window_days": history_days,
+            "low_confidence": r.low_confidence,
+            "overdue": r.overdue,
+        }
+    return out
 
 
 def position_usage(vals: dict[str, float]) -> dict[str, float]:

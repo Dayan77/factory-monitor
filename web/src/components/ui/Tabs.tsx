@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import clsx from "clsx";
 
 export interface TabItem<V extends string> {
@@ -24,6 +24,13 @@ interface Props<V extends string> {
  */
 export function Tabs<V extends string>({ items, value, onChange, label, id, size = "md", className }: Props<V>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  // aria-controls only when the panel exists: many tab rows are segmented filters with no <TabPanel>, and an
+  // aria-controls pointing at a missing id is invalid ARIA (axe: aria-valid-attr-value)
+  const [hasPanel, setHasPanel] = useState(false);
+  useLayoutEffect(() => {
+    const exists = !!document.getElementById(`${id}-panel`);
+    if (exists !== hasPanel) setHasPanel(exists);
+  });
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const i = items.findIndex((it) => it.value === value);
@@ -55,7 +62,7 @@ export function Tabs<V extends string>({ items, value, onChange, label, id, size
             type="button"
             role="tab"
             aria-selected={selected}
-            aria-controls={`${id}-panel`}
+            aria-controls={hasPanel ? `${id}-panel` : undefined}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(it.value)}
             className={clsx(

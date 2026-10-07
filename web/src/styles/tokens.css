@@ -105,9 +105,9 @@
   --c-line-strong: var(--gray-700);
   --c-fg: var(--gray-100);
   --c-fg-muted: var(--gray-400);
-  --c-fg-subtle: var(--gray-500);
-  --c-accent: var(--brand-500);
-  --c-accent-hover: var(--brand-600);
+  --c-fg-subtle: 140 148 162; /* AA (≥4.5:1) on surface and surface-2 */
+  --c-accent: var(--brand-600); /* white text on it: 4.6:1 (brand-500 was 3.2:1) */
+  --c-accent-hover: var(--brand-700);
   --c-on-accent: 255 255 255;
   --c-ok: var(--brand-400);
   --c-ok-solid: var(--brand-500);
@@ -171,7 +171,7 @@
   --yellow-100: 113 63 18;
   --yellow-200: 113 63 18;
   --yellow-300: 133 77 14;
-  --yellow-400: 161 98 7;
+  --yellow-400: 133 77 14;
   --yellow-500: 202 138 4;
   --yellow-600: 161 98 7;
   --yellow-700: 133 77 14;
@@ -182,7 +182,7 @@
   --amber-100: 120 53 15;
   --amber-200: 120 53 15;
   --amber-300: 146 64 14;
-  --amber-400: 180 83 9;
+  --amber-400: 154 69 8; /* text-warn: AA on the warn badge tint */
   --amber-500: 217 119 6;
   --amber-600: 180 83 9;
   --amber-700: 146 64 14;
@@ -230,7 +230,7 @@
   --c-line-strong: var(--gray-700);
   --c-fg: var(--gray-100);
   --c-fg-muted: var(--gray-400);
-  --c-fg-subtle: var(--gray-500);
+  --c-fg-subtle: 88 96 110; /* AA (≥4.5:1) on surface-2 */
   --c-accent: var(--brand-500);
   --c-accent-hover: var(--brand-600);
   --c-on-accent: 255 255 255;

@@ -3,7 +3,7 @@ import clsx from "clsx";
 import type { LayoutMarker, LineVisual, MachineVisual, MarkerSize } from "@/services/sprint6Types";
 import { SUSPECT_TITLE, badgeText, oeeText } from "@/utils/mapKpis";
 import { STATE_META, markerText } from "@/utils/visualState";
-import { formatDec1, formatPct } from "@/utils/format";
+import { formatDec1 } from "@/utils/format";
 import StateIcon from "./StateIcon";
 
 const BOX: Record<MarkerSize, string> = {
@@ -49,7 +49,7 @@ interface MachineMarkerProps {
 }
 
 function SuspectMark() {
-  return <span aria-label="valor suspeito" title={SUSPECT_TITLE} data-testid="oee-suspect" className="ml-0.5 font-bold text-[#b45309]">⚠</span>;
+  return <span aria-hidden="true" title={SUSPECT_TITLE} data-testid="oee-suspect" className="ml-0.5 font-bold text-[#b45309]">⚠</span>;
 }
 
 /** A machine on the map: colour + icon + text of its state (§1.2), duration, OEE and cadence for m/l (§1.4). */
@@ -68,7 +68,6 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
       data-testid="map-marker"
       data-machine-id={machine.machine_id}
       data-state={machine.state}
-      aria-label={`${machine.name}: ${text}${oee.suspect ? " — OEE suspeito (desempenho acima de 100 %)" : ""}${extra.map((b) => ` — ${badgeText(b)}`).join("")}`}
       aria-pressed={selected || undefined}
       onClick={() => onSelect?.(machine.machine_id)}
       onMouseEnter={(e) => onHover?.(machine.machine_id, e.currentTarget)}
@@ -97,8 +96,13 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
       )}
       <span className="flex min-w-0 items-center gap-1.5">
         <StateIcon state={machine.state} className={size === "s" ? "size-3.5" : "size-4"} />
-        <span className={clsx("truncate font-semibold", size === "s" ? "text-[11px] leading-4" : "text-caption")}>{machine.name}</span>
+        <span className={clsx("truncate font-semibold", size === "s" ? "text-[11px] leading-4" : "text-caption")}>{machine.name}<span className="sr-only">:</span></span>
       </span>
+      {/* accessible name = the visible text + what only colour/icons show (WCAG 2.5.3: the name contains the label) */}
+      {size === "s" && <span className="sr-only"> {text} · {oee.text}</span>}
+      {pred && <span className="sr-only"> — alerta preditivo ({pred.severity ?? "observação"})</span>}
+      {oee.suspect && <span className="sr-only"> — OEE suspeito (desempenho acima de 100 %)</span>}
+      {extra.length > 0 && <span className="sr-only">{extra.map((b) => ` — ${badgeText(b)}`).join("")}</span>}
       {size !== "s" && (
         <>
           <span className="mt-0.5 block truncate text-[11px] leading-4 opacity-95">{text}</span>
@@ -126,11 +130,10 @@ export const LineLabelMarker = memo(function LineLabelMarker({ marker, line, onO
       data-testid="map-line-label"
       onClick={() => onOpen?.(line.line_id)}
       style={position(marker, anchor)}
-      aria-label={`Linha ${line.name}: OEE do turno ${line.kpis?.oee == null ? "indisponível" : formatPct(line.kpis.oee)}${oee.suspect ? " — suspeito (desempenho acima de 100 %)" : ""}`}
       className="absolute z-10 flex items-center gap-2 rounded-full border border-line-strong bg-surface/95 px-3 py-1 text-caption shadow-card hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
-      <span className="font-semibold text-fg">{line.name}</span>
-      <span className="tabular text-fg-muted">{oee.text}{oee.suspect && <SuspectMark />}</span>
+      <span className="font-semibold text-fg"><span className="sr-only">Linha </span>{line.name}</span>
+      <span className="tabular text-fg-muted"><span className="sr-only">: OEE do turno </span>{oee.text}{oee.suspect && <SuspectMark />}{oee.suspect && <span className="sr-only"> (suspeito: desempenho acima de 100 %)</span>}</span>
       {st && (
         <span className={clsx("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-semibold", STATE_META[st].marker)} title={`Máquina de saída: ${line.output_text ?? STATE_META[st].label}`}>
           <StateIcon state={st} className="size-3" />

@@ -18,7 +18,7 @@ export function isDemoUser(u: RoleCarrier | null | undefined): boolean {
 
 /** Screens a demo visitor never sees (navigation hidden, route answers "área indisponível"). */
 export const DEMO_BLOCKED_PREFIXES = [
-  "/admin", "/settings", "/cameras", "/onboarding", "/reports/scheduled", "/m", "/op",
+  "/admin", "/settings", "/cameras", "/onboarding", "/reports/scheduled", "/m", "/op", "/account",
 ];
 
 export function isDemoBlockedPath(pathname: string): boolean {

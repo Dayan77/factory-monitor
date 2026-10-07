@@ -10,7 +10,8 @@ aiomqtt==2.5.1          # MQTT async client
 aiohttp==3.14.3
 
 # Local config app
-fastapi==0.115.14
+fastapi==0.136.3        # mesma versão do server (pip check no mesmo venv)
+starlette==1.7.0        # 0.46.x: CVEs de path/Range/multipart (Sprint 7, pip-audit)
 uvicorn[standard]==0.34.3
 
 # Data / Config
@@ -18,7 +19,7 @@ pydantic==2.11.10
 pydantic-settings==2.10.1
 
 # Security
-cryptography==45.0.7    # AES-256 encryption
+cryptography==50.0.2    # AES-256 encryption (45.x: 7 advisories)
 
 # Persistence / Buffer
 aiosqlite==0.22.1       # Local SQLite buffer when offline
@@ -26,3 +27,6 @@ aiosqlite==0.22.1       # Local SQLite buffer when offline
 # Observability
 structlog==25.4.0
 prometheus-client==0.26.0
+
+# Transitivas fixadas por segurança (pip-audit): asyncua → pyopenssl (25.x: 2 advisories)
+pyopenssl==26.4.0

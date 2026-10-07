@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePlantClock } from "@/hooks/usePlantClock";
+import { SESSION_EXPIRED_KEY } from "@/services/api";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
@@ -55,6 +57,7 @@ function OperatorShell() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
   useRealtimeConnection(user?.tenant_id);
+  usePlantClock();
   useEffect(() => { void registerServiceWorker(); }, []);
   // Offline after a (re)open: what the justify screens need comes from the device snapshot (acceptance 5).
   useSeedTabletSnapshot(readLine());
@@ -512,6 +515,7 @@ function ProductChange({ line, setNotice }: { line: TreeLine; setNotice: (n: { t
 /** Kiosk login of the tablet (outside the app chrome). */
 export function OperatorLoginPage() {
   const login = useAuthStore((s) => s.login);
+  const verifyMfa = useAuthStore((s) => s.verifyMfa);
   const loading = useAuthStore((s) => s.loading);
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
@@ -519,19 +523,30 @@ export function OperatorLoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [expired] = useState(() => { try { return sessionStorage.getItem(SESSION_EXPIRED_KEY) === "1"; } catch { return false; } });
+  useEffect(() => { try { sessionStorage.removeItem(SESSION_EXPIRED_KEY); } catch { /* storage blocked */ } }, []);
+  const after = () => navigate((location.state as { from?: string } | null)?.from ?? "/op", { replace: true });
   useEffect(() => { if (user) navigate("/op", { replace: true }); }, [user, navigate]);
   useEffect(() => { void registerServiceWorker(); }, []);
   const waiting = usePendingOwners();
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-canvas p-4 text-[18px] text-fg" data-testid="op-login">
+    <main className="flex min-h-[100dvh] items-center justify-center bg-canvas p-4 text-[18px] text-fg" data-testid="op-login">
       <form className="w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface p-6 shadow-card"
         onSubmit={(e) => {
           e.preventDefault();
           setError("");
-          login(email.trim(), password).then(() => navigate((location.state as { from?: string } | null)?.from ?? "/op", { replace: true }))
+          if (mfaToken) {
+            verifyMfa(mfaToken, { code: code.replace(/\s+/g, "") }).then(after)
+              .catch((err) => setError(apiErrorMessage(err, "Código inválido.")));
+            return;
+          }
+          login(email.trim(), password).then((r) => { if (r.mfa) { setMfaToken(r.mfaToken); setCode(""); } else after(); })
             .catch((err) => setError(apiErrorMessage(err, "Não foi possível entrar. Confira usuário e senha.")));
         }}>
         <h1 className="text-[1.6rem] font-bold">Tablet do operador</h1>
+        {expired && <p role="status" className="rounded-xl border-2 border-line-strong bg-surface-2 p-3 text-[1rem]">Sua sessão expirou. Entre novamente.</p>}
         {waiting.length > 0 && (
           <div role="status" data-testid="op-login-pending" className="rounded-xl border-2 border-[#b45309] bg-[#fef3c7] p-3 text-[1rem] text-[#78350f]">
             {waiting.map((w) => (
@@ -539,21 +554,31 @@ export function OperatorLoginPage() {
             ))}
           </div>
         )}
-        <label className="block">
+        {mfaToken ? (
+          <label className="block">
+            <span className="text-[1rem] text-fg-muted">Código do autenticador (6 dígitos)</span>
+            <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required autoFocus maxLength={7}
+              className="mt-1 min-h-14 w-full rounded-xl border-2 border-line-strong bg-surface px-4 text-center font-mono text-[1.4rem] tracking-[0.3em] text-fg focus:border-accent focus:outline-none" />
+          </label>
+        ) : (
+          <>
+          <label className="block">
           <span className="text-[1rem] text-fg-muted">Usuário (e-mail)</span>
           <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required
             className="mt-1 min-h-14 w-full rounded-xl border-2 border-line-strong bg-surface px-4 text-[1.2rem] text-fg focus:border-accent focus:outline-none" />
         </label>
-        <label className="block">
+          <label className="block">
           <span className="text-[1rem] text-fg-muted">Senha</span>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required
             className="mt-1 min-h-14 w-full rounded-xl border-2 border-line-strong bg-surface px-4 text-[1.2rem] text-fg focus:border-accent focus:outline-none" />
         </label>
+          </>
+        )}
         {error && <p role="alert" className="text-[1rem] text-danger">{error}</p>}
         <button type="submit" disabled={loading} className="min-h-16 w-full rounded-2xl bg-[#15803d] text-[1.3rem] font-bold text-white disabled:opacity-60">
           {loading ? "Entrando…" : "Entrar"}
         </button>
       </form>
-    </div>
+    </main>
   );
 }

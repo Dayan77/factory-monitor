@@ -275,16 +275,16 @@ export function WorkOrderBody({ wo }: { wo: WorkOrder }) {
       <Actions wo={wo} />
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4">
-        <KV k="Máquina" v={wo.machine_id ? <Link className="text-ok hover:underline" to={`/factory/machines/${wo.machine_id}${wo.position_id ? `?pos=${wo.position_id}` : ""}`}>{machine}</Link> : machine} />
+        <KV k="Máquina" v={wo.machine_id ? <Link className="text-ok underline underline-offset-2" to={`/factory/machines/${wo.machine_id}${wo.position_id ? `?pos=${wo.position_id}` : ""}`}>{machine}</Link> : machine} />
         <KV k="Posição" v={wo.position_name ?? (wo.position_id ? "Posição da máquina" : "Máquina inteira")} />
         <KV k="Tipo" v={`${WO_TYPE_LABEL[wo.type]}${wo.urgency ? ` · ${URGENCY_LABEL[wo.urgency]}` : ""}`} />
         <KV k="Programada para" v={formatDate(wo.scheduled_for)} />
         <KV k="Responsável" v={assignee ?? (wo.assignee_id ? "Técnico atribuído" : "—")} />
-        <KV k="Plano" v={wo.plan_id ? <Link className="text-ok hover:underline" to={`/settings/maintenance-plans?plan=${wo.plan_id}`}>{wo.plan_name ?? "Ver plano"}</Link> : "—"} />
+        <KV k="Plano" v={wo.plan_id ? <Link className="text-ok underline underline-offset-2" to={`/settings/maintenance-plans?plan=${wo.plan_id}`}>{wo.plan_name ?? "Ver plano"}</Link> : "—"} />
         {wo.hold_reason && wo.state === "on_hold" && <KV k="Motivo da pausa" v={holdReasonLabel(wo.hold_reason)} />}
         {wo.cancel_reason && <KV k="Motivo do cancelamento" v={CANCEL_REASON_LABEL[wo.cancel_reason as CancelReason] ?? wo.cancel_reason} />}
-        {wo.failure_id && <KV k="Falha" v={<Link className="text-ok hover:underline" to={`/maintenance/failures?f=${wo.failure_id}`}>Ver registro de falha</Link>} />}
-        {wo.downtime_event_id && <KV k="Parada" v={<Link className="text-ok hover:underline" to={`/timeline${names.line(wo.machine_id) ? `?line=${names.line(wo.machine_id)?.line_id}` : ""}`}>Ver na linha do tempo</Link>} />}
+        {wo.failure_id && <KV k="Falha" v={<Link className="text-ok underline underline-offset-2" to={`/maintenance/failures?f=${wo.failure_id}`}>Ver registro de falha</Link>} />}
+        {wo.downtime_event_id && <KV k="Parada" v={<Link className="text-ok underline underline-offset-2" to={`/timeline${names.line(wo.machine_id) ? `?line=${names.line(wo.machine_id)?.line_id}` : ""}`}>Ver na linha do tempo</Link>} />}
       </dl>
 
       <Section title="Horas">

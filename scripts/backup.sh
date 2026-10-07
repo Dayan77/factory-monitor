@@ -25,6 +25,10 @@
 #                             'aws s3 cp "$1" s3://fm-backups/'
 #                             'scp "$1" backup@nas:/srv/fm/'
 #   BACKUP_PING_URL         monitor de cron (ex. healthchecks.io): GET no sucesso, GET <url>/fail na falha
+#   BACKUP_METRICS_FILE     arquivo .prom do textfile collector do node-exporter (profile monitoring), ex.
+#                             /opt/factory-monitor/backups/metrics/fm_backup.prom → alerta FmBackupTooOld
+#                           (sucesso: fm_backup_last_success_timestamp_seconds/_size_bytes/_duration_seconds;
+#                            falha: fm_backup_last_failure_timestamp_seconds em <arquivo>_failure.prom)
 #
 # Sai != 0 em qualquer falha (nada é rotacionado nesse caso). Seguro rodar com a stack no ar.
 # =============================================================
@@ -38,6 +42,36 @@ SKIP_INFLUX="${BACKUP_SKIP_INFLUX:-0}"
 INFLUX_COUNT="${BACKUP_INFLUX_COUNT:-1}"
 
 log() { printf '[backup %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
+T0="$(date +%s)"
+
+# Métricas para o Prometheus (node-exporter textfile): escrita atômica (tmp + mv) para nunca ler meio arquivo.
+write_metrics() {   # $1 = success <arquivo> | failure
+  local f="${BACKUP_METRICS_FILE:-}" now tmp
+  [ -n "$f" ] || return 0
+  now="$(date +%s)"
+  ( umask 022; mkdir -p "$(dirname "$f")" ) 2>/dev/null || { log "aviso: não criou $(dirname "$f")"; return 0; }
+  if [ "$1" = success ]; then
+    tmp="$f.$$.tmp"
+    {
+      echo "# HELP fm_backup_last_success_timestamp_seconds Fim do último backup completo (scripts/backup.sh)."
+      echo "# TYPE fm_backup_last_success_timestamp_seconds gauge"
+      echo "fm_backup_last_success_timestamp_seconds $now"
+      echo "# HELP fm_backup_last_size_bytes Tamanho do último arquivo de backup."
+      echo "# TYPE fm_backup_last_size_bytes gauge"
+      echo "fm_backup_last_size_bytes $(stat -c %s "$2" 2>/dev/null || echo 0)"
+      echo "# HELP fm_backup_last_duration_seconds Duração do último backup completo."
+      echo "# TYPE fm_backup_last_duration_seconds gauge"
+      echo "fm_backup_last_duration_seconds $((now - T0))"
+    } > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$f" || log "aviso: não gravou $f"
+  else
+    tmp="${f%.prom}_failure.prom.$$.tmp"
+    {
+      echo "# HELP fm_backup_last_failure_timestamp_seconds Última execução de scripts/backup.sh que FALHOU."
+      echo "# TYPE fm_backup_last_failure_timestamp_seconds gauge"
+      echo "fm_backup_last_failure_timestamp_seconds $now"
+    } > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "${f%.prom}_failure.prom" || log "aviso: não gravou métrica de falha"
+  fi
+}
 die() { log "ERRO: $*"; exit 1; }
 
 ping_monitor() {   # $1 = "" (sucesso) | "/fail"
@@ -72,7 +106,7 @@ cleanup() {
     docker exec "$INFLUX_CONTAINER" rm -rf "$IN_CONTAINER_DIR" >/dev/null 2>&1 || true
   fi
   rmdir "$LOCK" 2>/dev/null || true
-  if [ "$OK" != 1 ]; then ping_monitor /fail; fi
+  if [ "$OK" != 1 ]; then ping_monitor /fail; write_metrics failure; fi
 }
 trap cleanup EXIT
 umask 077
@@ -193,5 +227,6 @@ if [ "${#ALL[@]}" -gt "$BACKUP_KEEP" ]; then
 fi
 
 OK=1
+write_metrics success "$OUT"
 ping_monitor ""
 echo "$OUT"

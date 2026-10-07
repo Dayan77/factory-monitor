@@ -1,0 +1,191 @@
+# STAGING (pré-produção) no MESMO VPS da produção — staging.factoryconnect.tech.
+#
+#   Checkout próprio: /opt/factory-monitor-staging (git clone do repositório) com o PRÓPRIO .env
+#   (cp .env.staging.example .env — senhas/tokens DIFERENTES da produção).
+#   docker compose --env-file /opt/factory-monitor-staging/.env -f infra/docker-compose.staging.yml up -d
+#   Deploy: Actions → Deploy → target=staging (scripts/remote_deploy.sh com DEPLOY_TARGET=staging).
+#
+# Isolamento da produção:
+#   - projeto compose "fm-staging": volumes fm-staging_* (banco, Influx, broker, arquivos) e rede fm-stg-net próprios;
+#   - containers fm_stg_* (nunca colidem com fm_*); routers Traefik fm-stg-* só para o host de staging;
+#   - broker MQTT próprio, sem porta pública (gateway de teste: túnel SSH ou rede interna);
+#   - X-Robots-Tag: noindex (staging nunca aparece em buscadores).
+# Mesmas imagens da produção (${FM_IMAGE_PREFIX}-<nome>:${FM_VERSION}): a versão validada aqui é a que vai para a
+# produção, sem rebuild. Site público e demo não rodam em staging; monitoramento: a produção sonda
+# https://staging.factoryconnect.tech/api/health (infra/monitoring/prometheus/prometheus.yml).
+name: fm-staging
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILE:-3}"
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    container_name: fm_stg_postgres
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env de staging}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fm-stg-net]
+
+  influxdb:
+    image: influxdb:2.7.12-alpine
+    container_name: fm_stg_influxdb
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD:?defina INFLUX_ADMIN_PASSWORD no .env de staging}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      # staging guarda pouco histórico (retenção do bucket: 30 dias)
+      DOCKER_INFLUXDB_INIT_RETENTION: ${STAGING_INFLUX_RETENTION:-30d}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [fm-stg-net]
+
+  # Broker autenticado como o de produção (mesmo entrypoint/ACL), sem porta pública: 1883 só no loopback do VPS
+  # (porta própria, sem colidir com a produção). Gateways de teste: make mqtt-gateway-add com
+  # MQTT_GATEWAYS_FILE=/opt/factory-monitor-staging/mqtt/gateways.conf.
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    container_name: fm_stg_mosquitto
+    restart: unless-stopped
+    logging: *logging
+    entrypoint: ["/bin/sh", "/fm/entrypoint.sh"]
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    environment:
+      MQTT_SERVER_USERNAME: ${MQTT_USERNAME:?defina MQTT_USERNAME no .env de staging}
+      MQTT_SERVER_PASSWORD: ${MQTT_PASSWORD:?defina MQTT_PASSWORD no .env de staging (>= 16 caracteres)}
+      MQTT_TLS_ENABLED: "false"
+      MQTT_TLS_PORT: "8883"
+    volumes:
+      - ./mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/prod:/fm:ro
+      - ${MQTT_GATEWAYS_DIR:-../mqtt}:/mosquitto/gateways:ro
+      - mosquitto-data:/mosquitto/data
+    ports:
+      - "127.0.0.1:${STAGING_MQTT_PORT:-11883}:1883"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -p 1883 -u fm-health -P \"$$(cat /mosquitto/runtime/health.pw)\" -t health/ping -m ping -q 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fm-stg-net]
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.1
+    container_name: fm_stg_mediamtx
+    restart: unless-stopped
+    logging: *logging
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    networks: [fm-stg-net]
+
+  server:
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-server:${FM_VERSION:-latest}
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+      args:
+        FM_VERSION: ${FM_VERSION:-dev}
+    container_name: fm_stg_server
+    restart: unless-stopped
+    logging: *logging
+    env_file: ../.env   # = /opt/factory-monitor-staging/.env
+    environment:
+      POSTGRES_HOST: postgres
+      INFLUX_URL: http://influxdb:8086
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      FILES_DIR: /app/data/files
+      DEMO_BOT_ENABLED: "false"
+    volumes:
+      - server-files:/app/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.routers.fm-stg-api.rule=Host(`${STAGING_HOST:-staging.factoryconnect.tech}`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))"
+      - "traefik.http.routers.fm-stg-api.priority=200"
+      - "traefik.http.routers.fm-stg-api.entrypoints=https"
+      - "traefik.http.routers.fm-stg-api.tls=true"
+      - "traefik.http.routers.fm-stg-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-stg-api.middlewares=fm-stg-noindex"
+      - "traefik.http.routers.fm-stg-api.service=fm-stg-api"
+      - "traefik.http.services.fm-stg-api.loadbalancer.server.port=8000"
+    networks: [fm-stg-net, easypanel]
+
+  web:
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-web:${FM_VERSION:-latest}
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      target: prod
+      args:
+        FM_VERSION: ${FM_VERSION:-dev}
+    container_name: fm_stg_web
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.routers.fm-stg-web.rule=Host(`${STAGING_HOST:-staging.factoryconnect.tech}`)"
+      - "traefik.http.routers.fm-stg-web.entrypoints=https"
+      - "traefik.http.routers.fm-stg-web.tls=true"
+      - "traefik.http.routers.fm-stg-web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-stg-web.middlewares=fm-stg-noindex"
+      - "traefik.http.routers.fm-stg-web.service=fm-stg-web"
+      - "traefik.http.services.fm-stg-web.loadbalancer.server.port=80"
+      - "traefik.http.routers.fm-stg-web-http.rule=Host(`${STAGING_HOST:-staging.factoryconnect.tech}`)"
+      - "traefik.http.routers.fm-stg-web-http.entrypoints=http"
+      - "traefik.http.routers.fm-stg-web-http.middlewares=fm-stg-redirect-https"
+      - "traefik.http.routers.fm-stg-web-http.service=fm-stg-web"
+      - "traefik.http.middlewares.fm-stg-redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.fm-stg-redirect-https.redirectscheme.permanent=true"
+      - "traefik.http.middlewares.fm-stg-noindex.headers.customresponseheaders.X-Robots-Tag=noindex, nofollow"
+    networks: [fm-stg-net, easypanel]
+
+networks:
+  fm-stg-net:
+    driver: bridge
+  easypanel:
+    external: true
+
+volumes:
+  postgres-data:
+  influxdb-data:
+  mosquitto-data:
+  server-files:

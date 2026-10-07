@@ -34,13 +34,9 @@ def fast_retry(monkeypatch):
 
 @pytest.fixture
 def writes(monkeypatch):
+    from influx_capture import capture_writes
     from src.services import mqtt_subscriber as ms
-    seen: list = []
-
-    async def fake_write(**kw):
-        seen.append(kw)
-    monkeypatch.setattr(ms.influx, "write", fake_write)
-    return seen
+    return capture_writes(monkeypatch, ms.influx)
 
 
 async def test_tag_lookup_timeout_is_retried_not_dropped(client, tenants, fast_retry, writes, monkeypatch):

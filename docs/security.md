@@ -50,6 +50,7 @@ Contadores em Postgres (valem para todos os workers), chaves com HMAC (nunca e-m
 | Falhas por conta (e-mail) | 5 em 15 min | bloqueio 30 s × 2ⁿ (máx. 1 h), mesmo com a senha certa |
 | Falhas por IP | 20 em 15 min | idem por IP |
 | Falhas de código MFA por usuário | 5 | idem |
+| Reautenticação na área da conta (senha atual em troca de senha, MFA, exclusão; código TOTP/recuperação) | 5 por usuário | idem; `account.reauth_failed` auditado — um access token roubado não vira oráculo de senha/código |
 | Tentativas de login por IP | 30/min | 429 |
 | Pedidos de redefinição | 10/h por IP; 3/h por e-mail (silencioso) | 429 / ignorado |
 | Confirmações de redefinição / convites / cadastro | 30/h, 60/h, 10/h por IP | 429 |

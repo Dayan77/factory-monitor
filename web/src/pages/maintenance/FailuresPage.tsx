@@ -45,7 +45,7 @@ function EditSheet({ failure, onClose, machineName, positionName }: { failure: F
               <dt className="text-caption text-fg-subtle">Restabelecida em</dt>
               <dd className="font-medium text-fg">{failure.restored_at ? formatDateTime(failure.restored_at) : "— (medido pela máquina ao voltar a produzir)"}</dd>
             </div>
-            {failure.work_order_id && <div><dt className="text-caption text-fg-subtle">OS</dt><dd><Link className="text-ok hover:underline" to={`/maintenance/work-orders?wo=${failure.work_order_id}`}>Abrir OS</Link></dd></div>}
+            {failure.work_order_id && <div><dt className="text-caption text-fg-subtle">OS</dt><dd><Link className="text-ok underline underline-offset-2" to={`/maintenance/work-orders?wo=${failure.work_order_id}`}>Abrir OS</Link></dd></div>}
           </dl>
           {canRelease && (
             <div className="rounded-xl border border-line p-3">

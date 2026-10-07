@@ -2,9 +2,10 @@
 # server e edge podem ser instalados no mesmo venv (verificado com `pip check`).
 
 # Web framework
-fastapi==0.115.14
+fastapi==0.136.3          # 0.137+ troca app.routes por _IncludedRouter (quebra a enumeração de rotas dos testes de authz)
+starlette==1.7.0          # fixado: 0.46.x tinha 9 CVEs (path/Range/multipart) — Sprint 7, pip-audit
 uvicorn[standard]==0.34.3
-python-multipart==0.0.20
+python-multipart==0.0.32   # CVE-2026-24486/40347/53538/53539/53540/42561 corrigidos
 
 # Database
 sqlalchemy[asyncio]==2.0.54
@@ -16,7 +17,7 @@ influxdb-client[async]==1.49.0
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1            # passlib 1.7.4 quebra com bcrypt>=4.1
-cryptography==45.0.7
+cryptography==50.0.2       # 45.x: 7 advisories (OpenSSL embutido, PKCS7, validação de cadeia)
 
 # MQTT
 aiomqtt==2.5.1
@@ -41,6 +42,6 @@ openpyxl==3.1.5           # pulls et-xmlfile
 
 # Observability
 structlog==25.4.0
-prometheus-fastapi-instrumentator==7.1.0
+prometheus-fastapi-instrumentator==8.1.0   # 7.x exige starlette<1.0
 
 # Dependências de teste ficam em requirements-dev.txt (fora da imagem de produção)
