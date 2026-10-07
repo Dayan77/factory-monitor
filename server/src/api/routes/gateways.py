@@ -17,6 +17,12 @@ Device (no JWT):
   POST   /api/gateways/enroll               {code} → {gateway_id, token, mqtt{username, password, topic_prefix}}
   GET    /api/gateways/{id}/config          Authorization: Gateway <token>; ETag / If-None-Match → 304
   POST   /api/gateways/{id}/heartbeat       Authorization: Gateway <token>; {version, uptime_s, buffer_depth, errors}
+                                            → {..., commands: [...]} (pulled commands, Sprint 6 §4.2)
+  POST   /api/gateways/{id}/commands/{cmd}/result   Authorization: Gateway <token>; {nodes, truncated, error?}
+
+Sprint 6 (docs/sprint6.md §4.2) — OPC UA browse as a pulled command (admin):
+  POST   /api/gateways/{id}/browse          {source_id, root_node_id?, max_depth ≤ 6, max_nodes ≤ 5000} → 202 request_id
+  GET    /api/gateways/{id}/commands/{cmd}  state / result of the command (expires in 5 min without an answer)
 
 Every admin query filters tenant_id (another tenant's gateway → 404). The device token, the enrollment code and the
 MQTT password are returned exactly once and stored only as hashes.
@@ -34,8 +40,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import get_current_user, require_roles
 from ...db import get_db
-from ...models import Gateway, Line, Machine, Plant, Tag, Tenant, User, UserRole
+from ...models import Gateway, GatewayCommand, Line, Machine, Plant, Tag, Tenant, User, UserRole
 from ...services import gateways as gs
+from ...services.onboarding import commands as gcmd
 from ...services.usage.cache import topology_cache
 from ...services.validation import is_uuid
 from ..tenant_refs import ensure_owned
@@ -108,6 +115,19 @@ class TagAssignment(BaseModel):
 
 class TagsIn(BaseModel):
     tags: list[TagAssignment] = Field(max_length=5000)
+
+
+class BrowseIn(BaseModel):
+    source_id: str = Field(min_length=1, max_length=64)
+    root_node_id: Optional[str] = Field(default=None, max_length=512)
+    max_depth: int = Field(default=3, ge=1, le=6)
+    max_nodes: int = Field(default=2000, ge=1, le=5000)
+
+
+class CommandResultIn(BaseModel):
+    nodes: list[dict] = Field(default_factory=list, max_length=5000)
+    truncated: bool = False
+    error: Optional[str] = Field(default=None, max_length=500)
 
 
 class EnrollIn(BaseModel):
@@ -328,6 +348,43 @@ async def mqtt_credentials(gateway_id: str, user: CurrentUser, db: DB):
             "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}", "revoked": False}
 
 
+@router.post("/{gateway_id}/browse", status_code=202, dependencies=ADMIN)
+async def browse(gateway_id: str, body: BrowseIn, user: CurrentUser, db: DB):
+    """OPC UA browse through the gateway (§4.2): queued for the next heartbeat of the device."""
+    gw = await _get(db, gateway_id, user.tenant_id, lock=True)
+    dev = next((d for d in (gw.devices or []) if d.get("id") == body.source_id), None)
+    if dev is None:
+        raise _422(f"Fonte desconhecida no gateway: {body.source_id!r}.")
+    if dev.get("protocol") != "opcua":
+        raise _422(f"A fonte {body.source_id} não é OPC UA (navegação só em OPC UA).")
+    if gw.token_hash is None:
+        raise HTTPException(status_code=409, detail="Gateway ainda não cadastrado: cadastre-o antes de navegar.")
+    if await gcmd.open_count(db, user.tenant_id, gw.id) >= 5:
+        raise HTTPException(status_code=429, detail="Muitos pedidos de navegação pendentes neste gateway.")
+    now = datetime.now(timezone.utc)
+    params = {"source_id": body.source_id, "root_node_id": body.root_node_id, "max_depth": body.max_depth,
+              "max_nodes": body.max_nodes}
+    cmd = GatewayCommand(tenant_id=user.tenant_id, gateway_id=gw.id, type="opcua_browse", params=params,
+                         status="pending", created_by=user.id, expires_at=gcmd.expiry(now))
+    db.add(cmd)
+    await db.commit()
+    await db.refresh(cmd)
+    return {"request_id": cmd.id, "status": cmd.status, "expires_at": cmd.expires_at,
+            "poll_url": f"/api/gateways/{gw.id}/commands/{cmd.id}"}
+
+
+@router.get("/{gateway_id}/commands/{command_id}", dependencies=ADMIN)
+async def get_command(gateway_id: str, command_id: str, user: CurrentUser, db: DB):
+    gw = await _get(db, gateway_id, user.tenant_id)
+    cmd = await gcmd.get_command(db, user.tenant_id, gw.id, command_id, lock=True) if is_uuid(command_id) else None
+    if cmd is None:
+        raise HTTPException(status_code=404, detail="Comando não encontrado.")
+    if gcmd.expire_if_due(cmd, datetime.now(timezone.utc)):
+        await db.commit()
+        await db.refresh(cmd)
+    return gcmd.command_out(cmd)
+
+
 # ── device ──────────────────────────────────────────────────────────────────
 
 _enroll_failures: dict[str, list[float]] = {}
@@ -421,6 +478,32 @@ async def device_heartbeat(body: HeartbeatIn, gw: Device, db: DB):
                          "config_version": body.config_version}
     doc, _, _ = await gs.config_document(db, gw)          # current version (tags may have changed since)
     cfg_version = doc["config_version"]
+    commands = await gcmd.deliverable(db, gw.id, gw.tenant_id, now)     # pulled commands (Sprint 6 §4.2)
     await db.commit()
     return {"status": gw.status, "config_version": cfg_version,
-            "config_changed": body.config_version is not None and body.config_version != cfg_version}
+            "config_changed": body.config_version is not None and body.config_version != cfg_version,
+            "commands": commands}
+
+
+@router.post("/{gateway_id}/commands/{command_id}/result")
+async def command_result(command_id: str, body: CommandResultIn, gw: Device, db: DB):
+    """Answer of a pulled command, with the gateway token. Only the node structure is stored."""
+    cmd = await gcmd.get_command(db, gw.tenant_id, gw.id, command_id, lock=True) if is_uuid(command_id) else None
+    if cmd is None:
+        raise HTTPException(status_code=404, detail="Comando não encontrado.")
+    now = datetime.now(timezone.utc)
+    if gcmd.expire_if_due(cmd, now):
+        await db.commit()
+        raise HTTPException(status_code=410, detail="Comando expirado.")
+    if cmd.status not in ("pending", "sent"):
+        raise HTTPException(status_code=409, detail=f"Comando já encerrado ({cmd.status}).")
+    gw.last_seen_at = now
+    if body.error:
+        cmd.status, cmd.error = "failed", body.error[:500]
+    else:
+        nodes, cut = gcmd.clean_nodes(body.nodes, int((cmd.params or {}).get("max_nodes") or 5000))
+        cmd.status = "done"
+        cmd.result = {"nodes": nodes, "truncated": bool(body.truncated or cut), "count": len(nodes)}
+    cmd.completed_at = now
+    await db.commit()
+    return {"status": cmd.status}

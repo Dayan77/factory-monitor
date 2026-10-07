@@ -23,7 +23,7 @@ describe("LinePage", () => {
     renderRoute(<LinePage />, "/factory/lines/line-1", "/factory/lines/:lineId");
     expect(await screen.findByRole("heading", { name: "Linha 1 — Montagem" })).toBeInTheDocument();
     const crumbs = screen.getByRole("navigation", { name: "Navegação estrutural" });
-    expect(crumbs).toHaveTextContent("Fábrica");
+    expect(crumbs).toHaveTextContent("Linha 1 — Montagem");
     expect(crumbs).toHaveTextContent("Planta Manaus");
     expect(await screen.findByText("Cadência média")).toBeInTheDocument();
     expect(screen.getByText("290")).toBeInTheDocument(); // good
@@ -31,7 +31,7 @@ describe("LinePage", () => {
     expect(screen.getByText("3,3 % do total")).toBeInTheDocument();
     const tiles = screen.getAllByTestId("machine-tile");
     expect(tiles).toHaveLength(2);
-    expect(tiles[0]).toHaveAttribute("href", "/factory/machines/m-1");
+    expect(tiles[0]).toHaveAttribute("href", "/factory/machines/m-1?period=today");
     expect(production).toHaveBeenCalledWith("line-1", expect.objectContaining({ start: expect.any(String), stop: expect.any(String) }));
   });
 

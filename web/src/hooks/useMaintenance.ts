@@ -6,6 +6,7 @@
  *   ["maintenance", "reliability", q] · ["failure-codes"] · ["notifications"] · ["users", "technicians"]
  * Any work-order mutation invalidates the whole ["maintenance"] family (statuses, KPIs and lists move together).
  */
+import { isDemoUser } from "@/utils/demo";
 import { useMemo } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { positionsApi } from "@/services/api";
@@ -111,6 +112,8 @@ export function useReliability(q: { group_by: ReliabilityGroupBy; start: string;
 
 /** Who may list the tenant's users (server: admin, manager, maintenance_planner, production_supervisor). */
 export function canListUsers(u: RoleCarrier | null | undefined): boolean {
+  // the public demo (sprint6 §5) never lists users (names / e-mails)
+  if (isDemoUser(u)) return false;
   return hasRole(u, "admin", "superadmin", "manager", "maintenance_planner", "production_supervisor");
 }
 

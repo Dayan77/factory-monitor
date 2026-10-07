@@ -22,6 +22,12 @@ from .predictive import (PredictiveMonitor, PredictiveRule, ConditionBaseline, C
 from .ingest import IngestDeadLetter, IngestWatermark
 from .notification import (Notification, NotificationPreference, PushSubscription, ApiToken, Webhook,
                            WebhookDelivery)
+from .layout import PlantLayout, LayoutMarker
+from .onboarding import OnboardingProgress, GatewayCommand
+from .audit import AuditEvent, ClientAction
+from .demo import DemoSession
+from .reports import (ReportSchedule, ReportDispatch, ReportRun, ReportFile, ReportDelivery, ReportUnsubscribe,
+                      ReportSettings, ReportExternalRecipient, LineTarget)
 
 __all__ = [
     "Base", "TimestampMixin",
@@ -43,4 +49,7 @@ __all__ = [
     "PredictiveAlertEvent", "ProductionPlanDay", "PredictiveDirty",
     "IngestDeadLetter", "IngestWatermark",
     "Notification", "NotificationPreference", "PushSubscription", "ApiToken", "Webhook", "WebhookDelivery",
+    "PlantLayout", "LayoutMarker", "OnboardingProgress", "GatewayCommand", "AuditEvent", "ClientAction", "DemoSession",
+    "ReportSchedule", "ReportDispatch", "ReportRun", "ReportFile", "ReportDelivery", "ReportUnsubscribe",
+    "ReportSettings", "ReportExternalRecipient", "LineTarget",
 ]

@@ -9,11 +9,17 @@ import type {
   DowntimeEvent, DowntimeMessage, DowntimeQuery, Machine, MachineUsage, PositionDetail, TreePlant, UsageMessage,
 } from "@/services/types";
 import { queryKeys } from "@/hooks/useAssets";
+import type { MapView } from "@/services/sprint6Types";
+import { applyStatusToMapView } from "@/utils/plantMap";
 import { useRealtimeStore } from "@/store/realtime";
 import { isEmergency, useNotificationStore } from "@/store/notifications";
 import type { AppNotification } from "@/services/maintenanceTypes";
 
-const RETRY_MS = 3000;
+/** Reconnect with exponential back-off (sprint6 §1.3): 1 s, 2 s, 4 s … capped at 30 s; reset once connected. */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 30_000;
+/** Map views refetch the authoritative marker state this soon after a status / stop event (≤ 2 s p95, §1.3). */
+const MAP_REFRESH_MS = 300;
 /** KPI queries (overview, OEE, Pareto) are recomputed server-side; refetch at most this often on stop events. */
 const KPI_REFRESH_MS = 5000;
 
@@ -37,12 +43,22 @@ export function useRealtimeConnection(tenantId: string | undefined) {
 
   useEffect(() => {
     if (!tenantId) return;
-    const { setStatus, pushReading, bumpUsage, reset } = useRealtimeStore.getState();
+    const { setStatus, pushReading, bumpUsage, reset, touch } = useRealtimeStore.getState();
     let destroyed = false;
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let wasConnected = false;
     let kpiTimer: ReturnType<typeof setTimeout> | undefined;
+    let mapTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    function refreshMapSoon() {
+      if (mapTimer) return;
+      mapTimer = setTimeout(() => {
+        mapTimer = undefined;
+        void qc.invalidateQueries({ queryKey: ["plant-map"] });
+      }, MAP_REFRESH_MS);
+    }
 
     function refreshKpisSoon() {
       if (kpiTimer) return;
@@ -60,11 +76,14 @@ export function useRealtimeConnection(tenantId: string | undefined) {
         else if (next !== data) qc.setQueryData(key, next);
       }
       refreshKpisSoon();
+      refreshMapSoon();
     }
 
     function scheduleRetry() {
       if (destroyed) return;
-      retry = setTimeout(connect, RETRY_MS);
+      const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt);
+      attempt += 1;
+      retry = setTimeout(connect, delay);
     }
 
     function applyUsage(msg: UsageMessage) {
@@ -106,6 +125,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
       ws.onopen = () => {
         if (destroyed) return;
         setStatus("connected");
+        attempt = 0;
         // after a reconnect, resync anything we may have missed while offline
         if (wasConnected) {
           void qc.invalidateQueries({ queryKey: ["machines"] });
@@ -123,6 +143,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
 
       ws.onmessage = (evt: MessageEvent<string>) => {
         if (destroyed) return;
+        touch();
         const msg = parseRealtimeMessage(evt.data);
         if (!msg) return;
         if (msg.type === "sensor_reading") {
@@ -134,12 +155,17 @@ export function useRealtimeConnection(tenantId: string | undefined) {
         } else if (msg.type === "notification") {
           applyNotification(msg.notification);
         } else if (msg.type === "predictive_alert") {
+          refreshMapSoon();
           // alert opened / escalated / closed: lists, details, monitors and the Raio-X card refetch
           void qc.invalidateQueries({ queryKey: ["predictive"] });
           if (msg.event === "converted" || msg.alert.state === "converted") void qc.invalidateQueries({ queryKey: ["maintenance"] });
         } else {
           qc.setQueriesData<Machine[]>({ queryKey: ["machines"] }, (old) => applyMachineStatus(old, msg));
           qc.setQueryData<TreePlant[]>(queryKeys.tree, (old) => applyMachineStatusToTree(old, msg));
+          // plant map / operator tablet: the precedence rule right away, then the server's state (open failure,
+          // break, WO…) on the refetch
+          qc.setQueriesData<MapView>({ queryKey: ["plant-map"] }, (old) => applyStatusToMapView(old, msg));
+          refreshMapSoon();
         }
       };
 
@@ -165,6 +191,7 @@ export function useRealtimeConnection(tenantId: string | undefined) {
       destroyed = true;
       clearTimeout(retry);
       clearTimeout(kpiTimer);
+      clearTimeout(mapTimer);
       if (ws) {
         const sock = ws;
         sock.onclose = null;

@@ -4,6 +4,7 @@ import PageHero from "../components/PageHero.astro";
 import ArchitectureDiagram from "../components/ArchitectureDiagram.astro";
 import FeatureCard from "../components/FeatureCard.astro";
 import CtaBand from "../components/CtaBand.astro";
+import DemoButton from "../components/DemoButton.astro";
 
 const protocols = [
   { t: "Modbus TCP", d: "Leitura de registradores (holding/input) e bits de CLPs, inversores, medidores de energia e IHMs. O protocolo mais comum no chão de fábrica." },
@@ -65,6 +66,18 @@ const rollout = [
       ))}
     </ol>
     <p class="mt-6 text-sm text-muted">Prazo típico para uma primeira linha com CLPs acessíveis pela rede; o tempo real depende do acesso às máquinas e da documentação disponível.</p>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="demo">
+    <div class="card reveal flex flex-col gap-6 sm:p-8 md:flex-row md:items-center md:justify-between">
+      <div class="max-w-2xl">
+        <h2 id="demo" class="text-2xl font-bold text-fg sm:text-3xl">Veja funcionando agora</h2>
+        <p class="mt-3 text-muted">A demonstração mostra o painel real alimentado por uma planta simulada — CLPs virtuais
+          lidos por um gateway, como numa fábrica: turnos, paradas, falhas com código, setup e o desgaste de um cilindro
+          até o alerta preditivo. Abre sem cadastro, é somente leitura e os dados são sempre identificados como simulados.</p>
+      </div>
+      <DemoButton placement="como-funciona" variant="primary" class="inline-flex shrink-0 [&>a]:px-6 [&>a]:text-base" />
+    </div>
   </section>
 
   <CtaBand />

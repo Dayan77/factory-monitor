@@ -19,6 +19,9 @@ import type { OeeGroupBy, OeeResult, OeeScope, TreePlant } from "@/services/type
 import { formatDec1, formatInt, formatPct } from "@/utils/format";
 import { buildWaterfall, formatDuration, formatHours, oeeTone, shapePareto, trendLabel } from "@/utils/efficiency";
 import { usePeriodParams } from "./usePeriodParams";
+import ExportMenu from "@/components/reports/ExportMenu";
+import { localDate } from "@/utils/period";
+import { weekStart } from "@/utils/reports";
 
 const SCOPES = [
   { value: "plant", label: "Planta" },
@@ -121,9 +124,21 @@ export default function OeePage() {
             <h2 className="truncate text-title text-fg">OEE {name && `· ${name}`}</h2>
             <p className="text-caption text-fg-subtle">{period.label} · ISO 22400 (D × P × Q)</p>
           </div>
-          <Link to={`/reports/shift${scope === "line" ? `?line=${id}` : ""}`} className="inline-flex min-h-10 items-center rounded-lg border border-line-strong bg-surface px-4 text-body font-medium text-fg hover:bg-surface-2">
-            Relatório de turno
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {plant && (
+              <ExportMenu report="daily_production" scopeType="plant" scopeId={plant.id} label="Exportar dia"
+                params={{ productive_day: localDate(Date.parse(period.start), tz) }} />
+            )}
+            {plant && (
+              <ExportMenu report="weekly_oee" label="Exportar semana"
+                scopeType={scope === "plant" ? "plant" : "line"}
+                scopeId={scope === "plant" ? plant.id : scope === "line" ? id : allMachines.find((m) => m.id === id)?.line_id}
+                params={{ week_start: weekStart(localDate(Date.parse(period.start), tz)) }} />
+            )}
+            <Link to={`/reports/shift${scope === "line" ? `?line=${id}` : ""}`} className="inline-flex min-h-10 items-center rounded-lg border border-line-strong bg-surface px-4 text-body font-medium text-fg hover:bg-surface-2">
+              Relatório de turno
+            </Link>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-2 shadow-card">
           <Tabs id="oee-scope" label="Escopo" size="sm" items={SCOPES} value={scope} onChange={setScope} />

@@ -1,7 +1,7 @@
 /* FactoryConnect service worker — offline app shell + web push.
  *
  * - App shell: navigations are network-first and fall back to the cached index.html, so the
- *   technician app (/m) opens without signal. Hashed build assets (/assets/*) are cache-first.
+ *   technician app (/m) and the operator tablet (/op, own manifest /op.webmanifest) open without signal. Hashed build assets (/assets/*) are cache-first.
  * - API calls (/api, /ws) are NEVER handled here: offline data is kept by the app itself
  *   (src/services/offline.ts) and always shown flagged as "salvo às …".
  * - Push: shows the notification (emergency calls stay on screen and vibrate) and forwards it to open
@@ -9,8 +9,9 @@
  * Registered with ?dev=1 under `vite` dev: push only, no caching.
  */
 const DEV = new URL(self.location.href).searchParams.has("dev");
-const CACHE = "fm-shell-v1";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/favicon.svg", "/theme-init.js", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE = "fm-shell-v2";
+const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/op.webmanifest", "/favicon.svg", "/theme-init.js", "/manifest-init.js",
+  "/icons/icon-192.png", "/icons/icon-512.png", "/icons/op-192.png", "/icons/op-512.png"];
 
 self.addEventListener("install", (event) => {
   if (DEV) {

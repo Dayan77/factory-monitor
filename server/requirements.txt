@@ -35,6 +35,10 @@ anthropic==1.11.0          # Claude adapter of the AI assistant (services/ai/pro
 sendgrid==6.12.5
 httpx==0.28.1
 
+# Reports (Sprint 6, docs/reports.md §3): pure-Python PDF/XLSX — no system packages in the image
+reportlab==4.4.4          # pulls pillow + charset-normalizer (manylinux wheels)
+openpyxl==3.1.5           # pulls et-xmlfile
+
 # Observability
 structlog==25.4.0
 prometheus-fastapi-instrumentator==7.1.0

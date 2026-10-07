@@ -49,7 +49,7 @@ function uptimeText(s: number | null | undefined) {
 
 // ── enrollment ───────────────────────────────────────────────────
 
-function EnrollmentInfo({ token }: { gw: Gateway; token: EnrollToken }) {
+export function EnrollmentInfo({ token }: { gw: Gateway; token: EnrollToken }) {
   const cmds = installCommands({ origin: window.location.origin, code: token.code, mqttHost: window.location.hostname });
   return (
     <div className="space-y-4" data-testid="enroll-info">

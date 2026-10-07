@@ -13,13 +13,13 @@ name: factoryconnect-gateway
 services:
   gateway:
     # Imagem multi-arch (linux/amd64 + linux/arm64). Sem registro: `docker compose build` constrói no próprio host
-    # (amd64 ou arm64) a partir de ../../edge. Com registro: EDGE_IMAGE=<registro>/factoryconnect-edge:0.5.0
+    # (amd64 ou arm64) a partir de ../../edge. Com registro: EDGE_IMAGE=<registro>/factoryconnect-edge:0.6.0
     # (gerada com `docker buildx build --platform linux/amd64,linux/arm64 ... --push edge/`, ver edge/README.md).
-    image: ${EDGE_IMAGE:-factoryconnect-edge:0.5.0}
+    image: ${EDGE_IMAGE:-factoryconnect-edge:0.6.0}
     build:
       context: ../../edge
       args:
-        EDGE_VERSION: "0.5.0"
+        EDGE_VERSION: "0.6.0"
     container_name: fc_gateway
     restart: unless-stopped
     env_file: gateway.env

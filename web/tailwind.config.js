@@ -56,6 +56,12 @@ export default {
         "slide-in-up": { from: { transform: "translateY(100%)" }, to: { transform: "translateY(0)" } },
         "rise-in": { from: { opacity: "0", transform: "translateY(4px)" }, to: { opacity: "1", transform: "translateY(0)" } },
         flash: { "0%": { backgroundColor: "rgb(var(--c-ok) / 0.25)" }, "100%": { backgroundColor: "transparent" } },
+        // plant map: a marker that changed state pulses (sprint6 §1.3)
+        "marker-pulse": {
+          "0%": { boxShadow: "0 0 0 0 rgb(var(--c-fg) / 0.55)" },
+          "70%": { boxShadow: "0 0 0 14px rgb(var(--c-fg) / 0)" },
+          "100%": { boxShadow: "0 0 0 0 rgb(var(--c-fg) / 0)" },
+        },
       },
       animation: {
         "fade-in": "fade-in 160ms ease-out",
@@ -63,6 +69,7 @@ export default {
         "slide-in-up": "slide-in-up 260ms cubic-bezier(0.22, 1, 0.36, 1)",
         "rise-in": "rise-in 220ms cubic-bezier(0.22, 1, 0.36, 1)",
         flash: "flash 900ms ease-out",
+        "marker-pulse": "marker-pulse 1.1s ease-out 3",
       },
     },
   },

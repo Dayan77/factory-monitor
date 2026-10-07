@@ -20,6 +20,11 @@ from .config import settings
 from .api.routes import (auth, lines, machines, tags, alerts, sensors, ai_chat, admin, cameras,
                          plants, positions, components, usage, public, production, oee, maintenance,
                          notifications, integration, users, gateways, predictive)
+from .api.routes import layout as layout_routes, onboarding as onboarding_routes, demo as demo_routes
+from .services.demo.guard import DemoGuardMiddleware
+from .services.demo.bot import run_demo_bot
+from .api.routes import reports as reports_routes
+from .services.reports.engine import run_report_engine
 from .websocket.manager import ws_router
 from .services.mqtt_subscriber import run_subscriber, cancel_inflight
 from .services.oee.detector import run_downtime_detector
@@ -100,6 +105,10 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_maintenance_engine(), name="maintenance_engine"),
         asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
     ]
+    if settings.reports_enabled:
+        tasks.append(asyncio.create_task(run_report_engine(), name="report_engine"))
+    if settings.demo_bot_enabled:
+        tasks.append(asyncio.create_task(run_demo_bot(), name="demo_bot"))
     if settings.predictive_enabled:
         mode = (settings.predictive_worker or "process").lower()
         if mode == "inline":
@@ -124,6 +133,10 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+# Public demo (Sprint 6): demo_viewer tokens are read-only on every route, blocked from admin areas, and their JSON
+# responses never carry an e-mail. Inside CORS so its 403/429 still get the CORS headers.
+app.add_middleware(DemoGuardMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -178,6 +191,14 @@ app.include_router(integration.tokens_router,   prefix="/api/api-tokens",       
 app.include_router(integration.webhooks_router, prefix="/api/webhooks",            tags=["integration"])
 app.include_router(gateways.router,             prefix="/api/gateways",            tags=["gateways"])
 app.include_router(predictive.router,           prefix="/api/predictive",          tags=["predictive"])
+app.include_router(layout_routes.plants_router,  prefix="/api/plants",              tags=["layout"])
+app.include_router(layout_routes.layouts_router, prefix="/api/layouts",             tags=["layout"])
+app.include_router(onboarding_routes.router,     prefix="/api/onboarding",          tags=["onboarding"])
+app.include_router(demo_routes.router,           prefix="/api/demo",                tags=["demo"])
+
+app.include_router(reports_routes.router,           prefix="/api/reports",           tags=["reports"])
+app.include_router(reports_routes.runs_router,      prefix="/api/report-runs",       tags=["reports"])
+app.include_router(reports_routes.schedules_router, prefix="/api/report-schedules",  tags=["reports"])
 
 app.include_router(ws_router, prefix="/ws")
 

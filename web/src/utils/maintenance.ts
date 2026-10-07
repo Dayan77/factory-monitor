@@ -254,7 +254,11 @@ export type Capability =
   | "predictive.ack"        // acknowledge an alert
   | "predictive.evaluate"   // P-10 performance metrics
   | "gateways.view"         // field gateways fleet (manager+)
-  | "gateways.admin";       // create / enroll / assign tags (admin)
+  | "gateways.admin"        // create / enroll / assign tags (admin)
+  | "layout.edit"           // plant map editor (sprint6 §1.1: admin, manager)
+  | "onboarding.admin"      // onboarding wizard (sprint6 §4: admin of the tenant)
+  | "reports.schedule"      // scheduled reports (reports.md §4: manager; admin always)
+  | "operator.tablet";      // operator tablet PWA (sprint6 §3)
 
 const CAPS: Record<Capability, string[]> = {
   "maintenance.view": [...PLANNERS, "production_supervisor", "technician"],
@@ -271,6 +275,10 @@ const CAPS: Record<Capability, string[]> = {
   "predictive.evaluate": PLANNERS,
   "gateways.view": ["manager", "admin", "superadmin"],
   "gateways.admin": ["admin", "superadmin"],
+  "layout.edit": ["manager", "admin", "superadmin"],
+  "onboarding.admin": ["admin", "superadmin"],
+  "reports.schedule": ["manager", "admin", "superadmin"],
+  "operator.tablet": ["operator", "production_supervisor", "manager", "admin", "superadmin"],
 };
 
 export function can(u: RoleCarrier | null | undefined, cap: Capability): boolean {

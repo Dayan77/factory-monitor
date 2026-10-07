@@ -13,6 +13,7 @@ import { useRealtimeStore } from "@/store/realtime";
 import type { MachineStatus } from "@/services/types";
 import { formatDec1, formatInt } from "@/utils/format";
 import { formatTimer, reasonLabel } from "@/utils/efficiency";
+import DemoBanner from "@/components/DemoBanner";
 
 const STATUS_TILE: Record<MachineStatus, string> = {
   running: "border-ok-solid bg-ok-solid/15 text-ok",
@@ -56,7 +57,9 @@ export default function TvPage() {
   const clock = new Date(now).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: plant?.timezone });
 
   return (
-    <div className="min-h-screen bg-canvas p-4 text-fg sm:p-8" data-testid="tv-mode">
+    <div className="min-h-screen bg-canvas text-fg" data-testid="tv-mode">
+      <DemoBanner compact />
+      <div className="p-4 sm:p-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="truncate text-[clamp(1.75rem,3.5vw,3rem)] font-bold leading-tight">{line?.name ?? (tree.isPending ? "…" : "Linha não encontrada")}</h1>
@@ -140,6 +143,7 @@ export default function TvPage() {
           {overview.data ? "Sem conexão com o servidor — exibindo os últimos dados recebidos." : "Não foi possível carregar o OEE da linha."}
         </p>
       )}
+      </div>
     </div>
   );
 }

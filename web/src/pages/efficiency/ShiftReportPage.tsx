@@ -14,6 +14,7 @@ import ApqBreakdown from "@/components/efficiency/ApqBreakdown";
 import DataWarnings from "@/components/efficiency/DataWarnings";
 import { ParetoChart } from "@/components/efficiency/charts";
 import { usePlant, useReasonCodes, useShiftReport, useShifts } from "@/hooks/useEfficiency";
+import ExportMenu from "@/components/reports/ExportMenu";
 import { usePrintLightTheme } from "@/hooks/usePrintLightTheme";
 import type { ShiftReport } from "@/services/types";
 import { formatDate, formatDateTime, formatDec1, formatInt, formatPct } from "@/utils/format";
@@ -147,7 +148,11 @@ export default function ShiftReportPage() {
             {(shifts.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.start_local}–{s.end_local})</option>)}
           </select>
         </Field>
-        <Button variant="primary" onClick={() => window.print()} disabled={!report.data}>Imprimir / PDF</Button>
+        <Button variant="secondary" demoSafe onClick={() => window.print()} disabled={!report.data}>Imprimir</Button>
+        {lineId && (
+          <ExportMenu report="shift" scopeType="line" scopeId={lineId} withObservations label="Exportar PDF"
+            params={{ productive_day: day, shift_id: shiftId || undefined }} />
+        )}
       </div>
 
       {!lineId ? (

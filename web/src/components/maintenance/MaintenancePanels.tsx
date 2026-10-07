@@ -57,7 +57,7 @@ export function AssetMaintenance({ machineId, positionId, compact = false }: { m
   if (!visible) return null;
 
   const body = (
-    <div className={compact ? "space-y-4" : "grid gap-x-8 gap-y-4 lg:grid-cols-2"}>
+    <div className={compact ? "space-y-4" : "grid gap-x-8 gap-y-4 lg:grid-cols-2 [&>*]:min-w-0"}>
       {can(user, "maintenance.view") && (
         <div>
           <h4 className="text-overline uppercase text-fg-subtle">Planos</h4>

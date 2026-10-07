@@ -137,6 +137,7 @@ services:
     networks:
       - fm-net
       - easypanel
+      - fm-demo        # demo-bot → API de controle da planta virtual da demo (profile demo)
 
   # ── Frontend (React/Nginx) ────────────────────────────────────────
   web:
@@ -221,6 +222,89 @@ services:
     networks:
       - easypanel
 
+  # ── Demonstração pública (profile "demo") — docs/sprint6.md §5, docs/operations.md §10 ──
+  # COMPOSE_PROFILES=demo (ou monitoring,demo) no .env, depois do bootstrap do tenant demo
+  # (cd server && python -m src.demo bootstrap). A planta virtual roda o roteiro da demo em tempo real no fuso
+  # America/Sao_Paulo e só fala com o gateway da demo e com o servidor (demo-bot → POST /replace), na rede interna
+  # fm-demo (sem saída para a internet). O gateway da demo usa credenciais MQTT próprias, restritas a
+  # factory/<tenant demo>/# (make mqtt-gateway-add GATEWAY=gw-demo TENANT=<uuid do tenant demo>).
+  # Imagem do edge com versão fixa (build local a partir de ../edge; base python:3.12.15-slim fixada no Dockerfile).
+  demo-plant:
+    profiles: ["demo"]
+    image: factory-monitor-edge:${DEMO_EDGE_IMAGE_TAG:-0.6.0}
+    build:
+      context: ../edge
+      dockerfile: Dockerfile
+      args:
+        EDGE_VERSION: ${DEMO_EDGE_IMAGE_TAG:-0.6.0}
+    container_name: fm_demo_plant
+    restart: always
+    # o roteiro da demo exige o token da API de controle (fora do loopback ela recusa sem X-Control-Token)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if [ -z "$$VP_CONTROL_TOKEN" ]; then
+        echo "demo-plant: defina DEMO_VIRTUAL_PLANT_CONTROL_TOKEN no .env (openssl rand -hex 24)" >&2; exit 2; fi;
+        exec python -m virtual_plant --demo --host 0.0.0.0 --control-host 0.0.0.0 --state-file /data/demo_state.json
+    environment:
+      VP_SEED: ${DEMO_PLANT_SEED:-42}
+      VP_CONTROL_TOKEN: ${DEMO_VIRTUAL_PLANT_CONTROL_TOKEN:-}
+      # roteiro (padrões em edge/virtual_plant/demo.py)
+      DEMO_TZ: America/Sao_Paulo
+      DEMO_FAULT_MTBF_SCALE: ${DEMO_FAULT_MTBF_SCALE:-2.5}
+      DEMO_B3_STROKES_PER_CYCLE: ${DEMO_B3_STROKES_PER_CYCLE:-12}
+    volumes:
+      - demo-plant-data:/data
+    healthcheck:
+      # 503 (tempo simulado parado, atraso, relógio fora do fuso) → urlopen levanta → unhealthy
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks: [fm-demo]
+
+  demo-gateway:
+    profiles: ["demo"]
+    image: factory-monitor-edge:${DEMO_EDGE_IMAGE_TAG:-0.6.0}
+    container_name: fm_demo_gateway
+    restart: always
+    # cadastro por código (1ª partida; DEMO_GATEWAY_ENROLL_CODE) ou token do bootstrap (DEMO_GATEWAY_ID + _TOKEN);
+    # credencial MQTT própria sempre (o broker de produção só aceita usuários do gateways.conf)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if [ -z "$$MQTT_USERNAME" ] || [ -z "$$MQTT_PASSWORD" ]; then
+        echo "demo-gateway: defina DEMO_GATEWAY_MQTT_USERNAME/_PASSWORD (make mqtt-gateway-add GATEWAY=gw-demo TENANT=<demo>)" >&2; exit 2; fi;
+        if [ ! -s /data/gateway_credentials.json ] && [ -z "$$ENROLL_CODE" ] && [ -z "$$GATEWAY_TOKEN" ]; then
+        echo "demo-gateway: defina DEMO_GATEWAY_ENROLL_CODE (ou DEMO_GATEWAY_ID + DEMO_GATEWAY_TOKEN)" >&2; exit 2; fi;
+        exec python -m src.gateway
+    environment:
+      SERVER_URL: http://server:8000
+      ALLOW_INSECURE_HTTP: "true"          # só a rede interna do compose (fm-net); nada sai do VPS
+      ENROLL_CODE: ${DEMO_GATEWAY_ENROLL_CODE:-}
+      GATEWAY_ID: ${DEMO_GATEWAY_ID:-}
+      GATEWAY_TOKEN: ${DEMO_GATEWAY_TOKEN:-}
+      GATEWAY_HEARTBEAT_S: "30"
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"             # listener interno autenticado
+      MQTT_USERNAME: ${DEMO_GATEWAY_MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${DEMO_GATEWAY_MQTT_PASSWORD:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}  # mesma chave do servidor (vazio = payload em claro na rede interna)
+      VIRTUAL_PLANT_HOST: demo-plant
+      VIRTUAL_PLANT_OPCUA_PORT: "4840"
+      VIRTUAL_PLANT_MODBUS_PORT: "5020"
+    volumes:
+      - demo-gateway-data:/data
+    depends_on:
+      demo-plant:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    networks: [fm-net, fm-demo]
+
   # ── Observabilidade (profile "monitoring") ────────────────────────
   # COMPOSE_PROFILES=monitoring no .env (ou --profile monitoring). Nada é exposto publicamente:
   # Grafana só em 127.0.0.1:3000 do VPS → acesso por túnel SSH (docs/operations.md §Observabilidade).
@@ -272,6 +356,10 @@ services:
 networks:
   fm-net:
     driver: bridge
+  # demo pública: planta virtual ↔ gateway da demo ↔ servidor (demo-bot); sem rota para fora
+  fm-demo:
+    driver: bridge
+    internal: true
   easypanel:
     external: true
 
@@ -281,3 +369,5 @@ volumes:
   mosquitto-data:
   prometheus-data:
   grafana-data:
+  demo-plant-data:       # estado do desgaste do Cilindro B3 (sobrevive ao restart)
+  demo-gateway-data:     # credencial do cadastro (0600), cópia da config, buffer offline

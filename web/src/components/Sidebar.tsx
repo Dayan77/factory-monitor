@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { useAuthStore } from "@/store/auth";
 import { can, type Capability } from "@/utils/maintenance";
+import { isDemoBlockedPath, isDemoUser } from "@/utils/demo";
 
 const ICON_RAIOX = (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
@@ -128,7 +129,28 @@ const ICON_GATEWAY = (
       </svg>
     );
 
-interface NavItem { label: string; to: string; icon: JSX.Element; cap?: Capability }
+const ICON_MAP = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" /><path d="M9 4v14M15 6v14" />
+      </svg>
+    );
+const ICON_TABLET = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="2" y="5" width="20" height="14" rx="2.5" /><path d="M18 12h.01" />
+      </svg>
+    );
+const ICON_ROCKET = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <path d="M5 13l-2 6 6-2M14 4c3 0 6 3 6 6-2 4-6 7-9 8l-5-5c1-3 4-7 8-9z" /><circle cx="14.5" cy="9.5" r="1.5" />
+      </svg>
+    );
+const ICON_MAIL = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-5" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" />
+      </svg>
+    );
+
+interface NavItem { label: string; to: string; icon: JSX.Element; cap?: Capability; hide?: (u: { role?: string | null; roles?: string[] | null } | null) => boolean }
 
 const NAV: { section: string; items: NavItem[] }[] = [
   {
@@ -139,6 +161,8 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: "Linha do tempo", to: "/timeline", icon: ICON_TIMELINE },
       { label: "Paradas", to: "/stops", icon: ICON_STOPS },
       { label: "Relatório de turno", to: "/reports/shift", icon: ICON_REPORT },
+      { label: "Relatórios agendados", to: "/reports/scheduled", icon: ICON_MAIL, cap: "reports.schedule" },
+      { label: "Tablet do operador", to: "/op", icon: ICON_TABLET, cap: "operator.tablet" },
     ],
   },
   {
@@ -158,7 +182,8 @@ const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Ativos",
     items: [
-      { label: "Fábrica", to: "/factory", icon: ICON_FACTORY },
+      { label: "Mapa da planta", to: "/factory", icon: ICON_MAP },
+      { label: "Fábrica (lista)", to: "/factory/list", icon: ICON_FACTORY },
       { label: "Linhas", to: "/lines", icon: ICON_LINES },
       { label: "Máquinas", to: "/machines", icon: ICON_MACHINES },
     ],
@@ -175,6 +200,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Sistema",
     items: [
+      { label: "Implantação", to: "/onboarding", icon: ICON_ROCKET, cap: "onboarding.admin" },
       { label: "Configurações", to: "/settings/production", icon: ICON_SETTINGS },
       { label: "Planos de manutenção", to: "/settings/maintenance-plans", icon: ICON_PLANS, cap: "maintenance.plan" },
       { label: "Gateways", to: "/settings/gateways", icon: ICON_GATEWAY, cap: "gateways.view" },
@@ -202,6 +228,7 @@ const ROLE_LABELS: Record<string, string> = {
   maintenance_planner: "Planejador de manutenção",
   technician: "Técnico de manutenção",
   production_supervisor: "Supervisor de produção",
+  demo_viewer: "Visitante da demonstração",
 };
 
 interface SidebarProps {
@@ -213,6 +240,7 @@ interface SidebarProps {
 export default function Sidebar({ open = false, onClose }: SidebarProps) {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
+  const demo = isDemoUser(user);
 
   function handleLogout() {
     logout();
@@ -258,7 +286,11 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav aria-label="Principal" className="flex-1 space-y-0.5 overflow-y-auto p-3">
-        {NAV.map((group) => ({ ...group, items: group.items.filter((it) => !it.cap || can(user, it.cap)) }))
+        {NAV.map((group) => ({
+          ...group,
+          // demo (sprint6 §5): no administration, users, gateways, settings or cameras
+          items: group.items.filter((it) => (!it.cap || can(user, it.cap)) && (!it.hide || !it.hide(user)) && !(demo && isDemoBlockedPath(it.to))),
+        }))
           .filter((group) => group.items.length > 0)
           .map((group) => (
           <div key={group.section} className="pb-2">
@@ -267,6 +299,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           <NavLink
             key={item.to}
             to={item.to}
+            end={item.to === "/factory"}
             onClick={onClose}
             className={({ isActive }) =>
               clsx(
@@ -284,7 +317,7 @@ export default function Sidebar({ open = false, onClose }: SidebarProps) {
           </div>
         ))}
 
-        {user?.role === "superadmin" && (
+        {user?.role === "superadmin" && !demo && (
           <>
             <div className="my-2 border-t border-line" />
             <NavLink

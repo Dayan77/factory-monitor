@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { isAxiosError } from "axios";
 import { publicApi } from "@/services/api";
 import { apiErrorMessage } from "@/utils/errors";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { demoApi } from "@/services/sprint6Api";
+import { useAuthStore } from "@/store/auth";
 
 // ── Ícones inline ─────────────────────────────────────────────────
 
@@ -137,11 +139,13 @@ function Hero() {
             className="rounded-xl bg-brand-500 px-8 py-3.5 text-base font-semibold text-white hover:bg-brand-600 transition-colors shadow-lg shadow-brand-500/20">
             Comece gratuitamente
           </Link>
+          <DemoButton />
           <button onClick={() => document.getElementById("features")?.scrollIntoView({ behavior: "smooth" })}
             className="rounded-xl border border-gray-700 bg-gray-900 px-8 py-3.5 text-base font-medium text-gray-300 hover:bg-gray-800 hover:border-gray-600 transition-colors">
             Ver funcionalidades
           </button>
         </div>
+        <DemoNotice />
 
         {/* Dashboard mockup */}
         <div className="mt-20 mx-auto max-w-5xl">
@@ -504,6 +508,55 @@ function Footer() {
         </div>
       </div>
     </footer>
+  );
+}
+
+// ── Demo (sprint6 §5) ─────────────────────────────────────────────
+
+/**
+ * "Ver demonstração": opens a 2 h read-only session in the public demo tenant (no sign-up) and goes to the
+ * dashboard. The data come from the virtual plant and every screen says so.
+ */
+function DemoButton() {
+  const navigate = useNavigate();
+  const loadMe = useAuthStore((st) => st.loadMe);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function open() {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await demoApi.createSession();
+      localStorage.setItem("access_token", r.data.access_token);
+      localStorage.removeItem("refresh_token");
+      await loadMe();
+      navigate(r.data.redirect_to ?? "/dashboard");
+    } catch (err) {
+      const st = isAxiosError(err) ? err.response?.status : undefined;
+      setError(st === 429 ? "Muitas demonstrações abertas deste endereço. Tente novamente mais tarde."
+        : apiErrorMessage(err, "Demonstração indisponível no momento."));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-col items-center">
+      <button type="button" onClick={() => void open()} disabled={busy} data-testid="open-demo"
+        className="rounded-xl border border-brand-500/60 bg-brand-500/10 px-8 py-3.5 text-base font-semibold text-brand-300 transition-colors hover:bg-brand-500/20 disabled:opacity-60">
+        {busy ? "Abrindo demonstração…" : "Ver demonstração"}
+      </button>
+      {error && <p role="alert" className="mt-2 max-w-xs text-sm text-red-300">{error}</p>}
+    </div>
+  );
+}
+
+function DemoNotice() {
+  const [params] = useSearchParams();
+  if (params.get("demo") !== "expired") return null;
+  return (
+    <p role="status" className="mx-auto mt-4 max-w-md rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm text-gray-300">
+      A sessão de demonstração (2 h) terminou. Toque em “Ver demonstração” para abrir outra.
+    </p>
   );
 }
 

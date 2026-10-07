@@ -154,6 +154,7 @@ class VirtualPlantRuntime:
         control_port: Optional[int] = None,
         control_host: str = "127.0.0.1",
         control_token: str = "",
+        health_fn: Optional[Callable[[float], tuple[bool, dict]]] = None,
     ) -> None:
         if speed <= 0:
             raise ValueError("speed deve ser > 0")
@@ -167,6 +168,8 @@ class VirtualPlantRuntime:
         self.control_host = control_host
         self.control_token = control_token
         self._control_runner: Optional[web.AppRunner] = None
+        # GET /health: health_fn(lag_s) → (ok, corpo); ok=False → 503 (modo demo, virtual_plant/demo.py)
+        self.health_fn = health_fn
         self.update_s = update_ms / 1000.0
         # playback do cenário F: máquinas Modbus servidas em OPC UA (precisa do SourceTimestamp)
         self.addresses = addresses(model.layout, opcua_machines=getattr(model, "opcua_machines", ()))
@@ -401,10 +404,20 @@ class VirtualPlantRuntime:
     async def _start_http(self) -> None:
         app = web.Application()
         app.router.add_get("/state", lambda _r: web.json_response(self.state()))
-        app.router.add_get("/health", lambda _r: web.json_response({"ok": True, "sim_time_s": self.model.sim_time_s}))
+        app.router.add_get("/health", self._health)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, self.host, self.status_port).start()
+
+    async def _health(self, _request) -> web.Response:
+        sim_alive = self._sim_task is not None and not self._sim_task.done()
+        if self.health_fn is None:
+            return web.json_response({"ok": True, "sim_time_s": self.model.sim_time_s})
+        ok, body = self.health_fn(self.lag_s)
+        if not sim_alive:
+            ok = False
+            body = {**body, "ok": False, "problems": [*body.get("problems", []), "laço de simulação parado"]}
+        return web.json_response(body, status=200 if ok else 503)
 
     async def _start_control(self) -> None:
         from .control import PlantControl, _is_loopback, build_app

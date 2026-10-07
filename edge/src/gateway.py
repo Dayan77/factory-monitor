@@ -15,7 +15,8 @@ Configuration (first match wins):
   credentials (gateway_id, token, MQTT user/password) saved with 0600 at GATEWAY_CREDENTIALS_PATH
   (edge/src/enrollment.py); from then on the map comes from GET /api/gateways/{id}/config (ETag, local cached copy
   for offline start — edge/src/remote_config.py), the HTTP heartbeat POST /api/gateways/{id}/heartbeat runs every
-  GATEWAY_HEARTBEAT_S (edge/src/fleet.py) and `config_changed` → reload;
+  GATEWAY_HEARTBEAT_S (edge/src/fleet.py) and `config_changed` → reload; `commands` in the heartbeat answer
+  (Sprint 6: `opcua_browse` of a configured source) run in the background — edge/src/commands.py;
 - GATEWAY_CONFIG_URL (+ GATEWAY_TOKEN, GATEWAY_ID) → same remote config without enrollment (Sprint 4 setup);
 - PLANT_MAP_PATH=edge/config/plant.local.json → device/tag map file (edge/src/plant_map.py), the full path
   `virtual plant + provision + gateway` (also the last-resort fallback of the remote config);
@@ -23,7 +24,7 @@ Configuration (first match wins):
 
 Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
-  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.5.0",
+  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.6.0",
            "config_version": 7, "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true},
            "clocks": {"opcua-plc": {"policy": "source", "configured": "source", "max_skew_s": 2.0,
                                     "skew_s": -0.12}}}
@@ -64,6 +65,7 @@ from .config import settings
 from .counting import EdgeCounterStore, PulsePoller
 from .enrollment import Credentials, EnrollmentError, base_url, ensure_enrolled
 from .filters.deadband import DeadbandFilter
+from .commands import CommandRunner
 from .fleet import FleetClient, HeartbeatError, heartbeat_body
 from .plant_map import COUNTER_ROLES, MapTag, PlantMap, load_plant_map
 from .protocols.modbus import ModbusDriver, ModbusTagConfig
@@ -164,6 +166,7 @@ class EdgeGateway:
         # fleet (enrollment / remote config / HTTP heartbeat)
         self.credentials: Optional[Credentials] = None
         self.fleet: Optional[FleetClient] = None
+        self.commands: Optional[CommandRunner] = None
         self.fleet_status: Optional[str] = None
         self.config_version: Optional[int] = None
         self.config_revision: Optional[str] = None
@@ -419,6 +422,14 @@ class EdgeGateway:
             errs.append("broker MQTT desconectado")
         return errs + list(self._errors)
 
+    def command_source(self, source_id: str) -> Optional[tuple[str, str]]:
+        """(protocol, endpoint) of a source of the CURRENT map (endpoint with ${VAR} already expanded — the
+        credentials never leave the gateway). None = unknown source."""
+        src = self.plant_map.sources.get(source_id) if self.plant_map is not None else None
+        if src is None:
+            return None
+        return src.protocol, src.endpoint
+
     async def fleet_heartbeat_body(self) -> dict:
         return heartbeat_body(__version__, time.monotonic() - self._started_at, self.buffer_depth(),
                               self.current_errors(), self.config_version)
@@ -435,6 +446,8 @@ class EdgeGateway:
             return False
         self._errors.clear()            # delivered: the next heartbeat reports only what happens from now on
         self.fleet_status = res.status
+        if res.commands and self.commands is not None:
+            self.commands.submit(res.commands)      # background: never delays the heartbeat or the readings
         changed = res.config_changed or (res.config_version is not None and self.config_version is not None
                                          and res.config_version != self.config_version)
         if not changed:
@@ -478,6 +491,8 @@ class EdgeGateway:
                 loaded.config_version, loaded.revision, loaded.origin
             if fleet_url and token and self.gateway_id:
                 self.fleet = FleetClient(fleet_url, self.gateway_id, token)
+                self.commands = CommandRunner(fleet_url, self.gateway_id, token, self.command_source,
+                                              timeout_s=settings.gateway_browse_timeout_s)
         elif settings.plant_map_path:
             self.load_plant_map(load_plant_map(settings.plant_map_path))
             self.config_origin = "file"
@@ -816,6 +831,8 @@ class EdgeGateway:
         self._running = False
         await self._stop_drivers()                   # drivers hand their queued readings to the outbox first
         await self._stop_sender()
+        if self.commands is not None:
+            await self.commands.close()
         if self.fleet is not None:
             await self.fleet.close()
         await self.publisher.disconnect()

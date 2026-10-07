@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from ...models import (CalendarException, DowntimeEvent, Machine, MachineProduct
                        ReasonCode, Shift, User, UserRole)
 from ...services.oee.calendar import Calendar, ExceptionDef, ShiftDef, _window, shifts_overlap
 from ...services.oee.engine import load_calendar
+from ...services import operator_scope as opscope
 from ...services.usage import queries as uq
 from ...services.validation import is_uuid
 from ..patching import apply_patch
@@ -481,7 +482,11 @@ async def list_runs(user: CurrentUser, db: DB, machine_id: Optional[str] = None,
     if machine_id:
         if not is_uuid(machine_id):
             return []
+        await opscope.check_machine(db, user, machine_id)        # operator PWA: only the lines of the operator
         q = q.where(ProductionRun.machine_id == machine_id)
+    allowed = await opscope.allowed_machine_ids(db, user)
+    if allowed is not None:
+        q = q.where(ProductionRun.machine_id.in_(allowed))
     if open is not None:
         q = q.where(ProductionRun.ended_at.is_(None) if open else ProductionRun.ended_at.is_not(None))
     rows = (await db.execute(q.order_by(ProductionRun.started_at.desc()).limit(max(1, min(limit, 1000))))).scalars().all()
@@ -489,9 +494,17 @@ async def list_runs(user: CurrentUser, db: DB, machine_id: Optional[str] = None,
 
 
 @runs_router.post("/", response_model=ProductionRunOut, status_code=status.HTTP_201_CREATED, dependencies=OPERATOR)
-async def start_run(body: ProductionRunCreate, user: CurrentUser, db: DB):
-    """Starts an order/lot. The machine's open run (if any) is closed at the new start."""
+async def start_run(body: ProductionRunCreate, user: CurrentUser, db: DB,
+                    x_client_action_id: Annotated[Optional[str], Header()] = None):
+    """Starts an order/lot. The machine's open run (if any) is closed at the new start. X-Client-Action-Id (operator
+    tablet): a replay returns the run created the first time."""
+    action = opscope.valid_action_id(x_client_action_id)
+    prev = await opscope.replayed(db, user, action, "production_run.start")
+    if prev is not None:
+        return (await _runs_out(db, [await _get(db, ProductionRun, prev.entity_id, user.tenant_id,
+                                                "Ordem de produção")]))[0]
     machine_id = await ensure_owned(db, Machine, body.machine_id, user.tenant_id, "machine_id")
+    await opscope.check_machine(db, user, machine_id)
     product_id = await ensure_owned(db, Product, body.product_id, user.tenant_id, "product_id")
     started = _not_future(_aware(body.started_at) or datetime.now(timezone.utc), "started_at")
     ended = _aware(body.ended_at)
@@ -511,9 +524,15 @@ async def start_run(body: ProductionRunCreate, user: CurrentUser, db: DB):
                         started_at=started, ended_at=ended)
     db.add(row)
     try:
+        await db.flush()
+        opscope.remember(db, user, action, "production_run.start", row.id, 201)
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
+        if opscope.is_duplicate_key(e):
+            prev = await opscope.replayed(db, user, action, "production_run.start")
+            return (await _runs_out(db, [await _get(db, ProductionRun, prev.entity_id, user.tenant_id,
+                                                    "Ordem de produção")]))[0]
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A máquina já tem uma ordem aberta.")
     await db.refresh(row)
     return (await _runs_out(db, [row]))[0]
@@ -521,12 +540,15 @@ async def start_run(body: ProductionRunCreate, user: CurrentUser, db: DB):
 
 @runs_router.get("/{run_id}", response_model=ProductionRunOut)
 async def get_run(run_id: str, user: CurrentUser, db: DB):
-    return (await _runs_out(db, [await _get(db, ProductionRun, run_id, user.tenant_id, "Ordem de produção")]))[0]
+    row = await _get(db, ProductionRun, run_id, user.tenant_id, "Ordem de produção")
+    await opscope.check_machine(db, user, row.machine_id)
+    return (await _runs_out(db, [row]))[0]
 
 
 @runs_router.post("/{run_id}/stop", response_model=ProductionRunOut, dependencies=OPERATOR)
 async def stop_run(run_id: str, user: CurrentUser, db: DB, body: Optional[ProductionRunStop] = None):
     row = await _get(db, ProductionRun, run_id, user.tenant_id, "Ordem de produção")
+    await opscope.check_machine(db, user, row.machine_id)
     if row.ended_at is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A ordem já foi encerrada.")
     ended = _not_future(_aware(body.ended_at if body else None) or datetime.now(timezone.utc), "ended_at")

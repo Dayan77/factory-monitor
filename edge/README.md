@@ -23,6 +23,24 @@ qualquer que seja `--speed`. Caminhos de OEE exercitados:
 blocked por máquina, com início/duração em segundos simulados). As tags de produto/starved/blocked vão ao servidor
 como `semantic_role: analog` com o papel de borda em `signal_role` (o servidor ainda não tem esses papéis).
 
+## Demonstração pública (`--demo`, Sprint 6)
+
+`python -m edge.virtual_plant --demo --state-file /data/demo_state.json` — roteiro do tenant DEMO
+(docs/sprint6.md §5, `edge/virtual_plant/demo.py`): tempo real no fuso `America/Sao_Paulo` (3 × 8 h todos os
+dias), ≈ 3–5 falhas com código por turno (`DEMO_FAULT_MTBF_SCALE`), 1 setup por turno, micro-paradas e o Cilindro B3
+com 12 golpes/ciclo (`DEMO_B3_STROKES_PER_CYCLE`) até o alerta preditivo em ≈ 2,5 dias; `POST /replace
+{"position": "montagem.fixacao.b3"}` (demo-bot do servidor) reinicia o desgaste. `GET :8091/health` → 503 se o tempo
+simulado parar ou o relógio sair do fuso. Produção: profile `demo` do `infra/docker-compose.prod.yml`
+(docs/operations.md §10). Nunca é o padrão.
+
+## Navegação OPC UA pelo gateway (comandos puxados, Sprint 6)
+
+O heartbeat HTTP pode trazer `commands: [{id, type: "opcua_browse", source_id, root_node_id?, max_depth ≤ 6,
+max_nodes ≤ 5000}]`; o gateway navega só a fonte do SEU mapa (credenciais locais: `opc.tcp://${OPC_USER}:${OPC_PASS}@…`)
+e responde `POST /api/gateways/{id}/commands/{cmd}/result {nodes, truncated}` com o próprio token — só estrutura
+(NodeClass, nomes, DataType, AccessLevel), nunca Value nem credencial; tempo total `GATEWAY_BROWSE_TIMEOUT_S`
+(60 s). Detalhes em `edge/src/commands.py`.
+
 ## Playback de cenário (QA, caminho real CLP → gateway → MQTT → servidor)
 
 ```bash
@@ -210,7 +228,7 @@ cd infra/gateway && cp gateway.env.example gateway.env   # SERVER_URL, ENROLL_CO
 docker compose up -d && docker compose logs -f gateway  # "enrollment.done" → "edge_gateway.config"
 ```
 Construir/publicar a imagem das duas arquiteturas: `docker buildx build --platform linux/amd64,linux/arm64
---build-arg EDGE_VERSION=0.5.0 -t <registro>/factoryconnect-edge:0.5.0 --push edge/` (todas as dependências têm wheel
+--build-arg EDGE_VERSION=0.6.0 -t <registro>/factoryconnect-edge:0.6.0 --push edge/` (todas as dependências têm wheel
 manylinux para as duas arquiteturas: o build não compila nada). O container roda sem root, com sistema de arquivos
 somente leitura, sem capabilities, e o estado em `/data` (volume `gateway-data`, 0700). Saúde: `HEALTH_FILE` tocado
 a cada heartbeat (HEALTHCHECK da imagem).

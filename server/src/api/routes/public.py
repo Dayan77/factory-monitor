@@ -68,3 +68,31 @@ async def create_lead(body: LeadCreate, request: Request, background: Background
     log.info("leads.stored", lead_id=lead.id)
     background.add_task(notify_lead, lead.id)
     return ACCEPTED
+
+
+# ── public demo (Sprint 6 — docs/sprint6.md §5) ──────────────────────────────
+
+@router.post("/demo-session", status_code=status.HTTP_201_CREATED)
+async def demo_session(request: Request, db: DB):
+    """"Ver demonstração": no sign-up; per-IP rate limit (DEMO_RATE_LIMIT_PER_HOUR, default 10/h) → a 2 h JWT with
+    role demo_viewer in the read-only demo tenant (then the site redirects to /dashboard)."""
+    from ...services.demo import session as demo
+    try:
+        out = await demo.create_session(db, ip_hash(client_ip(request)))
+    except demo.RateLimited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Muitas demonstrações abertas deste endereço. Tente novamente mais tarde.")
+    except demo.DemoUnavailable:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Demonstração indisponível no momento.")
+    log.info("demo.session_opened")            # LGPD: only the event, no IP / identifier
+    return out
+
+
+@router.get("/demo-status")
+async def demo_status(db: DB):
+    """Banner of the demo: "planta simulada temporariamente parada" when the virtual plant sent nothing for 5 min."""
+    from ...services.demo.session import demo_status as status_of
+    out = await status_of(db)
+    out.pop("gateway_last_seen_at", None)
+    return out

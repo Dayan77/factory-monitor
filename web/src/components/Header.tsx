@@ -21,7 +21,11 @@ const TITLES: Record<string, string> = {
   "/maintenance/reliability": "Confiabilidade",
   "/maintenance/predictive": "Manutenção preditiva",
   "/settings/gateways": "Gateways de campo",
-  "/factory": "Fábrica",
+  "/factory": "Mapa da planta",
+  "/factory/list": "Fábrica",
+  "/factory/layout/edit": "Editor de layout",
+  "/onboarding": "Implantação",
+  "/reports/scheduled": "Relatórios agendados",
   "/lines": "Linhas de Produção",
   "/machines": "Máquinas",
   "/sensors": "Sensores",
@@ -39,6 +43,8 @@ interface Props {
 /** Title for the current route (nested routes inherit the section title, e.g. /factory/machines/:id). */
 export function titleFor(pathname: string): string {
   if (TITLES[pathname]) return TITLES[pathname];
+  if (pathname.startsWith("/factory/")) return "Fábrica";
+  if (pathname.startsWith("/onboarding/")) return "Implantação";
   const section = "/" + (pathname.split("/")[1] ?? "");
   return TITLES[section] ?? "Factory Monitor";
 }

@@ -24,6 +24,7 @@ alias dc='docker compose --env-file /opt/factory-monitor/.env -f infra/docker-co
 | `fm_site` | site estático | Traefik: `factoryconnect.tech` |
 | `fm_mediamtx` | RTSP → HLS | só rede `fm-net` |
 | `fm_prometheus`, `fm_grafana` | profile `monitoring` | Grafana em `127.0.0.1:3000` (túnel SSH) |
+| `fm_demo_plant`, `fm_demo_gateway` | profile `demo`: planta virtual + gateway do tenant DEMO (§10) | nada publicado (rede interna `fm-demo`) |
 
 Arquivos fora do git no VPS: `.env` (segredos), `mqtt/gateways.conf` e `mqtt/certs/` (MQTT),
 `backups/pre-deploy/` (backups automáticos do deploy) e `/var/backups/factory-monitor/` (backups noturnos).
@@ -299,6 +300,8 @@ se a série sumir com o servidor no ar (`absent()`). `infra/tests/test_monitorin
   - `https://factoryconnect.tech/healthz` → 200
   - TCP `mqtt.factoryconnect.tech:8883` (handshake TLS)
 - Backup: `BACKUP_PING_URL` (seção 4.2) — alerta se o cron não rodar em 26 h.
+- Demo pública (profile `demo`): `https://app.factoryconnect.tech/api/public/demo-status` com
+  `"plant_running":true` — alerta se ficar falso por > 5 min (§10.4).
 - Workflow **Deploy** também confere `PUBLIC_HEALTH_URL` (variable do repositório) após cada deploy.
 
 ## 9. Checklist de incidente
@@ -329,3 +332,89 @@ se a série sumir com o servidor no ar (`absent()`). `infra/tests/test_monitorin
    backup bom em containers descartáveis primeiro para conferir (seção 4.3), depois em produção (4.4).
 7. **Encerrar**: confirme recuperação (seção 2, "Depois"), registre causa, impacto (tempo, tenants) e ações
    para não repetir (teste, alerta, runbook).
+
+## 10. Demo
+
+Tenant **DEMO** somente-leitura do botão "Ver demonstração" do site (docs/sprint6.md §5). Não há dado fabricado
+no banco: a planta virtual (`edge/virtual_plant`, modo `--demo`) alimenta o pipeline normal por um gateway próprio
+(MQTT → Influx/Postgres → detectores → KPIs). Profile `demo` do `infra/docker-compose.prod.yml`:
+
+| Serviço | O que faz | Rede |
+|---|---|---|
+| `demo-plant` (`fm_demo_plant`) | planta virtual em tempo real no fuso `America/Sao_Paulo` (roteiro abaixo); OPC UA 4840, Modbus 5020, estado/saúde 8091, API de controle 7070 (exige `X-Control-Token`) | só `fm-demo` (interna, sem internet, sem banco) |
+| `demo-gateway` (`fm_demo_gateway`) | gateway da frota (`python -m src.gateway`): config e heartbeat em `http://server:8000`, MQTT em `mosquitto:1883` com usuário próprio | `fm-net` + `fm-demo` |
+| `server` | o demo-bot conclui a OS da troca e chama `POST http://demo-plant:7070/replace` | também em `fm-demo` |
+
+Imagem `factory-monitor-edge:0.6.0` (build local de `edge/`, base `python:3.12.15-slim` fixada; troque de propósito
+com `DEMO_EDGE_IMAGE_TAG`). `restart: always` nos dois; a planta tem healthcheck (`/health`), o gateway o
+healthcheck da imagem (arquivo de saúde tocado a cada heartbeat). Sem os segredos abaixo os containers **não sobem**
+(saem com código 2 e a mensagem do que falta — `docker logs fm_demo_plant`).
+
+### 10.1 Bootstrap (uma vez)
+```bash
+# 1) tenant demo, planta, linhas, máquinas, tags, turnos 3×8 h (America/Sao_Paulo), monitores preditivos,
+#    usuários demo-bot e visitante, gateway da demo — idempotente; credenciais do gateway impressas UMA vez
+docker exec -it fm_server python -m src.demo bootstrap        # anote tenant_id, gateway_id e (opção B) o token
+# 2) credencial MQTT própria, restrita a factory/<tenant demo>/# (ACL do broker, §6.1)
+make mqtt-gateway-add GATEWAY=gw-demo TENANT=<tenant_id do passo 1>
+# 3) .env do VPS (modo 600):
+#    DEMO_GATEWAY_MQTT_USERNAME=gw-demo   DEMO_GATEWAY_MQTT_PASSWORD=<senha impressa no passo 2>
+#    DEMO_VIRTUAL_PLANT_CONTROL_TOKEN=$(openssl rand -hex 24)
+#    DEMO_VIRTUAL_PLANT_CONTROL_URL=http://demo-plant:7070     # lido pelo servidor (demo-bot)
+#    COMPOSE_PROFILES=demo            # ou monitoring,demo
+dc up -d server                       # o servidor passa a ver DEMO_VIRTUAL_PLANT_CONTROL_URL/_TOKEN
+```
+
+### 10.2 Cadastro do gateway da demo
+- **Opção A — código de cadastro** (mesmo fluxo de um cliente, docs/gateways.md): gere um código para o gateway da
+  demo (`POST /api/gateways/{gateway_id}/enroll-token` com um admin do tenant demo; vale 24 h, uso único) e ponha
+  `DEMO_GATEWAY_ENROLL_CODE=<código>` no `.env`. Na 1ª partida o gateway troca o código pelo token e grava a
+  credencial em `/data/gateway_credentials.json` (0600, volume `demo-gateway-data`); depois o código pode sair do
+  `.env` (é ignorado). A senha MQTT do cadastro **não** é usada: o broker só aceita o usuário do passo 2.
+- **Opção B — token do bootstrap**: `DEMO_GATEWAY_ID=<gateway_id>` e `DEMO_GATEWAY_TOKEN=<token>` impressos no
+  passo 1 (ou `python -m src.demo bootstrap --rotate-gateway` para gerar outro; o anterior deixa de valer).
+
+```bash
+dc up -d demo-plant demo-gateway
+dc ps demo-plant demo-gateway                                   # os dois healthy
+docker logs fm_demo_gateway | grep -E "enrollment.done|edge_gateway.config"
+docker exec fm_demo_plant python -c "import urllib.request,sys; sys.stdout.write(urllib.request.urlopen('http://127.0.0.1:8091/health').read().decode())"
+curl -fsS https://app.factoryconnect.tech/api/public/demo-status   # "plant_running": true em ~1 min
+```
+
+### 10.3 Roteiro da planta (edge/virtual_plant/demo.py)
+- Relógio da planta = hora local de São Paulo (alinhado na partida, `--speed 1` fixo); turnos 06–14, 14–22, 22–06
+  todos os dias, com refeição e 2 cafés (`PLN-01`) — o mesmo calendário que o bootstrap cadastra.
+- Falhas com código ≈ 3–5 por turno na planta toda (`DEMO_FAULT_MTBF_SCALE`, padrão 2,5), mais as por desgaste;
+  um setup `SET-01` por turno em cada máquina; micro-paradas (15–110 s).
+- **Cilindro B3** (Estação de Fixação): 12 golpes por ciclo (`DEMO_B3_STROKES_PER_CYCLE`, ≈ 17–20 mil golpes/dia).
+  O servidor estabelece a linha de base (5 + 20 blocos de 1 000 golpes) no 1º dia e meio; a deriva começa em
+  30 000 golpes (+2 ms/1 000) e cruza 110 % da referência ≈ meio dia depois → alerta preditivo + RUL. O demo-bot
+  converte o alerta em OS, executa a troca e chama `/replace`: o desgaste recomeça (ciclo de ≈ 2,5 dias). Sem a
+  troca o cilindro falharia (447) em +40 ms e o "plantão" automático da planta o trocaria.
+- O desgaste do B3 (golpes desde a instalação, contador do CLP, nº da troca) é gravado a cada 30 s em
+  `/data/demo_state.json` (volume `demo-plant-data`): `docker restart fm_demo_plant` não zera o ciclo. Para recomeçar
+  do zero: `dc stop demo-plant && docker run --rm -v factory-monitor_demo-plant-data:/data alpine rm /data/demo_state.json && dc up -d demo-plant`.
+
+### 10.4 Saúde e alerta
+- `GET :8091/health` (healthcheck do container, a cada 30 s): 503 quando o tempo simulado parou (> 30 s), o atraso
+  passa de 60 s ou o relógio da planta se afastou > 5 min da hora de São Paulo. Desvio > 10 min (fuso/horário de
+  verão mudou, relógio do host corrigido) → a planta grava o estado e sai com código 3; o `restart: always` a sobe
+  realinhada.
+- **Alerta para devops** (parada > 5 min): monitor externo (UptimeRobot/healthchecks.io, tipo *keyword*, a cada
+  1 min) em `https://app.factoryconnect.tech/api/public/demo-status` esperando `"plant_running":true`, alertando
+  após 5 falhas seguidas. O servidor marca `plant_running=false` quando nenhuma leitura da demo chega há
+  `DEMO_PLANT_STOPPED_AFTER_S` (300 s) — cobre planta, gateway, broker e ingestão de uma vez — e a faixa da demo
+  passa a dizer "planta simulada temporariamente parada".
+- Diagnóstico: `dc ps demo-plant demo-gateway`; `docker logs --tail 100 fm_demo_plant` (`demo.clock_misaligned`?);
+  `docker logs --tail 100 fm_demo_gateway` (`not authorised` no broker → passo 2; `HTTP 401` → token/código, §10.2);
+  `docker logs fm_server | grep demo_bot` (`virtual_plant_replace_failed` → URL/token do §10.1).
+
+### 10.5 Rotação e desligamento
+- Token da API de controle: novo `DEMO_VIRTUAL_PLANT_CONTROL_TOKEN` → `dc up -d server demo-plant`.
+- Senha MQTT do gateway da demo: `make mqtt-gateway-add GATEWAY=gw-demo TENANT=<uuid>` → `.env` → `dc up -d demo-gateway`.
+- Token do gateway: `python -m src.demo bootstrap --rotate-gateway` (opção B) ou novo código (opção A, apague
+  `/data/gateway_credentials.json` do volume `demo-gateway-data`).
+- Desligar a demo: tire `demo` de `COMPOSE_PROFILES` e `dc stop demo-plant demo-gateway` (o site continua com o
+  botão; a sessão abre com a faixa "planta simulada temporariamente parada").
+

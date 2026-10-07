@@ -25,6 +25,9 @@ import { fillHourly } from "@/utils/series";
 import PositionDrawer from "./PositionDrawer";
 import { AssetMaintenance } from "@/components/maintenance/MaintenancePanels";
 import { findMachine } from "./lookup";
+import DrillPeriodPicker from "@/components/drill/DrillPeriodPicker";
+import DrillKpis from "@/components/drill/DrillKpis";
+import { drillLink, drillPaths, parseDrill } from "@/utils/drilldown";
 
 const MACHINE_MEASURES = [
   { value: "good", label: "Boas" },
@@ -217,6 +220,7 @@ export default function MachinePage() {
   const { machineId = "" } = useParams();
   const [params, setParams] = useSearchParams();
   const openPosition = params.get("pos");
+  const ctx = parseDrill(params);
   const tree = usePlantTree();
   const usage = useMachineUsage(machineId);
   const now = useNow(5_000);
@@ -238,7 +242,7 @@ export default function MachinePage() {
           <EmptyState
             title="Máquina não encontrada"
             description="Ela pode ter sido removida ou pertencer a outra empresa."
-            action={<Link to="/factory" className="text-body font-medium text-ok hover:underline">Voltar para a fábrica</Link>}
+            action={<Link to={drillLink(drillPaths.plant(), ctx)} className="text-body font-medium text-ok hover:underline">Voltar para a fábrica</Link>}
           />
         </Card>
       </div>
@@ -255,10 +259,10 @@ export default function MachinePage() {
         {found ? (
           <Breadcrumbs
             items={[
-              { label: "Fábrica", to: "/factory" },
-              { label: found.plant.name, to: "/factory" },
-              { label: found.line.name, to: `/factory/lines/${found.line.id}` },
-              { label: found.machine.name },
+              { label: found.plant.name, to: drillLink(drillPaths.plant(), ctx) },
+              { label: found.line.name, to: drillLink(drillPaths.line(found.line.id), ctx) },
+              { label: found.machine.name, to: openPosition ? drillLink(drillPaths.machine(found.machine.id), ctx) : undefined },
+              ...(openPosition ? [{ label: usage.data?.positions.find((p) => p.position_id === openPosition)?.name ?? "Posição" }] : []),
             ]}
           />
         ) : (
@@ -269,7 +273,10 @@ export default function MachinePage() {
           {found && <MachineStatusBadge status={found.machine.status} />}
           {found && <span className="text-caption text-fg-subtle">{formatSeenAgo(found.machine.last_seen_at, now)}</span>}
         </div>
+        <DrillPeriodPicker tz={found?.plant.timezone} />
       </div>
+
+      <DrillKpis scope="machine" id={machineId} ctx={ctx} machineIds={[machineId]} unjustifiedLink={found ? `/stops?line=${found.line.id}` : "/stops"} />
 
       <section aria-label="Produção de hoje" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {usage.isPending ? (

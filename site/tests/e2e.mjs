@@ -256,6 +256,141 @@ await check("form: network failure shows connection error", async () => {
   await ctx.close();
 });
 
+// ── "Ver demonstração" (docs/sprint6.md §5) ─────────────────────────────────
+// O site só consulta GET /api/public/demo-status e navega para {APP}/demo; o app abre a sessão (POST) e guarda o
+// token na própria origem — nenhum token passa pelo site nem aparece em URL.
+console.log("\n[demonstração]");
+const APP = "https://app.factoryconnect.tech";
+async function demoPage(vp, path, { status = 200, body = { available: true, plant_running: true }, delayMs = 0, abort = false } = {}) {
+  const r = await newPage(vp);
+  const calls = { status: 0, session: 0, beacons: 0, app: [] };
+  let reply = { status, body, delayMs, abort };
+  await r.page.route("**/api/public/demo-status", async (route) => {
+    calls.status++;
+    if (reply.delayMs) await new Promise((res) => setTimeout(res, reply.delayMs));
+    if (reply.abort) return route.abort("connectionrefused");
+    await route.fulfill({ status: reply.status, body: JSON.stringify(reply.body),
+                          headers: { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" } });
+  });
+  await r.page.route("**/api/public/demo-session", (route) => { calls.session++; return route.abort(); });
+  await r.ctx.route(`${APP}/demo**`, (route) => {
+    calls.app.push(route.request().url());
+    return route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>app demo</title><h1>app /demo</h1>" });
+  });
+  r.page.on("request", (q) => { if (q.resourceType() === "ping" || q.method() === "POST") calls.beacons++; });
+  await r.page.goto(BASE + path, { waitUntil: "networkidle" });
+  await r.page.evaluate(() => document.querySelectorAll(".reveal").forEach((e) => e.classList.add("is-visible")));
+  return { ...r, calls, setReply: (o) => { reply = { ...reply, ...o }; } };
+}
+
+await check("demo CTA in header, home hero and Como funciona point to the app /demo", async () => {
+  const { ctx, page } = await demoPage(VIEWPORTS.desktop, "/");
+  const hrefs = await page.$$eval("a[data-demo-cta]", (as) => as.map((a) => [a.dataset.demoCta, a.getAttribute("href"), a.dataset.demoStatusUrl]));
+  assert.deepEqual(hrefs.map((h) => h[0]).sort(), ["header", "header", "hero", "menu"]);
+  for (const [, href, st] of hrefs) {
+    assert.equal(href, `${APP}/demo`);
+    assert.equal(st, `${APP}/api/public/demo-status`);
+  }
+  assert.equal(await page.locator('a[data-demo-cta="header"]:visible').count(), 1, "header CTA visible at 1366");
+  assert.equal(await page.getAttribute('a[data-demo-cta="header"]:visible', "aria-label"), "Ver demonstração");
+  assert.equal(await page.isVisible('a[data-demo-cta="hero"]'), true);
+  await page.goto(BASE + "/como-funciona", { waitUntil: "networkidle" });
+  assert.equal(await page.getAttribute('a[data-demo-cta="como-funciona"]', "href"), `${APP}/demo`);
+  await ctx.close();
+});
+
+await check("demo: header CTA (short label) also shows loading and navigates", async () => {
+  const { ctx, page, calls } = await demoPage(VIEWPORTS.desktop, "/planos", { delayMs: 500 });
+  const cta = 'a[data-demo-cta="header"]:visible';
+  await page.click(cta);
+  await page.waitForSelector('a[data-demo-cta="header"][aria-busy="true"]');
+  assert.equal((await page.textContent('a[data-demo-cta="header"][aria-busy="true"] [data-demo-label]')).trim(), "Abrindo…");
+  await page.waitForURL(`${APP}/demo`);
+  assert.equal(calls.status, 1);
+  await ctx.close();
+});
+
+await check("demo: loading state, then the app /demo without any token in the URL", async () => {
+  const { ctx, page, calls, errors } = await demoPage(VIEWPORTS.desktop, "/", { delayMs: 800 });
+  const cta = 'a[data-demo-cta="hero"]';
+  await page.click(cta);
+  await page.waitForSelector(`${cta}[aria-busy="true"]`);
+  assert.equal((await page.textContent(`${cta} [data-demo-label]`)).trim(), "Abrindo demonstração…");
+  assert.equal(await page.isVisible(`${cta} [data-demo-spinner]`), true);
+  await page.screenshot({ path: `${shots}/desktop-demo-carregando.png` });
+  await page.waitForURL(`${APP}/demo`);
+  assert.equal(page.url(), `${APP}/demo`, "no query/fragment (no token, no session id)");
+  assert.equal(calls.status, 1);
+  assert.equal(calls.session, 0, "the site never opens the session itself");
+  assert.equal(calls.beacons, 0, "no event endpoint configured → nothing sent");
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+for (const theme of ["dark", "light"]) {
+  await check(`demo: unavailable / network error show a message and retry (${theme})`, async () => {
+    const { ctx, page, calls, setReply } = await demoPage(VIEWPORTS.desktop, "/", { status: 200, body: { available: false } });
+    if (theme === "light") await page.click("[data-theme-toggle]");
+    const cta = 'a[data-demo-cta="hero"]';
+    await page.click(cta);
+    await page.waitForSelector('#demo-status-hero[data-state="error"]');
+    assert.match(await page.textContent("#demo-status-hero"), /indisponível no momento/);
+    assert.equal((await page.textContent(`${cta} [data-demo-label]`)).trim(), "Tentar de novo");
+    assert.equal(await page.getAttribute(cta, "aria-busy"), null);
+    assert.equal(page.url(), `${BASE}/`, "stays on the site");
+    await page.screenshot({ path: `${shots}/desktop-demo-erro-${theme === "dark" ? "escuro" : "claro"}.png` });
+    setReply({ abort: true });
+    await page.click(cta);
+    await page.waitForFunction(() => /Verifique a conexão/.test(document.querySelector("#demo-status-hero")?.textContent || ""));
+    setReply({ abort: false, body: { available: true, plant_running: false } });
+    await page.click(cta);                      // planta parada: o app mostra a faixa "temporariamente parada"
+    await page.waitForURL(`${APP}/demo`);
+    assert.equal(calls.status, 3);
+    await ctx.close();
+  });
+}
+
+await check("demo: mobile menu button opens the demo", async () => {
+  const { ctx, page, calls } = await demoPage(VIEWPORTS.mobile, "/");
+  assert.equal(await page.locator('a[data-demo-cta="header"]:visible').count(), 0, "header CTA hidden on phones");
+  await page.click("[data-menu-toggle]");
+  await page.screenshot({ path: `${shots}/mobile-menu-demo.png` });
+  await page.click('#menu-mobile a[data-demo-cta="menu"]');
+  await page.waitForURL(`${APP}/demo`);
+  assert.equal(calls.status, 1);
+  await ctx.close();
+});
+
+await check("demo: Ctrl/Cmd-click opens the link directly (new tab), no interception", async () => {
+  const { ctx, page, calls } = await demoPage(VIEWPORTS.desktop, "/");
+  // (a aba nova abre antes de qualquer route do Playwright: aqui só conferimos que o navegador a abriu e que o site
+  //  não interceptou — sem consulta de status, a página original fica onde está)
+  const popup = ctx.waitForEvent("page");
+  await page.click('a[data-demo-cta="hero"]', { modifiers: ["ControlOrMeta"] });
+  await popup;
+  await page.waitForTimeout(300);
+  assert.equal(calls.status, 0);
+  assert.equal(page.url(), `${BASE}/`);
+  await ctx.close();
+});
+
+for (const [w, h, shown] of [[800, 1280, true], [1024, 768, false], [1180, 820, false], [1280, 800, true], [1366, 768, true], [1920, 1080, true]]) {
+  await check(`demo: header fits at ${w}×${h}`, async () => {
+    const { ctx, page } = await demoPage({ width: w, height: h }, "/como-funciona");
+    assert.equal(await page.locator('a[data-demo-cta="header"]:visible').count(), shown ? 1 : 0, "header CTA visibility");
+    const tall = await page.$$eval("header .container-x > div a, header .container-x > div button", (els) =>
+      els.filter((e) => e.offsetParent && e.getBoundingClientRect().height > 48).map((e) => e.textContent.trim()));
+    // 1024–1279 px: o cabeçalho de antes já quebrava "Teste grátis" em 2 linhas (o botão da demo fica oculto aí)
+    if (w >= 1280 || w < 1024) assert.deepEqual(tall, [], "header buttons wrapped to two lines");
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert.ok(overflow <= 0, `overflow ${overflow}`);
+    const box = await page.locator("header").boundingBox();
+    assert.ok(box.height <= 65, `header wraps (${box.height}px)`);
+    await page.screenshot({ path: `${shots}/demo-header-${w}.png` });
+    await ctx.close();
+  });
+}
+
 // ── Arquivos de SEO ─────────────────────────────────────────────────────────
 console.log("\n[SEO]");
 await check("robots.txt references the sitemap", async () => {

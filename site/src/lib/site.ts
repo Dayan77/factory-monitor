@@ -15,6 +15,12 @@ export const TAGLINE = "O raio-x da sua fábrica";
 export const DEFAULT_DESCRIPTION =
   "FactoryConnect conecta máquinas e sensores da sua fábrica e mostra eficiência (OEE), manutenção (MTBF/MTTR) e o uso real de cada componente — em tempo real, sem trocar o que já funciona.";
 
+// "Ver demonstração" (src/lib/demo.ts): o site só consulta o status; o app abre a sessão na rota /demo.
+export const DEMO_URL = `${APP_URL}/demo`;
+export const DEMO_STATUS_URL = `${API_URL}/api/public/demo-status`;
+// Endpoint first-party opcional do evento anônimo "abriu demo" (vazio = nenhum evento sai do navegador).
+export const DEMO_EVENT_URL: string = env.PUBLIC_DEMO_EVENT_URL || "";
+
 export const LOGIN_URL = `${APP_URL}/login`;
 export const REGISTER_URL = `${APP_URL}/register`;
 

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { Navigate, Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/store/auth";
+import { isDemoUser } from "@/utils/demo";
 
 /**
  * Gate for the authenticated app. The outlet is rendered only once the user is known: with a
@@ -14,13 +15,17 @@ export default function ProtectedRoute() {
   const loading = useAuthStore((s) => s.loading);
   const loadMe = useAuthStore((s) => s.loadMe);
   const token = localStorage.getItem("access_token");
+  const { pathname } = useLocation();
 
   useEffect(() => {
     if (!user && token && !loading) void loadMe();
   }, [user, token, loading, loadMe]);
 
+  // public demo (sprint6 §5): the technician / operator apps are not part of it
+  if (user && isDemoUser(user) && /^\/(m|op)(\/|$)/.test(pathname)) return <Navigate to="/dashboard" replace />;
   if (user) return <Outlet />;
-  if (!token) return <Navigate to="/login" replace />;
+  // the operator tablet has its own kiosk login (sprint6 §3)
+  if (!token) return <Navigate to={pathname === "/op" || pathname.startsWith("/op/") ? "/op/login" : "/login"} replace />;
 
   return (
     <div role="status" aria-busy="true" className="flex h-screen items-center justify-center bg-canvas" data-testid="auth-pending">

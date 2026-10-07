@@ -87,6 +87,8 @@ class EdgeSettings(BaseSettings):
     gateway_credentials_path: str = ""   # vazio = /tmp/edge_gateway_credentials.json (imagem: /data/...)
     gateway_heartbeat_s: float = 60.0
     gateway_config_poll_s: float = 300.0
+    # Comandos puxados (Sprint 6, edge/src/commands.py): tempo máximo de uma navegação OPC UA
+    gateway_browse_timeout_s: float = 60.0
     allow_insecure_http: bool = False    # só rede de testes: permite SERVER_URL http:// fora de localhost
     # Arquivo tocado a cada heartbeat (HEALTHCHECK da imagem/systemd watchdog); vazio = desligado
     health_file: str = ""

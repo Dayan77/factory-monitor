@@ -1,3 +1,5 @@
+import { isDemoUser } from "@/utils/demo";
+import { demoApi } from "@/services/sprint6Api";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -53,7 +55,7 @@ function History({ list, current, onOpen, onNew, onDelete }: {
 }) {
   return (
     <div className="flex h-full flex-col gap-2">
-      <Button variant="primary" onClick={onNew}>Nova conversa</Button>
+      <Button variant="primary" demoSafe onClick={onNew}>Nova conversa</Button>
       <nav aria-label="Conversas anteriores" className="-mx-1 flex-1 overflow-y-auto px-1">
         {list === undefined ? <Skeleton className="h-24" /> : list.length === 0 ? (
           <p className="px-2 py-4 text-caption text-fg-subtle">Nenhuma conversa ainda. As conversas ficam guardadas por 90 dias e só você as vê.</p>
@@ -101,7 +103,11 @@ export default function AiChatPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: aiKeys.status, queryFn: () => aiApi.status().then((r) => r.data), staleTime: 60_000 });
   const ready = !!status.data && status.data.configured && status.data.enabled;
-  const conversations = useQuery({ queryKey: aiKeys.conversations, queryFn: () => aiApi.conversations().then((r) => r.data), enabled: ready });
+  const demo = isDemoUser(user);
+  // demo (sprint6 §5): visitors share one account, so the history is off; questions have a per-session quota
+  const conversations = useQuery({ queryKey: aiKeys.conversations, queryFn: () => aiApi.conversations().then((r) => r.data), enabled: ready && !demo });
+  const demoSession = useQuery({ queryKey: ["demo", "session"], queryFn: () => demoApi.session().then((r) => r.data), enabled: demo, refetchInterval: 30_000 });
+  const quotaLeft = demo ? demoSession.data?.ai_questions_left : undefined;
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [input, setInput] = useState(params.get("q") ?? "");
@@ -220,6 +226,7 @@ export default function AiChatPage() {
       }
     } finally {
       setBusy(false);
+      if (demo) void qc.invalidateQueries({ queryKey: ["demo", "session"] });
       abortRef.current = null;
     }
   }
@@ -243,11 +250,11 @@ export default function AiChatPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100dvh-6rem)] max-w-6xl gap-4 sm:h-[calc(100dvh-7rem)]">
-      <aside className="hidden w-64 shrink-0 lg:block">{history}</aside>
+      {!demo && <aside className="hidden w-64 shrink-0 lg:block">{history}</aside>}
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-card" aria-label="Conversa com o assistente">
         <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2">
-            <Button size="sm" variant="ghost" className="lg:hidden" onClick={() => setHistoryOpen(true)}>Conversas</Button>
+            {!demo && <Button size="sm" variant="ghost" className="lg:hidden" onClick={() => setHistoryOpen(true)}>Conversas</Button>}
             <p className="truncate text-caption text-fg-subtle">Responde só com os dados da sua empresa, com o seu perfil de acesso.</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -299,8 +306,15 @@ export default function AiChatPage() {
               className="max-h-40 min-h-12 flex-1 resize-none rounded-xl border border-line-strong bg-surface px-4 py-3 text-body text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30" />
             {busy
               ? <Button size="lg" onClick={() => abortRef.current?.abort()}>Parar</Button>
-              : <Button size="lg" type="submit" variant="primary" disabled={!input.trim()}>Enviar</Button>}
+              : <Button size="lg" type="submit" variant="primary" demoSafe disabled={!input.trim() || quotaLeft === 0}>Enviar</Button>}
           </div>
+          {demo && demoSession.data && (
+            <p className="mt-1.5 text-caption text-fg-muted" role="status" data-testid="demo-ai-quota">
+              {demoSession.data.ai_questions_left > 0
+                ? `Demonstração: ${demoSession.data.ai_questions_left} de ${demoSession.data.ai_questions_quota} perguntas restantes nesta sessão.`
+                : "Demonstração: a cota de perguntas ao assistente desta sessão acabou. Abra uma nova demonstração ou fale com a equipe FactoryConnect."}
+            </p>
+          )}
           <p className="mt-1.5 hidden text-caption text-fg-subtle sm:block">Enter envia · Shift+Enter quebra linha · o assistente só lê dados (não abre OS nem muda nada).</p>
         </form>
       </section>

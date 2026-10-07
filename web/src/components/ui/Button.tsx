@@ -1,5 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import clsx from "clsx";
+import { useAuthStore } from "@/store/auth";
+import { DEMO_WRITE_MSG, isDemoUser } from "@/utils/demo";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "danger-ghost";
 type Size = "sm" | "md" | "lg";
@@ -8,6 +10,11 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
   size?: Size;
   loading?: boolean;
+  /**
+   * Public demo (sprint6 §5): primary/danger and submit buttons are write actions and are disabled with the demo
+   * tooltip. `demoSafe` marks a read-only action (filters, print, the AI question) that stays enabled.
+   */
+  demoSafe?: boolean;
 }
 
 const VARIANTS: Record<Variant, string> = {
@@ -26,14 +33,18 @@ const SIZES: Record<Size, string> = {
 
 /** Minimum 40px tall (44px at lg) — usable on a tablet with gloves. */
 const Button = forwardRef<HTMLButtonElement, Props>(function Button(
-  { variant = "secondary", size = "md", loading, disabled, className, children, type = "button", ...rest },
+  { variant = "secondary", size = "md", loading, disabled, className, children, type = "button", demoSafe, title, ...rest },
   ref,
 ) {
+  const demo = useAuthStore((s) => isDemoUser(s.user));
+  const demoBlocked = demo && !demoSafe && (variant === "primary" || variant === "danger" || type === "submit");
   return (
     <button
       ref={ref}
       type={type}
-      disabled={disabled || loading}
+      title={demoBlocked ? DEMO_WRITE_MSG : title}
+      data-demo-disabled={demoBlocked || undefined}
+      disabled={disabled || loading || demoBlocked}
       aria-busy={loading || undefined}
       className={clsx(
         "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors duration-150",

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 import enum
 
-from sqlalchemy import String, Boolean, DateTime, Integer, Enum as SAEnum
+from sqlalchemy import String, Boolean, DateTime, Integer, Enum as SAEnum, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base, TimestampMixin
@@ -28,6 +28,9 @@ class Tenant(Base, TimestampMixin):
     suspended_reason: Mapped[Optional[str]]  = mapped_column(String(500), nullable=True)
     max_users:        Mapped[int]            = mapped_column(Integer, nullable=False, default=5)
     max_machines:     Mapped[int]            = mapped_column(Integer, nullable=False, default=10)
+    # Sprint 6: tenant da demonstração pública (somente leitura, alimentado pela planta virtual); fora das
+    # listagens de clientes do superadmin
+    is_demo:          Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
 
     users    = relationship("User",    back_populates="tenant", lazy="noload")
     lines    = relationship("Line",    back_populates="tenant", lazy="noload")

@@ -20,6 +20,9 @@ Planta virtual "Planta Manaus" — CLI.
     # manutenção (Sprint 4): falhas por desgaste esperam a equipe (API de controle em 127.0.0.1:7070)
     python -m edge.virtual_plant --speed 60 --wear-repair manual
     python -m edge.virtual_plant.control force-failure --machine montagem.robo --code 331
+    # demonstração pública (docs/sprint6.md §5): relógio = hora de São Paulo, roteiro de falhas/setup/desgaste do B3,
+    # estado do desgaste persistido; healthcheck em /health (edge/virtual_plant/demo.py)
+    python -m edge.virtual_plant --demo --state-file /tmp/demo_state.json
     # sem servidores: roda N segundos simulados e imprime o snapshot (números conhecidos para o QA)
     python -m edge.virtual_plant --seed 42 --simulate 3600
     # (re)gera o mapa do gateway a partir do layout
@@ -96,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pulse-ms", type=int, default=int(env("VP_PULSE_MS", "50")),
                    help="largura real do pulso de fim de curso, alto e baixo (padrão 50 ms)")
     p.add_argument("--update-ms", type=int, default=100, help="período de atualização dos servidores")
+    p.add_argument("--demo", action="store_true", default=env("VP_DEMO", "").lower() in ("1", "true", "yes"),
+                   help="roteiro da demonstração pública: tempo real no fuso America/Sao_Paulo, falhas algumas vezes "
+                        "por turno, setup por turno, desgaste do Cilindro B3 até o alerta preditivo (edge/virtual_plant/demo.py)")
+    p.add_argument("--state-file", default=env("VP_STATE_FILE", ""),
+                   help="modo demo: arquivo do estado do desgaste (sobrevive ao reinício do container)")
     p.add_argument("--simulate", type=float, metavar="SECONDS",
                    help="não sobe servidores: simula N segundos e imprime o snapshot JSON")
     p.add_argument("--write-map", metavar="PATH", help="grava o mapa do gateway (JSON) e sai")
@@ -117,6 +125,15 @@ def is_predictive_scenario(path: str) -> bool:
 
 
 def make_model(args: argparse.Namespace):
+    if getattr(args, "demo", False):
+        from .demo import DemoSettings, make_demo_model, restore_state
+        if args.scenario:
+            raise SystemExit("--demo não combina com --scenario")
+        model = make_demo_model(args.seed, DemoSettings.from_env())
+        if args.state_file:
+            restored = restore_state(args.state_file, model)
+            model.demo["restored"] = restored is not None
+        return model
     if args.scenario:
         from .scenario import Scenario, ScenarioClock, ScenarioModel
         if is_predictive_scenario(args.scenario):
@@ -141,10 +158,17 @@ def make_model(args: argparse.Namespace):
                       start_second_of_day=_hhmm(args.start_time), config=cfg)
 
 
-async def _serve(args: argparse.Namespace) -> None:
+async def _serve(args: argparse.Namespace) -> int:
     from .runtime import VirtualPlantRuntime   # importa asyncua/pymodbus só quando precisa
 
+    if args.demo and args.speed != 1:
+        print("Modo demo roda em tempo real: --speed ignorado (1).", flush=True)
+        args.speed = 1.0
     model = make_model(args)
+    health = None
+    if args.demo:
+        from .demo import DemoHealth, DemoSettings
+        health = DemoHealth(model, DemoSettings.from_env())
     # API de controle: planta ao vivo (manutenção + verdade) e cenário preditivo (só GET /truth e /status)
     control_on = not args.scenario or hasattr(model, "truth")
     rt = VirtualPlantRuntime(
@@ -153,13 +177,22 @@ async def _serve(args: argparse.Namespace) -> None:
         pulse_high_ms=args.pulse_ms, pulse_low_ms=args.pulse_ms,
         control_port=(args.control_port or None) if control_on else None,
         control_host=args.control_host, control_token=os.environ.get("VP_CONTROL_TOKEN", ""),
+        health_fn=health.check if health is not None else None,
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     paused = bool(args.scenario) and args.scenario_start == "subscribe"
-    await rt.start(paused=paused)
+    await rt.start(paused=paused or health is not None)
+    if health is not None:
+        # demo: os servidores levam alguns segundos para subir — alinha o relógio da planta à hora local antes de
+        # soltar o tempo simulado
+        from .demo import clock_drift_s
+        lag = -clock_drift_s(model)
+        if lag > 0:
+            model.run_for(lag)
+        rt.resume()
     print(f"Planta virtual no ar — OPC UA {rt.opcua_endpoint} | Modbus {args.host}:{args.modbus_port} | "
           f"estado http://{args.host}:{args.status_port}/state | seed={args.seed} speed={args.speed}x",
           flush=True)
@@ -191,8 +224,43 @@ async def _serve(args: argparse.Namespace) -> None:
         if waiter in done:
             rt.resume()
             print(f"Playback iniciado ({rt.monitored_items()} itens assinados).", flush=True)
+    exit_code = 0
+    if health is not None:
+        info = model.demo
+        print(f"Modo demo: fuso {info['tz']}, relógio da planta = hora local "
+              f"{info['start_sod'] // 3600:02d}:{info['start_sod'] % 3600 // 60:02d} (dia da semana "
+              f"{info['start_weekday']}); estado do desgaste: "
+              f"{args.state_file or '(não persistido)'}{' — restaurado' if info.get('restored') else ''}",
+              flush=True)
+
+        async def watchdog() -> None:
+            nonlocal exit_code
+            from .demo import save_state
+            while True:
+                await asyncio.sleep(health.ds.save_every_s)
+                if args.state_file:
+                    try:
+                        save_state(args.state_file, model)
+                    except OSError as e:
+                        logging.getLogger("virtual_plant").warning("demo.state_not_saved error=%s", e)
+                if health.must_restart():
+                    logging.getLogger("virtual_plant").error(
+                        "demo.clock_misaligned — saindo para o restart do compose realinhar ao fuso")
+                    exit_code = 3
+                    stop.set()
+                    return
+        wd = asyncio.create_task(watchdog())
     await stop.wait()
+    if health is not None:
+        wd.cancel()
+        if args.state_file:
+            from .demo import save_state
+            try:
+                save_state(args.state_file, model)
+            except OSError:
+                pass
     await rt.stop()
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,8 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(model.snapshot(), sys.stdout, ensure_ascii=False, indent=2)
         print()
         return 0
-    asyncio.run(_serve(args))
-    return 0
+    return asyncio.run(_serve(args)) or 0
 
 
 if __name__ == "__main__":

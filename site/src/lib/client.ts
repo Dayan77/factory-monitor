@@ -1,4 +1,6 @@
-// Comportamentos globais leves: tema, menu mobile e animação de entrada.
+// Comportamentos globais leves: tema, menu mobile, animação de entrada e o botão "Ver demonstração".
+import "./demo-client";
+
 const root = document.documentElement;
 
 function setTheme(theme: "light" | "dark") {

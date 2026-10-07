@@ -12,6 +12,8 @@ export interface AuthUser {
   /** All roles of the user (Sprint 4: maintenance_planner, technician, production_supervisor, manager, admin, operator). */
   roles?: string[];
   tenant_id: string;
+  /** Lines of the user's area (operator tablet: an operator only acts on these, sprint6 §3.2). */
+  line_ids?: string[];
 }
 
 interface AuthState {

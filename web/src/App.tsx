@@ -17,6 +17,13 @@ const SensorsPage = lazy(() => import("@/pages/SensorsPage"));
 const AdminPage = lazy(() => import("@/pages/AdminPage"));
 const CamerasPage = lazy(() => import("@/pages/CamerasPage"));
 const FactoryPage = lazy(() => import("@/pages/factory/FactoryPage"));
+const PlantMapPage = lazy(() => import("@/pages/factory/PlantMapPage"));
+const LayoutEditorPage = lazy(() => import("@/pages/factory/LayoutEditorPage"));
+const TvPlantPage = lazy(() => import("@/pages/factory/TvPlantPage"));
+const OnboardingPage = lazy(() => import("@/pages/onboarding/OnboardingPage"));
+const ScheduledReportsPage = lazy(() => import("@/pages/reports/ScheduledReportsPage"));
+const OperatorApp = lazy(() => import("@/pages/operator/OperatorApp"));
+const OperatorLoginPage = lazy(() => import("@/pages/operator/OperatorApp").then((m) => ({ default: m.OperatorLoginPage })));
 const LinePage = lazy(() => import("@/pages/factory/LinePage"));
 const MachinePage = lazy(() => import("@/pages/factory/MachinePage"));
 const OeePage = lazy(() => import("@/pages/efficiency/OeePage"));
@@ -68,11 +75,15 @@ export default function App() {
           <Route path="/"         element={<LandingPage />} />
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/op/login" element={<OperatorLoginPage />} />
 
           {/* App protegido */}
           <Route element={<ProtectedRoute />}>
             {/* Andon / TV: full screen, no app chrome */}
             <Route path="/tv/lines/:lineId" element={<TvPage />} />
+            <Route path="/tv/plants/:plantId" element={<TvPlantPage />} />
+            {/* Operador: tablet de chão de fábrica (PWA próprio, id /op/) */}
+            <Route path="/op/*" element={<OperatorApp />} />
             {/* Técnico de manutenção: app de celular (PWA) */}
             <Route path="/m" element={<MobileLayout />}>
               <Route index element={<Navigate to="/m/work-orders" replace />} />
@@ -101,7 +112,12 @@ export default function App() {
               <Route path="/maintenance/predictive" element={<RequireCapability cap="predictive.view"><PredictivePage /></RequireCapability>} />
               <Route path="/maintenance/predictive/alerts/:id" element={<DetailRedirect to={(id) => `/maintenance/predictive?alert=${encodeURIComponent(id)}`} />} />
               <Route path="/settings/gateways" element={<RequireCapability cap="gateways.view"><GatewaysPage /></RequireCapability>} />
-              <Route path="/factory"   element={<FactoryPage />} />
+              <Route path="/factory"   element={<PlantMapPage />} />
+              <Route path="/factory/list" element={<FactoryPage />} />
+              <Route path="/factory/layout/edit" element={<RequireCapability cap="layout.edit"><LayoutEditorPage /></RequireCapability>} />
+              <Route path="/onboarding" element={<RequireCapability cap="onboarding.admin"><OnboardingPage /></RequireCapability>} />
+              <Route path="/onboarding/:step" element={<RequireCapability cap="onboarding.admin"><OnboardingPage /></RequireCapability>} />
+              <Route path="/reports/scheduled" element={<RequireCapability cap="reports.schedule"><ScheduledReportsPage /></RequireCapability>} />
               <Route path="/factory/lines/:lineId" element={<LinePage />} />
               <Route path="/factory/machines/:machineId" element={<MachinePage />} />
               <Route path="/lines"     element={<LinesPage />} />

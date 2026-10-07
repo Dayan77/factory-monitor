@@ -39,7 +39,8 @@ async def _get_tenant_or_404(tenant_id: str, db: AsyncSession) -> Tenant:
 
 @router.get("/tenants", response_model=list[TenantWithStats])
 async def list_tenants(_: SuperAdmin, db: DB):
-    tenants_result = await db.execute(select(Tenant).order_by(Tenant.name))
+    # the public demo tenant (Sprint 6) is not a client: never listed here
+    tenants_result = await db.execute(select(Tenant).where(Tenant.is_demo.is_(False)).order_by(Tenant.name))
     tenants = tenants_result.scalars().all()
 
     # Busca contagens em uma query

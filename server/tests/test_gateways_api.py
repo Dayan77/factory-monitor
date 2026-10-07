@@ -122,7 +122,7 @@ async def test_gateway_lifecycle_enroll_config_heartbeat(client):
     # heartbeat → online / degraded; offline after silence
     hb = await api(client, "POST", f"/api/gateways/{gw['id']}/heartbeat", gw_h(token),
                    json={"version": "edge-1.4.0", "uptime_s": 120, "buffer_depth": 0, "errors": [], "config_version": 1})
-    assert hb == {"status": "online", "config_version": 2, "config_changed": True}
+    assert hb == {"status": "online", "config_version": 2, "config_changed": True, "commands": []}   # Sprint 6: pulled commands
     g = await api(client, "GET", f"/api/gateways/{gw['id']}", h)
     assert g["status"] == "online" and g["version"] == "edge-1.4.0" and g["enrolled"] and g["tag_count"] == 3
     hb = await api(client, "POST", f"/api/gateways/{gw['id']}/heartbeat", gw_h(token),

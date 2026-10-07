@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
+import ExportMenu from "@/components/reports/ExportMenu";
 import { Card, CardHeader } from "@/components/ui/Card";
 import ErrorState from "@/components/ui/ErrorState";
 import { inputClass } from "@/components/ui/Field";
@@ -79,10 +80,13 @@ export default function KpisPage() {
           <h2 className="text-title text-fg">Gestão da manutenção</h2>
           <p className="text-caption text-fg-subtle">PMP, cumprimento da programação e backlog do período (fuso da planta). Cada número abre as OS que o formaram.</p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+        {plant && <ExportMenu report="monthly_maintenance" scopeType="plant" scopeId={plant.id} params={{ month }} />}
         <label className="flex items-center gap-2 text-caption text-fg-muted">
           Mês
           <input type="month" value={month} max={today.slice(0, 7)} onChange={(e) => set({ month: e.target.value || null })} className={clsx(inputClass, "w-auto")} />
         </label>
+        </div>
       </div>
 
       {kpis.isPending ? (

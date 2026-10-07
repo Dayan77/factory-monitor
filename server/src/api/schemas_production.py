@@ -396,6 +396,8 @@ class OeeOut(BaseModel):
     # Sprint 5 — compare_to=previous_period: the previous period and the server-computed differences
     previous: Optional[dict] = None
     delta: Optional[dict] = None
+    # Sprint 6 — drill-down ?period=…: the resolved period (productive day / shift)
+    period: Optional[dict] = None
 
 
 class ParetoRow(BaseModel):

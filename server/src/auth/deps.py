@@ -113,6 +113,12 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user:
         raise credentials_exc
+    if "demo_viewer" in user.role_set:
+        # public demo (Sprint 6, services/demo/guard.py): read-only whatever token the account presents
+        from ..services.demo.guard import block_reason
+        msg = block_reason(request.method, request.url.path)
+        if msg:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=msg)
     return user
 
 

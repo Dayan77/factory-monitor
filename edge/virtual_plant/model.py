@@ -176,6 +176,12 @@ class PlantConfig:
     # → falha 447 em 110 000 golpes (~70 dias de produção da célula).
     b3_onset_strokes: int = 30_000
     b3_drift_ms_per_kstroke: float = 0.5
+    # Golpes do B3 por ciclo da célula (padrão 1, no meio do ciclo). A demo pública (virtual_plant/demo.py) usa
+    # mais golpes por ciclo para o ciclo de desgaste → alerta → troca caber em poucos dias de relógio real.
+    b3_strokes_per_cycle: int = 1
+    # Multiplica o MTBF das falhas aleatórias de todas as máquinas (1 = padrão; 2,5 = ~2,5× menos falhas). Não muda
+    # a quantidade de sorteios, só a escala: o contrato de determinismo vale para cada valor.
+    fault_mtbf_scale: float = 1.0
     # Motor B: corrente RMS por produto (carga) — SUP-200 é mais pesado (+0,5 A, deriva sem falha, cenário F2)
     motor_b_current_a: dict = field(default_factory=lambda: {"SUP-100": 12.0, "SUP-200": 12.5})
 
@@ -425,6 +431,12 @@ class Cylinder:
                 + self.degrade_ms_per_kcycle * self.degraded_strokes() / 1000.0)
 
 
+def _spread(n: int) -> tuple[float, ...]:
+    """Frações do ciclo para n golpes igualmente espaçados (n = 1 → meio do ciclo, 0,50)."""
+    n = max(1, int(n))
+    return tuple(round((i + 0.5) / n, 6) for i in range(n))
+
+
 def _machine(layout: PlantLayout, line_key: str, machine_key: str) -> Machine:
     return next(m for line, m in layout.machines() if line.key == line_key and m.key == machine_key)
 
@@ -443,7 +455,7 @@ class MachiningMachine:
         self.cfg = cfg
         self.scrap_rate = cfg.scrap_rate[short]
         self.tool_changes = tool_changes
-        self.fault = FaultProcess(rng, key, mtbf_s, mttr_s, enabled=faults)
+        self.fault = FaultProcess(rng, key, mtbf_s * cfg.fault_mtbf_scale, mttr_s, enabled=faults)
         self.micro = MicroStopProcess(rng, cfg.micro_stops_per_h[short], cfg.micro_stop_s)
         self.setup = SetupProcess(machine.products, cfg.setup_s[short], cfg.setup_offset_s[short], cfg.setups)
         self.running = False
@@ -526,9 +538,10 @@ class AssemblyCell:
         self.rng = rng
         self.cfg = cfg
         self.scrap_rate = cfg.scrap_rate["cell"]
-        self.robot_fault = FaultProcess(rng, "montagem.robo", 3 * 3600, 6 * 60, faults)
-        self.fix_fault = FaultProcess(rng, "montagem.fixacao", 4 * 3600, 4 * 60, faults)
-        self.conv_fault = FaultProcess(rng, "montagem.transportador", 8 * 3600, 3 * 60, faults)
+        k = cfg.fault_mtbf_scale
+        self.robot_fault = FaultProcess(rng, "montagem.robo", 3 * 3600 * k, 6 * 60, faults)
+        self.fix_fault = FaultProcess(rng, "montagem.fixacao", 4 * 3600 * k, 4 * 60, faults)
+        self.conv_fault = FaultProcess(rng, "montagem.transportador", 8 * 3600 * k, 3 * 60, faults)
         self.micro = MicroStopProcess(rng, cfg.micro_stops_per_h["cell"], cfg.micro_stop_s)
         self.setup = SetupProcess(_machine(layout, "montagem", "fixacao").products, cfg.setup_s["cell"],
                                   cfg.setup_offset_s["cell"], cfg.setups)
@@ -541,7 +554,7 @@ class AssemblyCell:
             Cylinder("A4", (0.95,), 63_900, 600_000, 230.0, 0.004),
             # B3 (Sprint 5, predictive.md P-11): novo, saudável até `b3_onset_strokes`, depois +x ms/1000 golpes
             # até 120 % do curso novo → 447 (timeout de curso). Gerador próprio: não muda os sorteios acima.
-            Cylinder("B3", (0.50,), 0, 0, 200.0, 0.0, degrade_ms_per_kcycle=cfg.b3_drift_ms_per_kstroke,
+            Cylinder("B3", _spread(cfg.b3_strokes_per_cycle), 0, 0, 200.0, 0.0, degrade_ms_per_kcycle=cfg.b3_drift_ms_per_kstroke,
                      onset_strokes=cfg.b3_onset_strokes, failure_frac=0.20, counter_mod=U32,
                      own_rng=random.Random(f"{seed}/b3")),
         ]

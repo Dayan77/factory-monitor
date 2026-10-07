@@ -185,6 +185,33 @@ class ServerSettings(BaseSettings):
     # Public URL of the web app (links in e-mails / push).
     app_public_url: str = "https://app.factoryconnect.tech"
 
+    # Sprint 6 (backend A) — tenant file volume (layout images; never in the database): FILES_DIR/<tenant_id>/…
+    files_dir: str = "data/files"
+    layout_image_max_bytes: int = 10 * 1024 * 1024
+    layout_image_max_side_px: int = 8000
+    # gateway pulled commands (OPC UA browse, docs/sprint6.md §4.2) expire without an answer
+    gateway_command_ttl_s: float = 300.0
+    # onboarding step 9: required tags must have data continuously for this long
+    readiness_window_min: int = 15
+    # public demo (docs/sprint6.md §5): read-only tenant fed by the virtual plant
+    demo_tenant_slug: str = "demo"
+    demo_session_hours: float = 2.0
+    demo_rate_limit_per_hour: int = 10
+    demo_ai_questions_per_session: int = 10
+    demo_plant_stopped_after_s: float = 300.0
+    # demo-bot (scripted replacement WO when the cylinder alert fires); virtual plant control API (optional)
+    demo_bot_enabled: bool = True
+    demo_bot_tick_s: float = 60.0
+    demo_bot_replace_after_s: float = 900.0
+    demo_virtual_plant_control_url: str = ""
+
+    # Sprint 6 (backend B) — reports (docs/reports.md §4–§5): scheduling engine tick, attachment limit
+    # (above it the e-mail carries only a signed link valid 7 days) and catch-up window after downtime
+    reports_tick_s: float = 60.0
+    reports_enabled: bool = True
+    reports_attachment_max_bytes: int = 10 * 1024 * 1024
+    reports_catchup_days: int = 7
+
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
     jwt_refresh_token_expire_days: int = 7

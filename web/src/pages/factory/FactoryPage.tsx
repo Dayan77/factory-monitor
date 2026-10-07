@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { usePlantTree } from "@/hooks/useAssets";
 import type { StatusSummary, TreePlant } from "@/services/types";
 import { Card } from "@/components/ui/Card";
@@ -10,6 +10,10 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import Breadcrumbs from "@/components/ui/Breadcrumbs";
 import StatusSummaryBar from "./StatusSummaryBar";
 import { lineSeverity } from "./lookup";
+import DrillPeriodPicker from "@/components/drill/DrillPeriodPicker";
+import DrillKpis from "@/components/drill/DrillKpis";
+import ExportMenu from "@/components/reports/ExportMenu";
+import { drillLink, drillPaths, parseDrill } from "@/utils/drilldown";
 
 function totals(tree: TreePlant[]): Required<StatusSummary> & { machines: number; lines: number } {
   const t = { running: 0, stopped: 0, error: 0, unknown: 0, maintenance: 0, machines: 0, lines: 0 };
@@ -42,16 +46,20 @@ function Loading() {
 
 export default function FactoryPage() {
   const query = usePlantTree();
+  const [params] = useSearchParams();
+  const ctx = parseDrill(params);
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 animate-rise-in">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Breadcrumbs items={[{ label: "Fábrica" }]} />
+          <Breadcrumbs items={[{ label: "Fábrica", to: drillLink(drillPaths.plant(), ctx) }, { label: "Lista" }]} />
           <h2 className="mt-1 text-title text-fg">Visão da fábrica</h2>
-          <p className="text-body text-fg-subtle">Planta → linha → máquina. Status ao vivo.</p>
+          <p className="text-body text-fg-subtle">Planta → linha → máquina. Status ao vivo; indicadores do período escolhido.</p>
         </div>
+        <Link to={drillLink(drillPaths.plant(), ctx)} className="inline-flex min-h-10 items-center rounded-lg border border-line-strong bg-surface px-4 text-body font-medium text-fg hover:bg-surface-2">Ver no mapa</Link>
       </div>
+      <DrillPeriodPicker tz={query.data?.[0]?.timezone} />
 
       <QueryView
         query={query}
@@ -83,7 +91,9 @@ export default function FactoryPage() {
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h3 id={`plant-${plant.id}`} className="text-heading text-fg">{plant.name}</h3>
                     <span className="text-caption text-fg-subtle">{plant.timezone}</span>
+                    <span className="ml-auto"><ExportMenu report="daily_production" scopeType="plant" scopeId={plant.id} label="Exportar produção de ontem" /></span>
                   </div>
+                  <DrillKpis scope="plant" id={plant.id} ctx={ctx} machineIds={plant.lines.flatMap((l) => l.machines.map((m) => m.id))} unjustifiedLink="/stops" />
                   {plant.lines.length === 0 ? (
                     <Card><EmptyState title="Planta sem linhas" description="Nenhuma linha de produção vinculada a esta planta." /></Card>
                   ) : (
@@ -93,7 +103,7 @@ export default function FactoryPage() {
                         .map((line) => (
                           <li key={line.id}>
                             <Link
-                              to={`/factory/lines/${line.id}`}
+                              to={drillLink(drillPaths.line(line.id), ctx)}
                               data-testid="line-card"
                               className="group block h-full rounded-xl focus-visible:outline-offset-4"
                             >

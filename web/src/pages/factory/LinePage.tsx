@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useLineProduction, usePlantTree, type RangeKey } from "@/hooks/useAssets";
 import { useNow } from "@/hooks/useNow";
 import type { LineProduction, TreeMachine } from "@/services/types";
@@ -18,6 +18,10 @@ import { formatSeenAgo } from "@/utils/time";
 import { fillHourly } from "@/utils/series";
 import StatusSummaryBar from "./StatusSummaryBar";
 import { findLine } from "./lookup";
+import DrillPeriodPicker from "@/components/drill/DrillPeriodPicker";
+import DrillKpis from "@/components/drill/DrillKpis";
+import ExportMenu from "@/components/reports/ExportMenu";
+import { drillLink, drillPaths, parseDrill, type DrillContext } from "@/utils/drilldown";
 
 const RANGES = [
   { value: "8h", label: "8 h" },
@@ -25,14 +29,20 @@ const RANGES = [
   { value: "7d", label: "7 dias" },
 ] as const;
 
-function MachineTile({ m, now }: { m: TreeMachine; now: number }) {
+function MachineTile({ m, now, ctx, output, bottleneck }: { m: TreeMachine; now: number; ctx: DrillContext; output?: boolean; bottleneck?: boolean }) {
   return (
-    <Link to={`/factory/machines/${m.id}`} data-testid="machine-tile" className="group block h-full rounded-xl">
+    <Link to={drillLink(drillPaths.machine(m.id), ctx)} data-testid="machine-tile" className="group block h-full rounded-xl">
       <Card interactive className="h-full">
         <div className="flex items-start justify-between gap-2">
           <p className="min-w-0 truncate text-heading text-fg">{m.name}</p>
           <MachineStatusBadge status={m.status} size="sm" />
         </div>
+        {(output || bottleneck) && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {output && <Badge tone="info">Máquina de saída</Badge>}
+            {bottleneck && <Badge tone="warn">Gargalo (mais parada)</Badge>}
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between text-caption text-fg-subtle">
           <span>{m.positions_count} {m.positions_count === 1 ? "posição" : "posições"}</span>
           <span>{formatSeenAgo(m.last_seen_at, now)}</span>
@@ -77,6 +87,8 @@ function ProductionBody({ data }: { data: LineProduction }) {
 
 export default function LinePage() {
   const { lineId = "" } = useParams();
+  const [params] = useSearchParams();
+  const ctx = parseDrill(params);
   const tree = usePlantTree();
   const [range, setRange] = useState<RangeKey>("24h");
   const production = useLineProduction(lineId, range);
@@ -97,7 +109,7 @@ export default function LinePage() {
                 <EmptyState
                   title="Linha não encontrada"
                   description="Ela pode ter sido removida ou pertencer a outra empresa."
-                  action={<Link to="/factory" className="text-body font-medium text-ok hover:underline">Voltar para a fábrica</Link>}
+                  action={<Link to={drillLink(drillPaths.plant(), ctx)} className="text-body font-medium text-ok hover:underline">Voltar para a fábrica</Link>}
                 />
               </Card>
             );
@@ -106,18 +118,24 @@ export default function LinePage() {
           return (
             <>
               <div className="space-y-2">
-                <Breadcrumbs items={[{ label: "Fábrica", to: "/factory" }, { label: plant.name, to: "/factory" }, { label: line.name }]} />
-                <div className="flex flex-wrap items-center gap-3">
-                  <h2 className="text-title text-fg">{line.name}</h2>
-                  {line.status_summary.error > 0 && <Badge tone="danger" dot pulse>{line.status_summary.error} em falha</Badge>}
+                <Breadcrumbs items={[{ label: plant.name, to: drillLink(drillPaths.plant(), ctx) }, { label: line.name }]} />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="text-title text-fg">{line.name}</h2>
+                    {line.status_summary.error > 0 && <Badge tone="danger" dot pulse>{line.status_summary.error} em falha</Badge>}
+                  </div>
+                  <ExportMenu report="weekly_oee" scopeType="line" scopeId={line.id} label="Exportar semana" />
                 </div>
                 <div className="max-w-xl"><StatusSummaryBar summary={line.status_summary} /></div>
+                <DrillPeriodPicker tz={plant.timezone} />
               </div>
+
+              <DrillKpis scope="line" id={line.id} ctx={ctx} machineIds={line.machines.map((m) => m.id)} unjustifiedLink={`/stops?line=${line.id}`} />
 
               <Card>
                 <CardHeader
                   title="Produção e cadência"
-                  description="Peças por hora (boas + refugo) — a altura de cada barra é a cadência daquela hora."
+                  description="Peças por hora (boas + refugo) da máquina de saída — a altura de cada barra é a cadência daquela hora."
                   action={<Tabs id="line-range" label="Período" items={RANGES} value={range} onChange={setRange} size="sm" />}
                 />
                 <TabPanel id="line-range" activeValue={range}>
@@ -138,7 +156,7 @@ export default function LinePage() {
                 ) : (
                   <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {line.machines.map((m) => (
-                      <li key={m.id}><MachineTile m={m} now={now} /></li>
+                      <li key={m.id}><MachineTile m={m} now={now} ctx={ctx} output={line.output_machine_id === m.id} bottleneck={line.bottleneck_machine_id === m.id} /></li>
                     ))}
                   </ul>
                 )}

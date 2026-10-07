@@ -42,7 +42,7 @@ describe("ShiftReportPage", () => {
     expect(stops).toHaveTextContent("Setup / troca de produto");
     expect(stops).toHaveTextContent("troca para A-200");
     expect(screen.getByText("1 sem justificativa")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Imprimir / PDF" }));
+    await user.click(screen.getByRole("button", { name: "Imprimir" }));
     expect(print).toHaveBeenCalled();
   });
 

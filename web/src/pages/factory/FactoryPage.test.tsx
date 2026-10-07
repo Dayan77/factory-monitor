@@ -36,7 +36,7 @@ describe("FactoryPage", () => {
     const cards = await screen.findAllByTestId("line-card");
     // Linha 2 has a machine in error → first
     expect(cards[0]).toHaveTextContent("Linha 2 — Envase");
-    expect(cards[0]).toHaveAttribute("href", "/factory/lines/line-2");
+    expect(cards[0]).toHaveAttribute("href", "/factory/lines/line-2?period=today");
     expect(within(cards[0]).getByText("1 em falha")).toBeInTheDocument();
     expect(cards[1]).toHaveTextContent("Tudo operando");
 

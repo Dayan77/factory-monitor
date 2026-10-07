@@ -14,6 +14,7 @@ import type {
   SensorHistory, Shift, ShiftBody, ShiftReport, Tag, TreePlant, UsageHistory, UsageMeasure,
 } from "./types";
 import { normalizeOverview } from "./efficiency";
+import { DEMO_WRITE_MSG, demoAllowsRequest, tokenIsDemo } from "@/utils/demo";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -23,6 +24,14 @@ export const api = axios.create({ baseURL: BASE_URL, timeout: 15_000 });
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem("access_token");
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Public demo (sprint6 §5): read-only. The server answers 403 anyway; failing here keeps the message identical
+  // without a round trip (and never sends a write from a demo session).
+  if (tokenIsDemo(token) && !demoAllowsRequest(config.method, config.url)) {
+    const err = new AxiosError(DEMO_WRITE_MSG, "ERR_DEMO_READ_ONLY", config, null, {
+      data: { detail: DEMO_WRITE_MSG }, status: 403, statusText: "Forbidden", headers: {}, config,
+    });
+    return Promise.reject(err);
+  }
   return config;
 });
 
@@ -69,9 +78,11 @@ api.interceptors.response.use(
 );
 
 function _logout() {
+  const demo = tokenIsDemo(localStorage.getItem("access_token"));
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
-  window.location.replace("/login");
+  // an expired demo session (2 h) goes back to the public site, where "Ver demonstração" opens a new one
+  window.location.replace(demo ? "/?demo=expired" : "/login");
 }
 
 // ── Typed API calls ───────────────────────────────────────────────

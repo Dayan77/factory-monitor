@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,8 @@ from ...services.oee.engine import (UNJUSTIFIED, components as machine_component
                                     load_machine_data, machine_infos, reason_meta)
 from ...services.oee.service import (oee_delta, day_components, instances_of_day, load_units, oee_for, oee_payload,
                                      pareto_for, parse_window, productive_today, reliability_for, resolve_scope)
+from ...services import operator_scope as opscope
+from ...services.drilldown import resolve_period
 from ...services.usage import queries as uq
 from ...services.validation import is_uuid
 from ...websocket.manager import manager
@@ -101,13 +104,18 @@ async def list_downtime(user: CurrentUser, db: DB, machine_id: Optional[str] = N
     if machine_id:
         if not is_uuid(machine_id):
             return []
+        await opscope.check_machine(db, user, machine_id)        # operator PWA: only the lines of the operator
         mids = [machine_id]
     if line_id:
         if not is_uuid(line_id):
             return []
+        opscope.check_line(user, line_id)
         lm = (await db.execute(select(Machine.id).where(Machine.tenant_id == user.tenant_id,
                                                         Machine.line_id == line_id))).scalars().all()
         mids = [m for m in lm if mids is None or m in mids]
+    allowed = await opscope.allowed_machine_ids(db, user)
+    if allowed is not None:
+        mids = allowed if mids is None else [m for m in mids if m in allowed]
     evs = await query_downtime(db, user.tenant_id, mids, _aware(start), _aware(stop), open, unjustified, limit)
     names = await _names(db, user.tenant_id, [e.machine_id for e in evs])
     return [_out(e, names) for e in evs]
@@ -172,15 +180,38 @@ async def _check_preventive(db: AsyncSession, tenant_id: str, machine_id: str, c
         "suggested_reason_code": PREVENTIVE_UNPLANNED})
 
 
+async def _replay_event(db: AsyncSession, user: User, entity_id: Optional[str], response: Response) -> DowntimeOut:
+    """X-Client-Action-Id already executed: what was recorded (the server wins, §3.2)."""
+    ev = (await db.execute(select(DowntimeEvent).where(DowntimeEvent.id == entity_id,
+                                                       DowntimeEvent.tenant_id == user.tenant_id))).scalar_one_or_none()
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Parada não encontrada.")
+    response.headers["Idempotent-Replay"] = "true"
+    return _out(ev, await _names(db, user.tenant_id, [ev.machine_id]))
+
+
 @downtime_router.patch("/{event_id}", response_model=DowntimeOut, dependencies=OPERATOR)
-async def justify_downtime(event_id: str, body: DowntimePatch, user: CurrentUser, db: DB):
+async def justify_downtime(event_id: str, body: DowntimePatch, user: CurrentUser, db: DB, response: Response,
+                           x_client_action_id: Annotated[Optional[str], Header()] = None):
+    """X-Client-Action-Id (operator tablet, offline queue): a replay returns what was recorded; with the key, a stop
+    already justified by another user is not overwritten (409 with the current record — the server wins)."""
+    action = opscope.valid_action_id(x_client_action_id)
     if not is_uuid(event_id):
         raise HTTPException(status_code=404, detail="Parada não encontrada.")
+    prev = await opscope.replayed(db, user, action, "downtime.justify")
+    if prev is not None:
+        return await _replay_event(db, user, prev.entity_id, response)
     ev = (await db.execute(select(DowntimeEvent).where(DowntimeEvent.id == event_id,
                                                        DowntimeEvent.tenant_id == user.tenant_id)
                            .with_for_update())).scalar_one_or_none()
     if ev is None:
         raise HTTPException(status_code=404, detail="Parada não encontrada.")
+    await opscope.check_machine(db, user, ev.machine_id)
+    if action and ev.justified_by is not None and ev.justified_by != user.id and not _unjustified(ev):
+        cur = _out(ev, await _names(db, user.tenant_id, [ev.machine_id]))
+        raise HTTPException(status_code=409, detail={
+            "message": "Parada já justificada por outro usuário — vale o que foi gravado.",
+            "current": cur.model_dump(mode="json")})
     sent = body.model_fields_set
     if "reason_code" in sent and body.reason_code is not None:
         rc = await _reason(db, user.tenant_id, body.reason_code)
@@ -192,16 +223,30 @@ async def justify_downtime(event_id: str, body: DowntimePatch, user: CurrentUser
     if "comment" in sent:
         ev.comment = body.comment
     await _sync_failure(db, ev)
-    await db.commit()
+    opscope.remember(db, user, action, "downtime.justify", ev.id, 200)
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        if not opscope.is_duplicate_key(e):
+            raise
+        return await _replay_event(db, user, ev.id, response)      # the same key won a concurrent race
     await db.refresh(ev)
     await manager.broadcast(user.tenant_id, event_message(ev, "justify"))
     return _out(ev, await _names(db, user.tenant_id, [ev.machine_id]))
 
 
 @downtime_router.post("/", response_model=DowntimeOut, status_code=status.HTTP_201_CREATED, dependencies=OPERATOR)
-async def create_downtime(body: DowntimeCreate, user: CurrentUser, db: DB):
-    """Manual stop (e.g. declared by the operator, or during a data gap)."""
+async def create_downtime(body: DowntimeCreate, user: CurrentUser, db: DB, response: Response,
+                          x_client_action_id: Annotated[Optional[str], Header()] = None):
+    """Manual stop (e.g. declared by the operator, or during a data gap). X-Client-Action-Id: a replay returns the
+    stop created the first time (never a second one)."""
+    action = opscope.valid_action_id(x_client_action_id)
+    prev = await opscope.replayed(db, user, action, "downtime.create")
+    if prev is not None:
+        return await _replay_event(db, user, prev.entity_id, response)
     machine_id = await ensure_owned(db, Machine, body.machine_id, user.tenant_id, "machine_id")
+    await opscope.check_machine(db, user, machine_id)
     start, end = _aware(body.start), _aware(body.end)
     now = datetime.now(timezone.utc)
     if (start - now).total_seconds() > CLOCK_SKEW_S or (end and (end - now).total_seconds() > CLOCK_SKEW_S):
@@ -222,7 +267,15 @@ async def create_downtime(body: DowntimeCreate, user: CurrentUser, db: DB):
     db.add(ev)
     await db.flush()
     await _sync_failure(db, ev)
-    await db.commit()
+    opscope.remember(db, user, action, "downtime.create", ev.id, 201)
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        if not opscope.is_duplicate_key(e):
+            raise
+        prev = await opscope.replayed(db, user, action, "downtime.create")
+        return await _replay_event(db, user, prev.entity_id if prev else None, response)
     await db.refresh(ev)
     await manager.broadcast(user.tenant_id, event_message(ev, "open" if end is None else "close"))
     return _out(ev, await _names(db, user.tenant_id, [machine_id]))
@@ -237,11 +290,14 @@ Scope = Literal["machine", "line", "plant"]
 async def get_oee(user: CurrentUser, db: DB, scope: Scope = "machine", id: str = Query(...),
                   start: Optional[datetime] = None, stop: Optional[datetime] = None,
                   group_by: Literal["none", "hour", "shift", "day", "shift_name"] = "none",
-                  compare_to: Literal["none", "previous_period"] = "none"):
+                  compare_to: Literal["none", "previous_period"] = "none",
+                  period: Optional[Literal["current_shift", "today", "yesterday", "last_7d", "custom"]] = None):
     """group_by=shift_name sums every instance of the same shift (S3-8); compare_to=previous_period adds the
-    same-length period just before (`previous`) and the server-computed `delta` (Sprint 5, AI assistant)."""
+    same-length period just before (`previous`) and the server-computed `delta` (Sprint 5, AI assistant).
+    period (drill-down, sprint6 §2.2): the same window at every level — today/yesterday = productive day."""
     now = datetime.now(timezone.utc)
     sc = await resolve_scope(db, user.tenant_id, scope, id)
+    start, stop, pinfo = resolve_period(sc.cal, period, start, stop, now)
     s, e = parse_window(sc, start, stop, now, group_by)
     out = await oee_for(db, sc, s, e, group_by, now)
     if compare_to == "previous_period":
@@ -250,21 +306,26 @@ async def get_oee(user: CurrentUser, db: DB, scope: Scope = "machine", id: str =
         prev.pop("points", None)
         out["previous"] = prev
         out["delta"] = oee_delta(out, prev)
+    if pinfo:
+        out["period"] = pinfo
     return out
 
 
 @kpi_router.get("/losses/pareto", response_model=list[ParetoRow])
 async def get_pareto(user: CurrentUser, db: DB, scope: Scope = "machine", id: str = Query(...),
                      start: Optional[datetime] = None, stop: Optional[datetime] = None,
-                     by: Literal["code", "category"] = "code"):
+                     by: Literal["code", "category"] = "code",
+                     period: Optional[Literal["current_shift", "today", "yesterday", "last_7d", "custom"]] = None):
+    """Loss Pareto. Plant = Σ of its lines' (each line = its output machine, kpis.md §1.6): minutes add up."""
     now = datetime.now(timezone.utc)
     sc = await resolve_scope(db, user.tenant_id, scope, id)
+    start, stop, _ = resolve_period(sc.cal, period, start, stop, now)
     s, e = parse_window(sc, start, stop, now)
     return await pareto_for(db, sc, s, e, now, by)
 
 
 @kpi_router.get("/reliability", response_model=ReliabilityOut)
-async def get_reliability(user: CurrentUser, db: DB, scope: Literal["machine", "line"] = "machine",
+async def get_reliability(user: CurrentUser, db: DB, scope: Literal["machine", "line", "plant"] = "machine",
                           id: str = Query(...), start: Optional[datetime] = None, stop: Optional[datetime] = None):
     now = datetime.now(timezone.utc)
     sc = await resolve_scope(db, user.tenant_id, scope, id)

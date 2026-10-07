@@ -6,6 +6,7 @@ import ArchitectureDiagram from "../components/ArchitectureDiagram.astro";
 import HierarchyDiagram from "../components/HierarchyDiagram.astro";
 import CtaBand from "../components/CtaBand.astro";
 import Icon from "../components/Icon.astro";
+import DemoButton from "../components/DemoButton.astro";
 import { REGISTER_URL, SITE_URL, DEFAULT_DESCRIPTION, APP_URL } from "../lib/site";
 
 const software = {
@@ -66,8 +67,10 @@ const journey = [
         </p>
         <div class="mt-8 flex flex-wrap gap-3">
           <a href={REGISTER_URL} class="btn-primary px-6 text-base">Teste grátis</a>
+          <DemoButton placement="hero" class="inline-flex [&>a]:px-6 [&>a]:text-base" />
           <a href="/contato" class="btn-ghost px-6 text-base">Fale com a gente</a>
         </div>
+        <p class="mt-3 text-sm text-muted">A demonstração abre na hora, sem cadastro: uma planta simulada ao vivo, somente leitura.</p>
         <ul class="mt-8 grid gap-2 text-sm text-muted sm:grid-cols-2">
           {["Modbus TCP · OPC UA · MQTT", "Implantação em dias, não meses", "Funciona com CLPs que você já tem", "Dados isolados por empresa"].map((t) => (
             <li class="flex items-center gap-2"><Icon name="check" size={18} class="text-accent shrink-0" />{t}</li>

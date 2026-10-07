@@ -1,3 +1,4 @@
+import ExportMenu from "@/components/reports/ExportMenu";
 import { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from "recharts";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -160,7 +161,10 @@ export default function ReliabilityPage() {
             Últimos 12 meses ({formatDate(addDays(today, -365))} – {formatDate(addDays(today, -1))}). Só falhas críticas e degradadas entram em MTBF/MCBF/MTTR; MTTR só com restabelecimento.
           </p>
         </div>
-        <Tabs id="rel-group" label="Agrupar por" items={GROUPS} value={group} onChange={(v) => set({ group: v === "position" ? null : v })} size="sm" />
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <ExportMenu report="reliability_life" scopeType="tenant" label="Exportar vida (Weibull)" params={{ cutoff_date: today }} />
+          <Tabs id="rel-group" label="Agrupar por" items={GROUPS} value={group} onChange={(v) => set({ group: v === "position" ? null : v })} size="sm" />
+        </div>
       </div>
       <TabPanel id="rel-group" activeValue={group} className="space-y-5">
         <QueryView query={q} errorTitle="Não foi possível calcular a confiabilidade"
