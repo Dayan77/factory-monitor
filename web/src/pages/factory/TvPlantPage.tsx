@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { SUSPECT_TITLE, oeeText } from "@/utils/mapKpis";
 import { Link, useParams } from "react-router-dom";
 import { useRealtimeConnection } from "@/hooks/useWebSocket";
 import { usePlantTree } from "@/hooks/useAssets";
@@ -70,7 +71,7 @@ export default function TvPlantPage() {
                   <StateChip state={highlight.state} className="text-heading" />
                   <p className="mt-3 text-display">{highlight.name}</p>
                   <p className="mt-1 text-heading text-fg-muted">{markerText(highlight, now)}</p>
-                  <p className="mt-3 text-heading tabular">OEE do turno {highlight.kpis?.oee == null ? "—" : formatPct(highlight.kpis.oee)}</p>
+                  <p className="mt-3 text-heading tabular">OEE do turno {highlight.kpis?.oee == null ? "—" : formatPct(highlight.kpis.oee)}{oeeText(highlight.kpis).suspect && <span className="ml-2 text-[#f59e0b]" title={SUSPECT_TITLE}>⚠ suspeito</span>}</p>
                   <p className="mt-2 text-caption text-fg-subtle">{(idx % Math.max(1, problems.length)) + 1} de {problems.length}</p>
                 </div>
               ) : (
@@ -81,7 +82,7 @@ export default function TvPlantPage() {
                   <li key={l.line_id} className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
                     <span className="text-heading">{l.name}</span>
                     <span className="flex items-center gap-2">
-                      <span className="text-heading tabular">{l.kpis?.oee == null ? "—" : formatPct(l.kpis.oee)}</span>
+                      <span className="text-heading tabular">{l.kpis?.oee == null ? "—" : formatPct(l.kpis.oee)}{oeeText(l.kpis).suspect && <span className="ml-1 text-[#f59e0b]" title={SUSPECT_TITLE}>⚠</span>}</span>
                       {l.output_state && <StateChip state={l.output_state} text="saída" />}
                     </span>
                   </li>

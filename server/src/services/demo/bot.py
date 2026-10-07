@@ -6,8 +6,11 @@ predictive WO, schedules and starts it, registers the cylinder replacement (new 
 ISO 14224 failure record (degraded, continuous condition monitoring), completes the WO with
 `finding = defect_confirmed` and closes it. Every step goes through the maintenance service (WO history with
 demo-bot as the author) and is recorded in audit_events. When DEMO_VIRTUAL_PLANT_CONTROL_URL is set, the virtual
-plant is told to swap the cylinder too (POST /replace), so its wear restarts — the next alert comes later again.
-Only ever acts on the tenant flagged `is_demo`.
+plant is told to swap the cylinder too (POST /replace with X-Control-Token = DEMO_VIRTUAL_PLANT_CONTROL_TOKEN), so
+its wear restarts — the next alert comes later again. A refused or failed /replace is recorded in audit
+(`demo_bot.virtual_plant_replace_failed`) and the bot leaves that position alone for
+settings.demo_bot_failure_backoff_s, instead of piling up a replacement WO every 15 min on a cylinder that keeps
+wearing. Only ever acts on the tenant flagged `is_demo`.
 """
 from __future__ import annotations
 
@@ -20,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
-from ...models import (Component, FailureRecord, Machine, Position, PredictiveAlert, Tag, WorkOrder,
+from ...models import (AuditEvent, Component, FailureRecord, Machine, Position, PredictiveAlert, Tag, WorkOrder,
                        WorkOrderReplacement)
 from ...models.tag import SemanticRole
 from .. import audit
@@ -48,10 +51,13 @@ async def run_once(db: AsyncSession, now: Optional[datetime] = None) -> list[dic
         PredictiveAlert.state.in_(("open", "acknowledged")), PredictiveAlert.opened_at <= due)
         .order_by(PredictiveAlert.opened_at).with_for_update(skip_locked=True))).scalars().all()
     done = []
+    backing_off = await _positions_backing_off(db, t.id, now)
     for a in alerts:
         pos = await db.get(Position, a.position_id)
         if pos is None or pos.tenant_id != t.id:
             continue
+        if pos.id in backing_off:
+            continue                      # the virtual plant refused the last swap here: do not replace again
         if a.work_order_id:
             wo = await db.get(WorkOrder, a.work_order_id)
             if wo is not None and wo.state not in ("cancelled", "completed", "closed"):
@@ -94,10 +100,27 @@ async def run_once(db: AsyncSession, now: Optional[datetime] = None) -> list[dic
             "machine": machine.name if machine else None, "removed_component_id": old.id if old else None,
             "installed_component_id": new.id, "work_order_number": wo.number, "virtual_plant_ref": control_ref})
         await db.commit()
-        done.append({"alert_id": a.id, "work_order_id": wo.id, "position_id": pos.id, "virtual_plant_ref": control_ref})
-        if control_ref:
-            await _virtual_plant_replace(control_ref)
+        entry = {"alert_id": a.id, "work_order_id": wo.id, "position_id": pos.id, "virtual_plant_ref": control_ref}
+        if control_ref and settings.demo_virtual_plant_control_url:
+            ok, detail = await _virtual_plant_replace(control_ref)
+            entry["virtual_plant_reset"] = ok
+            if not ok:
+                await audit.record(db, t.id, bot.id, "demo_bot.virtual_plant_replace_failed", "position", pos.id, {
+                    "position_id": pos.id, "virtual_plant_ref": control_ref, "work_order_id": wo.id,
+                    "detail": detail, "backoff_s": settings.demo_bot_failure_backoff_s})
+                await db.commit()
+                backing_off.add(pos.id)
+        done.append(entry)
     return done
+
+
+async def _positions_backing_off(db: AsyncSession, tenant_id: str, now: datetime) -> set[str]:
+    """Positions whose last virtual-plant swap failed less than demo_bot_failure_backoff_s ago."""
+    since = now - timedelta(seconds=settings.demo_bot_failure_backoff_s)
+    rows = (await db.execute(select(AuditEvent.entity_id).where(
+        AuditEvent.tenant_id == tenant_id, AuditEvent.action == "demo_bot.virtual_plant_replace_failed",
+        AuditEvent.entity_type == "position", AuditEvent.created_at >= since))).scalars().all()
+    return {r for r in rows if r}
 
 
 async def _control_ref(db: AsyncSession, tenant_id: str, position_id: str) -> Optional[str]:
@@ -112,18 +135,27 @@ async def _control_ref(db: AsyncSession, tenant_id: str, position_id: str) -> Op
     return None
 
 
-async def _virtual_plant_replace(ref: str) -> None:
+async def _virtual_plant_replace(ref: str) -> tuple[bool, str]:
+    """POST {control}/replace. (ok, detail): ok only on a 2xx answer."""
     url = settings.demo_virtual_plant_control_url.rstrip("/")
     if not url:
-        return
+        return False, "no control url"
     import httpx
+    headers = {}
+    if settings.demo_virtual_plant_control_token:
+        headers["X-Control-Token"] = settings.demo_virtual_plant_control_token
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"{url}/replace", json={"position": ref, "reset_counter": False,
-                                                     "reason": "preventive_replacement"})
-        log.info("demo_bot.virtual_plant_replace", ref=ref, status=r.status_code)
+            r = await c.post(f"{url}/replace", headers=headers,
+                             json={"position": ref, "reset_counter": False, "reason": "preventive_replacement"})
     except Exception as e:  # noqa: BLE001 — the WO is done; the virtual plant keeps wearing until next time
         log.warning("demo_bot.virtual_plant_replace_failed", ref=ref, error=str(e)[:200])
+        return False, f"error: {str(e)[:200]}"
+    if 200 <= r.status_code < 300:
+        log.info("demo_bot.virtual_plant_replace", ref=ref, status=r.status_code)
+        return True, f"HTTP {r.status_code}"
+    log.warning("demo_bot.virtual_plant_replace_failed", ref=ref, status=r.status_code)
+    return False, f"HTTP {r.status_code}"
 
 
 async def run_demo_bot() -> None:

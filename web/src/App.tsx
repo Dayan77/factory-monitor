@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Routes, Route, useParams } from "react-router-dom";
+import { BrowserRouter, Link, Navigate, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -7,6 +7,7 @@ import RequireCapability from "@/components/RequireCapability";
 import LandingPage from "@/pages/LandingPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import DemoPage from "@/pages/DemoPage";
 import RaioXPage from "@/pages/efficiency/RaioXPage";
 import StopsPage from "@/pages/efficiency/StopsPage";
 import LinesPage from "@/pages/LinesPage";
@@ -65,6 +66,15 @@ function RouteFallback() {
   );
 }
 
+function NotFoundPage() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface px-4 text-center text-fg">
+      <h1 className="text-lg font-semibold">Página não encontrada</h1>
+      <Link to="/" className="text-sm text-accent underline">Ir para o início</Link>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -76,6 +86,8 @@ export default function App() {
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/op/login" element={<OperatorLoginPage />} />
+          {/* Destino do "Ver demonstração" do site público ({APP_URL}/demo) */}
+          <Route path="/demo"     element={<DemoPage />} />
 
           {/* App protegido */}
           <Route element={<ProtectedRoute />}>
@@ -129,6 +141,8 @@ export default function App() {
               <Route path="/admin"     element={<AdminPage />} />
             </Route>
           </Route>
+          {/* Rota desconhecida: nunca uma página em branco */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
       </BrowserRouter>

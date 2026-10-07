@@ -4,6 +4,7 @@ import type { LayoutMarker, MapView } from "@/services/sprint6Types";
 import { machineIndex, mapAspect, markerKey } from "@/utils/plantMap";
 import { markerText, STATE_META, STATE_ORDER } from "@/utils/visualState";
 import { formatDec1, formatPct } from "@/utils/format";
+import { badgeText, oeeText } from "@/utils/mapKpis";
 import MapSurface from "./MapSurface";
 import { AreaLabelMarker, LineLabelMarker, MachineMarker } from "./Markers";
 import StateIcon from "./StateIcon";
@@ -72,8 +73,10 @@ export default function LiveMap({ view, imageUrl, now, dimmed, selectedId, onSel
             <p className="mt-0.5 flex items-center gap-1 text-fg-muted"><StateIcon state={hovered.state} className="size-3.5" />{markerText(hovered, now)}</p>
             <p className="mt-1 tabular text-fg-muted">
               OEE do turno {hovered.kpis?.oee == null ? "—" : formatPct(hovered.kpis.oee)}
-              {hovered.kpis?.cadence_per_hour != null && ` · ${formatDec1(hovered.kpis.cadence_per_hour)} pç/h`}
+              {hovered.kpis?.cadence_per_hour != null && ` · ao vivo ${formatDec1(hovered.kpis.cadence_per_hour)} pç/h`}
             </p>
+            {oeeText(hovered.kpis).suspect && <p className="mt-1 text-[#b45309]">⚠ Desempenho acima de 100 %: valor suspeito</p>}
+            {hovered.badges.map(badgeText).filter(Boolean).map((t) => <p key={t} className="mt-1 text-fg-muted">ⓘ {t}</p>)}
             <p className="mt-1 text-fg-subtle">Clique para ver o resumo</p>
           </div>
         )}

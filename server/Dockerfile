@@ -13,7 +13,9 @@ RUN pip install --only-binary=:all: -r requirements.txt
 
 COPY . .
 
-RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
+# data/files = FILES_DIR (volume server-files no compose de produção): existe na imagem com dono app, então o
+# volume nomeado novo nasce gravável pelo uid 10001.
+RUN useradd --system --uid 10001 --no-create-home app && mkdir -p /app/data/files && chown -R app /app
 USER app
 
 EXPOSE 8000

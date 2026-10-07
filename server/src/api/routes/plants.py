@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import get_current_user, require_roles
+from ...services import operator_scope as opscope
 from ...db import get_db
 from ...models import Line, Machine, Plant, Position, User, UserRole
 from ...services.validation import is_uuid
@@ -53,6 +54,10 @@ async def plant_tree(user: CurrentUser, db: DB):
     plants = (await db.execute(select(Plant).where(Plant.tenant_id == tid).order_by(Plant.name))).scalars().all()
     lines = (await db.execute(select(Line).where(Line.tenant_id == tid).order_by(Line.name))).scalars().all()
     machines = (await db.execute(select(Machine).where(Machine.tenant_id == tid).order_by(Machine.name))).scalars().all()
+    own = opscope.operator_lines(user)       # operator PWA: only his lines (§3.2)
+    if own is not None:
+        lines = [ln for ln in lines if str(ln.id) in own]
+        machines = [m for m in machines if str(m.line_id) in own]
     counts = dict((await db.execute(
         select(Position.machine_id, func.count()).where(Position.tenant_id == tid).group_by(Position.machine_id)
     )).all())

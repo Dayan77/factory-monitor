@@ -119,10 +119,13 @@ nova ligada à anterior (OS concluída não reabre).
 <a id="tablet"></a>
 ## Como cadastrar o tablet da linha
 
-1. No tablet novo, abra o endereço do FactoryConnect em `/op` e instale o app ("Adicionar à tela inicial").
-2. Num computador, gere o **código de cadastro do tablet** para a linha (válido por 10 min).
-3. Digite o código no tablet. Ele passa a atender **só aquela linha** e só aceita operadores daquela linha.
-4. Tablet perdido ou trocado: peça ao administrador para **revogar** o dispositivo; o código antigo deixa de valer.
+1. No tablet, abra o endereço do FactoryConnect em `/op` e instale o app ("Adicionar à tela inicial").
+2. Entre com o usuário (e-mail e senha) de um operador da linha e escolha a linha em "Este tablet fica em qual
+   linha?". A escolha fica guardada no aparelho; o operador só vê as linhas atribuídas a ele.
+3. Tablet perdido: peça ao administrador para trocar a senha dos operadores que entraram nele.
+
+> **Ainda não existe**: código de cadastro do tablet (10 min), tablet preso a uma linha por um token de
+> dispositivo revogável, e entrada por PIN/crachá. Estão pendentes no roadmap (§3.2 do Sprint 6).
 
 ## Como fechar o turno
 

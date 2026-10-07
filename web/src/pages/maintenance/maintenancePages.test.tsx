@@ -69,6 +69,15 @@ describe("Próximas manutenções", () => {
     await waitFor(() => expect(screen.getAllByTestId("plan-row")).toHaveLength(1));
   });
 
+  it("flags a plan whose pace comes from fewer than 14 days of data (audit A-3)", async () => {
+    vi.mocked(plansApi.status).mockResolvedValue(ok([
+      planStatus({ plan_id: "PL9", plan_name: "U4", state: "due_soon", days_to_due: 15, projected_date: "2099-10-20", low_confidence: true }),
+    ]));
+    renderRoute(<UpcomingPage />, "/maintenance/upcoming", "/maintenance/upcoming");
+    const [row] = await screen.findAllByTestId("plan-row");
+    expect(within(row).getByTestId("plan-low-confidence")).toHaveTextContent("menos de 14 dias de dados");
+  });
+
   it("explicit empty and error states", async () => {
     vi.mocked(plansApi.status).mockResolvedValue(ok([]));
     renderRoute(<UpcomingPage />, "/maintenance/upcoming", "/maintenance/upcoming");

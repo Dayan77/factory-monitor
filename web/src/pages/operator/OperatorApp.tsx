@@ -20,7 +20,9 @@ import { formatInt, formatPct } from "@/utils/format";
 import { apiErrorMessage } from "@/utils/errors";
 import { clockTime } from "@/utils/plantMap";
 import { isDemoUser } from "@/utils/demo";
-import { OFFLINE_BANNER_MS, useConnectivity, useIdleLogout, useOperatorQueue, useTabletLine } from "./useOperator";
+import { SUSPECT_TITLE, oeeText } from "@/utils/mapKpis";
+import { OFFLINE_BANNER_MS, readLine, useConnectivity, useIdleLogout, useOperatorQueue, usePendingOwners, useTabletLine } from "./useOperator";
+import { useSeedTabletSnapshot, useTabletSnapshot } from "./tabletCache";
 
 const UNDO_MS = 5_000;
 
@@ -54,7 +56,10 @@ function OperatorShell() {
   const navigate = useNavigate();
   useRealtimeConnection(user?.tenant_id);
   useEffect(() => { void registerServiceWorker(); }, []);
+  // Offline after a (re)open: what the justify screens need comes from the device snapshot (acceptance 5).
+  useSeedTabletSnapshot(readLine());
   const { tree, options, current, choose } = useTabletLine();
+  useTabletSnapshot(current?.line.id ?? null);
   const conn = useConnectivity();
   const now = useNow(1000);
   const [notice, setNotice] = useState<{ tone: "ok" | "warn" | "danger"; text: string } | null>(null);
@@ -71,7 +76,8 @@ function OperatorShell() {
   });
   const [confirmLogout, setConfirmLogout] = useState(false);
   const signOut = () => { logout(); navigate("/op/login", { replace: true }); };
-  useIdleLogout(signOut);
+  // Never end the session while this operator still has actions waiting: they replay only with his session.
+  useIdleLogout(signOut, undefined, queue.items.length > 0);
 
   useEffect(() => {
     if (!notice) return;
@@ -98,7 +104,9 @@ function OperatorShell() {
           <span className="hidden text-[1rem] text-fg-muted sm:inline">{user?.name}</span>
           {confirmLogout ? (
             <button type="button" onClick={signOut} data-testid="op-logout-confirm"
-              className="min-h-14 rounded-xl border-2 border-[#7f1d1d] bg-[#b91c1c] px-4 text-[1rem] font-semibold text-white">Sair agora</button>
+              className="min-h-14 rounded-xl border-2 border-[#7f1d1d] bg-[#b91c1c] px-4 text-[1rem] font-semibold text-white">
+              {queue.items.length > 0 ? `Sair com ${queue.items.length} pendente${queue.items.length > 1 ? "s" : ""} (só envia quando você voltar)` : "Sair agora"}
+            </button>
           ) : (
             <button type="button" onClick={() => { setConfirmLogout(true); setTimeout(() => setConfirmLogout(false), 5000); }} data-testid="op-logout"
               className="min-h-14 rounded-xl border-2 border-line-strong px-4 text-[1rem] font-semibold text-fg">Trocar operador</button>
@@ -202,6 +210,7 @@ function Home({ line, plantId, tz, dimmed, now, onChangeLine, pending }: { line:
           <p className="text-[1rem] text-fg-muted">OEE do turno</p>
           <p className="text-[2.5rem] font-bold tabular" data-testid="op-oee">{lv?.kpis?.oee == null ? "—" : formatPct(lv.kpis.oee)}</p>
           {lv?.kpis?.oee == null && map.view && <p className="text-[0.95rem] text-fg-subtle">{map.view.shift ? "sem dados suficientes" : "fora do turno"}</p>}
+          {oeeText(lv?.kpis).suspect && <p className="text-[0.95rem] font-semibold text-[#b45309]" title={SUSPECT_TITLE}>⚠ valor suspeito: desempenho acima de 100 %</p>}
         </div>
         <div className="rounded-2xl border border-line bg-surface p-4">
           <p className="text-[1rem] text-fg-muted">Produção do turno{goal ? " / meta" : ""}</p>
@@ -263,6 +272,22 @@ function hhmm(iso: string, tz: string): string {
   return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: tz });
 }
 
+type QState = { isPending: boolean; fetchStatus: string; isStale?: boolean; dataUpdatedAt: number; data?: unknown };
+
+/** Pending query: "Carregando…" while fetching; offline (paused) with no saved copy says so. */
+function Waiting({ q, what }: { q: QState; what: string }) {
+  if (q.fetchStatus === "paused") {
+    return <p className="rounded-2xl border-2 border-[#b45309] bg-[#fef3c7] p-4 text-[1.1rem] text-[#78350f]" data-testid="op-offline-empty">Sem conexão e sem cópia salva neste tablet: {what} aparecem quando a rede voltar.</p>;
+  }
+  return <p className="text-fg-muted">Carregando…</p>;
+}
+
+/** Offline with data from the device snapshot: say when it was saved (never shown as live). */
+function SavedAt({ q, tz }: { q: QState; tz: string }) {
+  if (q.data === undefined || q.fetchStatus !== "paused" || !q.dataUpdatedAt) return null;
+  return <p className="text-[1rem] text-[#b45309]" data-testid="op-saved-at">Sem conexão — lista salva às {clockTime(q.dataUpdatedAt, tz).slice(0, 5)}; pode já ter mudado.</p>;
+}
+
 function JustifyList({ line, tz, now, pendingIds }: { line: TreeLine; tz: string; now: number; pendingIds: Set<string> }) {
   const stops = useDowntime({ line_id: line.id, unjustified: true }, 15_000);
   const reasons = useReasonCodes();
@@ -273,7 +298,8 @@ function JustifyList({ line, tz, now, pendingIds }: { line: TreeLine; tz: string
         <h2 className="text-[1.4rem] font-bold">Paradas sem motivo</h2>
         <BigButton to="/op" className="!min-h-14 !w-auto px-6 text-[1.1rem]">Voltar</BigButton>
       </div>
-      {stops.isPending ? <p className="text-fg-muted">Carregando…</p> : stops.isError ? <p className="text-danger">{apiErrorMessage(stops.error, "Não foi possível carregar as paradas.")}</p>
+      <SavedAt q={stops} tz={tz} />
+      {stops.isPending ? <Waiting q={stops} what="as paradas" /> : stops.isError ? <p className="text-danger">{apiErrorMessage(stops.error, "Não foi possível carregar as paradas.")}</p>
         : list.length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-[1.2rem]">Nenhuma parada sem motivo. Bom trabalho!</p> : (
           <ul className="grid gap-3 lg:grid-cols-2" data-testid="op-stops">
             {list.map((e) => (
@@ -327,13 +353,15 @@ function JustifyReasons({ line, tz, owner, onQueued, setNotice }: { line: TreeLi
   async function choose(code: string) {
     if (!ev) return;
     const label = `${ev.machine_name ?? "Máquina"} — ${reasonLabel(code, reasons.data)}`;
-    await enqueue({ kind: "justify", owner, event_id: ev.id, body: { reason_code: code }, label, not_before: Date.now() + UNDO_MS });
+    await enqueue({ kind: "justify", owner, owner_name: useAuthStore.getState().user?.name ?? null, event_id: ev.id, body: { reason_code: code }, label, not_before: Date.now() + UNDO_MS });
     setNotice({ tone: "ok", text: `${label}. Envia em 5 s — toque em Desfazer se errou.` });
     onQueued();
     navigate("/op", { replace: true });
   }
 
-  if (stops.isPending || reasons.isPending) return <p className="text-fg-muted">Carregando…</p>;
+  // Never block on a network-only query: offline with no snapshot says so instead of "Carregando…" forever.
+  if (stops.isPending) return <Waiting q={stops} what="as paradas" />;
+  if (reasons.isPending && reasons.fetchStatus !== "paused") return <p className="text-fg-muted">Carregando…</p>;
   if (!ev) return (
     <div className="space-y-4">
       <p className="text-[1.2rem]">Esta parada já foi justificada (ou não existe mais).</p>
@@ -355,6 +383,11 @@ function JustifyReasons({ line, tz, owner, onQueued, setNotice }: { line: TreeLi
         <BigButton tone="accent" onClick={() => void choose(ev.suggested_reason_code as string)} testId="op-confirm-suggested">
           Confirmar: {reasonLabel(ev.suggested_reason_code, reasons.data)}
         </BigButton>
+      )}
+      {reasons.data === undefined && (
+        <p className="rounded-2xl border-2 border-[#b45309] bg-[#fef3c7] p-4 text-[1.05rem] text-[#78350f]" data-testid="op-reasons-offline">
+          Sem conexão: a lista de motivos ainda não foi baixada neste tablet. Use a sugestão (se houver) ou justifique quando a rede voltar.
+        </p>
       )}
       {!all ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="op-top-reasons">
@@ -395,7 +428,7 @@ function ManualStop({ line, owner, onQueued, setNotice }: { line: TreeLine; owne
     const start = new Date(now - ago * 60_000).toISOString();
     const m = line.machines.find((x) => x.id === machine);
     const label = `Parada declarada: ${m?.name ?? "máquina"} — ${reasonLabel(code, reasons.data)}`;
-    await enqueue({ kind: "create_stop", owner, body: { machine_id: machine, start, end: ongoing ? null : new Date(now).toISOString(), reason_code: code }, label, not_before: now + UNDO_MS });
+    await enqueue({ kind: "create_stop", owner, owner_name: useAuthStore.getState().user?.name ?? null, body: { machine_id: machine, start, end: ongoing ? null : new Date(now).toISOString(), reason_code: code }, label, not_before: now + UNDO_MS });
     setNotice({ tone: "ok", text: `${label}. Envia em 5 s — toque em Desfazer se errou.` });
     onQueued();
     navigate("/op", { replace: true });
@@ -488,6 +521,7 @@ export function OperatorLoginPage() {
   const [error, setError] = useState("");
   useEffect(() => { if (user) navigate("/op", { replace: true }); }, [user, navigate]);
   useEffect(() => { void registerServiceWorker(); }, []);
+  const waiting = usePendingOwners();
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-canvas p-4 text-[18px] text-fg" data-testid="op-login">
       <form className="w-full max-w-md space-y-4 rounded-2xl border border-line bg-surface p-6 shadow-card"
@@ -498,8 +532,15 @@ export function OperatorLoginPage() {
             .catch((err) => setError(apiErrorMessage(err, "Não foi possível entrar. Confira usuário e senha.")));
         }}>
         <h1 className="text-[1.6rem] font-bold">Tablet do operador</h1>
+        {waiting.length > 0 && (
+          <div role="status" data-testid="op-login-pending" className="rounded-xl border-2 border-[#b45309] bg-[#fef3c7] p-3 text-[1rem] text-[#78350f]">
+            {waiting.map((w) => (
+              <p key={w.owner}>{w.count} {w.count > 1 ? "ações pendentes" : "ação pendente"} de {w.owner_name ?? "outro operador"} — envia quando {w.owner_name ? "ele(a)" : "esse operador"} entrar neste tablet.</p>
+            ))}
+          </div>
+        )}
         <label className="block">
-          <span className="text-[1rem] text-fg-muted">Usuário (e-mail ou crachá)</span>
+          <span className="text-[1rem] text-fg-muted">Usuário (e-mail)</span>
           <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" required
             className="mt-1 min-h-14 w-full rounded-xl border-2 border-line-strong bg-surface px-4 text-[1.2rem] text-fg focus:border-accent focus:outline-none" />
         </label>

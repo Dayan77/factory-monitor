@@ -12,7 +12,7 @@
  *      now, history
  *   D. every new screen in light + dark at the 3 sizes: no console errors, no horizontal page overflow; screenshots
  *
- *   BASE_URL=http://localhost:5173 API=http://localhost:8000 node e2e/sprint6/drill_reports_screens.verify.mjs
+ *   [DRILL_PERIOD=today] BASE_URL=http://localhost:5173 API=http://localhost:8000 node e2e/sprint6/drill_reports_screens.verify.mjs
  */
 import { chromium } from "/opt/node-tools/node_modules/playwright/index.mjs";
 import fs from "node:fs";
@@ -34,19 +34,40 @@ async function api(method, p, token, body) {
 const tok = (await api("POST", "/api/auth/login", null, { email: "admin@factory-monitor.com", password: "Admin@1234" })).data.access_token;
 const tree = (await api("GET", "/api/plants/tree", tok)).data;
 const plant = tree[0];
+// period of the API sums (A) and of the report numbers (C): "yesterday" needs a dev tenant that had data for the whole
+// previous productive day; DRILL_PERIOD=today checks the running day (simulator data) instead. The browser drill (B)
+// always uses period=yesterday (it checks navigation, not numbers).
+const PERIOD_ARG = process.env.DRILL_PERIOD ?? "yesterday";
+// numbers (A, C-API) on the dev tenant by default, or on the virtual-plant tenant of onboarding_new_tenant.verify.mjs
+// (STATE=its state file) when the dev tenant has no role-mapped data for that period
+let numTok = tok, numPlant = plant;
+if (process.env.STATE) {
+  const st = JSON.parse(fs.readFileSync(process.env.STATE, "utf8"));
+  numTok = (await api("POST", "/api/auth/login", null, { email: st.admin_email, password: st.admin_password })).data.access_token;
+  numPlant = (await api("GET", "/api/plants/tree", numTok)).data.find((p) => p.id === st.plant_id);
+}
+// "today" is still running: every request would see a slightly longer window, so the sums are compared on a CLOSED
+// window = start of the running productive day → the last whole minute (period=custom, same window at every level)
+let PERIOD = PERIOD_ARG;
+if (PERIOD_ARG === "today") {
+  const t = (await api("GET", `/api/oee?scope=plant&id=${numPlant.id}&period=today`, numTok)).data;
+  const stop = new Date(Math.floor(Date.now() / 60000) * 60000 - 60000).toISOString();
+  PERIOD = `custom&start=${encodeURIComponent(t.period_start)}&stop=${encodeURIComponent(stop)}`;
+}
+console.log(`  numbers on plant "${numPlant.name}", period=${decodeURIComponent(PERIOD)}`);
 
 // ── A. sums ─────────────────────────────────────────────────────────────────
 {
-  const pp = (await api("GET", `/api/losses/pareto?scope=plant&id=${plant.id}&period=yesterday`, tok)).data;
+  const pp = (await api("GET", `/api/losses/pareto?scope=plant&id=${numPlant.id}&period=${PERIOD}`, numTok)).data;
   const sum = {};
-  for (const l of plant.lines) for (const r of (await api("GET", `/api/losses/pareto?scope=line&id=${l.id}&period=yesterday`, tok)).data) sum[r.reason_code ?? "∅"] = (sum[r.reason_code ?? "∅"] ?? 0) + r.duration_s;
+  for (const l of numPlant.lines) for (const r of (await api("GET", `/api/losses/pareto?scope=line&id=${l.id}&period=${PERIOD}`, numTok)).data) sum[r.reason_code ?? "∅"] = (sum[r.reason_code ?? "∅"] ?? 0) + r.duration_s;
   const plantBy = Object.fromEntries(pp.map((r) => [r.reason_code ?? "∅", r.duration_s]));
   const keys = new Set([...Object.keys(sum), ...Object.keys(plantBy)]);
   const diff = [...keys].filter((k) => Math.abs((sum[k] ?? 0) - (plantBy[k] ?? 0)) > 1e-6).map((k) => ({ k, lines: sum[k] ?? 0, plant: plantBy[k] ?? 0 }));
-  check(pp.length > 0 && diff.length === 0, `yesterday: Σ Pareto of ${plant.lines.length} lines = plant Pareto (${pp.length} reasons, ${(pp.reduce((a, r) => a + r.duration_s, 0) / 60).toFixed(1)} min)`, diff);
-  const po = (await api("GET", `/api/oee?scope=plant&id=${plant.id}&period=yesterday`, tok)).data;
+  check(pp.length > 0 && diff.length === 0, `${PERIOD}: Σ Pareto of ${numPlant.lines.length} lines = plant Pareto (${pp.length} reasons, ${(pp.reduce((a, r) => a + r.duration_s, 0) / 60).toFixed(1)} min)`, diff);
+  const po = (await api("GET", `/api/oee?scope=plant&id=${numPlant.id}&period=${PERIOD}`, numTok)).data;
   const lo = [];
-  for (const l of plant.lines) lo.push((await api("GET", `/api/oee?scope=line&id=${l.id}&period=yesterday`, tok)).data);
+  for (const l of numPlant.lines) lo.push((await api("GET", `/api/oee?scope=line&id=${l.id}&period=${PERIOD}`, numTok)).data);
   const comps = ["pot_s", "pbt_s", "apt_s", "adot_s", "pdot_s", "ideal_produced_s"];
   const cdiff = comps.filter((c) => Math.abs(lo.reduce((a, o) => a + (o[c] ?? 0), 0) - (po[c] ?? 0)) > 1e-3).map((c) => ({ c, lines: lo.reduce((a, o) => a + (o[c] ?? 0), 0), plant: po[c] }));
   check(cdiff.length === 0, "plant OEE components = Σ of the lines' components", cdiff);
@@ -110,7 +131,7 @@ for (const [name, vp] of Object.entries(VPS)) {
 
 // ── C. reports ──────────────────────────────────────────────────────────────
 const catalog = (await api("GET", "/api/reports/catalog", tok)).data;
-const yday = (await api("GET", `/api/oee?scope=plant&id=${plant.id}&period=yesterday`, tok)).data;
+const yday = (await api("GET", `/api/oee?scope=plant&id=${numPlant.id}&period=${PERIOD_ARG}`, numTok)).data;
 const pday = yday.period?.productive_day;
 const line0 = plant.lines.find((l) => l.name === "Linha de Montagem") ?? plant.lines[0];
 const scopeFor = (c) => (c.scope?.includes("plant") ? ["plant", plant.id] : ["line", line0.id]);
@@ -123,13 +144,15 @@ for (const c of catalog) {
     check(r.status === 200 && magic, `report ${c.code} ${f}: ${r.status}, ${buf.length} bytes, v${r.headers.get("x-report-version")}`, r.status === 200 ? buf.subarray(0, 8).toString() : r.data);
   }
 }
-const dj = await api("POST", "/api/reports/generate", tok, { code: "daily_production", scope_type: "plant", scope_id: plant.id, format: "json", params: { productive_day: pday } });
+const dj = await api("POST", "/api/reports/generate", numTok, { code: "daily_production", scope_type: "plant", scope_id: numPlant.id, format: "json", params: { productive_day: pday } });
+// a running day moves between the two reads; the report (generated in between) must show one of them
+const yday2 = (await api("GET", `/api/oee?scope=plant&id=${numPlant.id}&period=${PERIOD_ARG}`, numTok)).data;
 const calls = dj.data?.api_calls ?? [];
 const oeeCall = calls.find((x) => /\/api\/oee/.test(x.path ?? x.url ?? "") && /scope=plant/.test(x.path ?? x.url ?? ""));
 console.log(`  daily_production ${pday}: headline ${JSON.stringify(dj.data?.headline ?? dj.data?.summary)?.slice(0, 300)}`);
 const flat = JSON.stringify(dj.data).replace(/[\u00a0\u202f]/g, " ");
 const pct = (v) => (v * 100).toFixed(1).replace(".", ",") + " %";
-check(dj.status === 200 && yday.oee != null && flat.includes(pct(yday.oee)), `daily_production shows the plant OEE of /api/oee (${pct(yday.oee ?? NaN)})`, { status: dj.status, oeeCall });
+check(dj.status === 200 && yday.oee != null && (flat.includes(pct(yday.oee)) || flat.includes(pct(yday2.oee))), `daily_production shows the plant OEE of /api/oee (${pct(yday.oee ?? NaN)} / ${pct(yday2.oee ?? NaN)})`, { status: dj.status, oeeCall });
 
 // UI exports + scheduled reports
 {

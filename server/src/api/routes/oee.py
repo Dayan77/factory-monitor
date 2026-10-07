@@ -404,6 +404,10 @@ async def overview(user: CurrentUser, db: DB, plant_id: Optional[str] = None):
                               .order_by(Line.name))).scalars().all()
     machines = (await db.execute(select(Machine).join(Line, Line.id == Machine.line_id).where(
         Machine.tenant_id == tid, Line.plant_id == plant.id))).scalars().all()
+    own = opscope.operator_lines(user)       # operator PWA: never another line (§3.2)
+    if own is not None:
+        lines = [ln for ln in lines if str(ln.id) in own]
+        machines = [m for m in machines if str(m.line_id) in own]
     by_line: dict[str, list[Machine]] = {}
     for m in machines:
         by_line.setdefault(m.line_id, []).append(m)

@@ -16,6 +16,8 @@ export interface OpAction {
   kind: OpActionKind;
   /** `${tenant}:${user}` of who did it (replayed only with that user's session). */
   owner: string;
+  /** Name of who did it, for "N ações pendentes de <operador>" on the tablet login screen. */
+  owner_name?: string | null;
   created_at: string;
   /** Downtime event (justify). */
   event_id?: string;
@@ -107,6 +109,23 @@ export async function enqueue(a: Omit<OpAction, "attempts" | "created_at" | "id"
 
 export async function pending(owner: string): Promise<OpAction[]> {
   return (await queueStore().all()).filter((a) => a.owner === owner);
+}
+
+export interface OwnerPending { owner: string; owner_name: string | null; count: number }
+
+/**
+ * Queued actions per operator (all owners). Actions are only replayed with their owner's session, so the login
+ * screen lists who still has actions waiting on this tablet.
+ */
+export async function pendingByOwner(): Promise<OwnerPending[]> {
+  const m = new Map<string, OwnerPending>();
+  for (const a of await queueStore().all()) {
+    const cur = m.get(a.owner) ?? { owner: a.owner, owner_name: null, count: 0 };
+    cur.count += 1;
+    cur.owner_name = a.owner_name ?? cur.owner_name;
+    m.set(a.owner, cur);
+  }
+  return [...m.values()];
 }
 
 export async function cancel(id: string): Promise<void> {

@@ -52,7 +52,7 @@ async def test_bootstrap_creates_the_demo_tenant(demo, db):
     from src.services.demo.bootstrap import bootstrap, load_map
     doc = json.loads(MAP.read_text(encoding="utf-8"))
     t = await db.get(Tenant, demo["tenant_id"])
-    assert t.is_demo and t.slug == "demo"
+    assert t.is_demo and t.slug == "demo-publica"      # never the dev seed slug "demo" (scripts/seed_dev.py)
     plant = await db.get(Plant, demo["plant_id"])
     assert plant.timezone == "America/Sao_Paulo"
     shifts = (await db.execute(select(Shift).where(Shift.tenant_id == t.id))).scalars().all()
@@ -318,3 +318,105 @@ async def test_demo_bot_executes_the_scripted_replacement(client, demo, db):
     db.add(young)
     await db.commit()
     assert await run_once(db, now) == []
+
+
+class _StubControl:
+    """Stub of the virtual plant control API as seen from another container: /replace requires X-Control-Token."""
+
+    def __init__(self, token: str):
+        import http.server
+        import threading
+        self.calls: list[dict] = []
+        stub = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                import json
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n) or b"{}")
+                given = self.headers.get("X-Control-Token")
+                stub.calls.append({"path": self.path, "token": given, "body": body})
+                code = 200 if given == token else 403
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a):
+                pass
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.srv.shutdown()
+
+
+async def test_demo_bot_sends_control_token_and_backs_off_when_refused(client, demo, db, monkeypatch):
+    from src.config import settings
+    from src.models import AuditEvent, Position, PredictiveAlert, PredictiveMonitor
+    from src.services.demo.bot import run_once
+    tid = demo["tenant_id"]
+    pos = (await db.execute(select(Position).where(Position.tenant_id == tid, Position.name == "Cilindro B3"))).scalar_one()
+    mon = (await db.execute(select(PredictiveMonitor).where(PredictiveMonitor.position_id == pos.id))).scalar_one()
+    # leave no open alert from earlier tests
+    await db.execute(update(PredictiveAlert).where(PredictiveAlert.tenant_id == tid, PredictiveAlert.state.in_(
+        ("open", "acknowledged"))).values(state="closed"))
+    await db.commit()
+    stub = _StubControl("s3cret")
+    monkeypatch.setattr(settings, "demo_virtual_plant_control_url", stub.url)
+    try:
+        def alert(age_h: float) -> PredictiveAlert:
+            return PredictiveAlert(tenant_id=tid, monitor_id=mon.id, position_id=pos.id, machine_id=pos.machine_id,
+                                   feature="stroke_time", state="open", severity="warning",
+                                   opened_at=datetime.now(timezone.utc) - timedelta(hours=age_h))
+        # right token → 200: the wear of the virtual cylinder resets
+        monkeypatch.setattr(settings, "demo_virtual_plant_control_token", "s3cret")
+        db.add(alert(1))
+        await db.commit()
+        done = await run_once(db)
+        assert len(done) == 1 and done[0]["virtual_plant_reset"] is True
+        assert stub.calls[-1]["path"] == "/replace" and stub.calls[-1]["token"] == "s3cret"
+        assert stub.calls[-1]["body"]["position"] == "montagem.fixacao.b3"
+
+        # no/wrong token (the prod bug) → 403 is a failure: audited, and the position is left alone
+        monkeypatch.setattr(settings, "demo_virtual_plant_control_token", "")
+        db.add(alert(2))
+        await db.commit()
+        done = await run_once(db)
+        assert len(done) == 1 and done[0]["virtual_plant_reset"] is False
+        assert stub.calls[-1]["token"] is None
+        fails = (await db.execute(select(AuditEvent).where(
+            AuditEvent.tenant_id == tid, AuditEvent.action == "demo_bot.virtual_plant_replace_failed"))).scalars().all()
+        assert fails and fails[-1].entity_id == pos.id and fails[-1].data["detail"] == "HTTP 403"
+        n_calls = len(stub.calls)
+        db.add(alert(3))
+        await db.commit()
+        assert await run_once(db) == []            # backing off: no new replacement WO every 15 min
+        assert len(stub.calls) == n_calls
+    finally:
+        stub.close()
+        await db.execute(delete(AuditEvent).where(AuditEvent.tenant_id == tid,
+                                                  AuditEvent.action == "demo_bot.virtual_plant_replace_failed"))
+        await db.execute(update(PredictiveAlert).where(PredictiveAlert.tenant_id == tid, PredictiveAlert.state.in_(
+            ("open", "acknowledged"))).values(state="closed"))
+        await db.commit()
+
+
+async def test_enroll_code_cli_for_the_demo_gateway(demo, db, capsys):
+    """operations.md §10.2 option A: the demo tenant has no admin who can log in, so the CLI issues the code."""
+    from src.demo import main
+    from src.models import Gateway
+    from src.services import gateways as gs
+    from src.services.demo.bootstrap import issue_enroll_code
+    out = await issue_enroll_code(db)
+    assert out["tenant_id"] == demo["tenant_id"] and out["gateway_id"] == demo["gateway_id"]
+    db.expire_all()
+    gw = await db.get(Gateway, out["gateway_id"])
+    assert gw.enroll_code_hash == gs.sha256(gs.normalize_code(out["code"]))
+    assert gw.enroll_expires_at > datetime.now(timezone.utc) + timedelta(hours=23)
+    assert "enroll-code" in (Path(__file__).resolve().parents[1] / "src/demo.py").read_text()
+    with pytest.raises(SystemExit):
+        main(["enroll-code", "--help"])
+    assert "DEMO_GATEWAY_ENROLL_CODE" not in capsys.readouterr().err

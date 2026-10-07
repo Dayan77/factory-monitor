@@ -49,6 +49,11 @@ function DueCell({ p, today }: { p: PlanStatus; today: string }) {
         {isPastDue(p) ? `${formatPct(p.consumed)} do intervalo` : days == null ? `sem projeção (${reliabilityReason(p.reason ?? "no_recent_usage")})` : days === 0 ? "vence hoje" : `em ${days} dia${days > 1 ? "s" : ""}`}
         {due && !isPastDue(p) && ` · ${byTrigger(due.measure)}`}
       </p>
+      {p.low_confidence && !isPastDue(p) && (
+        <p className="text-caption text-warn" data-testid="plan-low-confidence" title="Ritmo de uso calculado com menos de 14 dias de dados (kpis.md §4.2)">
+          baixa confiança: menos de 14 dias de dados
+        </p>
+      )}
     </div>
   );
 }

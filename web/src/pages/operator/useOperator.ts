@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePlantTree } from "@/hooks/useAssets";
 import { useAuthStore } from "@/store/auth";
 import { currentOwner } from "@/services/offline";
-import { flush, onQueueChange, pending, type FlushReport, type OpAction } from "@/services/operatorQueue";
+import { flush, onQueueChange, pending, pendingByOwner, type FlushReport, type OpAction, type OwnerPending } from "@/services/operatorQueue";
 import type { TreeLine, TreePlant } from "@/services/types";
 import { rolesOf } from "@/utils/maintenance";
 
@@ -12,7 +12,7 @@ export const LINE_KEY = "fm-op-line";
 export const IDLE_MS = 15 * 60_000;
 export const OFFLINE_BANNER_MS = 30_000;
 
-function readLine(): string | null {
+export function readLine(): string | null {
   try { return localStorage.getItem(LINE_KEY); } catch { return null; }
 }
 
@@ -58,6 +58,19 @@ export function useConnectivity() {
 }
 
 /** Offline queue of the logged-in operator: list + flush in order (on reconnect, every 10 s, after each enqueue). */
+/** Queued actions of every operator of this tablet (login screen). */
+export function usePendingOwners() {
+  const [list, setList] = useState<OwnerPending[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => { void pendingByOwner().then((l) => { if (alive) setList(l); }).catch(() => undefined); };
+    load();
+    const off = onQueueChange(load);
+    return () => { alive = false; off(); };
+  }, []);
+  return list;
+}
+
 export function useOperatorQueue(onReport?: (r: FlushReport) => void) {
   const qc = useQueryClient();
   const owner = currentOwner();
@@ -94,13 +107,22 @@ export function useOperatorQueue(onReport?: (r: FlushReport) => void) {
   return { items, owner, flush: run };
 }
 
-/** Ends the operator session after 15 min without use (§3.2). */
-export function useIdleLogout(onIdle: () => void, ms = IDLE_MS) {
+/**
+ * Ends the operator session after 15 min without use (§3.2) — except while `hold` is true (the operator still has
+ * actions waiting to be sent: they are only replayed with his session, so ending it would strand them until he
+ * logs in again on this tablet). The timer re-arms and the session ends at the first idle period with nothing
+ * pending.
+ */
+export function useIdleLogout(onIdle: () => void, ms = IDLE_MS, hold = false) {
   const cb = useRef(onIdle);
   cb.current = onIdle;
+  const held = useRef(hold);
+  held.current = hold;
   useEffect(() => {
-    let t = setTimeout(() => cb.current(), ms);
-    const reset = () => { clearTimeout(t); t = setTimeout(() => cb.current(), ms); };
+    let t: ReturnType<typeof setTimeout>;
+    const fire = () => { if (held.current) t = setTimeout(fire, ms); else cb.current(); };
+    t = setTimeout(fire, ms);
+    const reset = () => { clearTimeout(t); t = setTimeout(fire, ms); };
     const evs = ["pointerdown", "keydown", "touchstart"] as const;
     for (const e of evs) window.addEventListener(e, reset, { passive: true });
     return () => { clearTimeout(t); for (const e of evs) window.removeEventListener(e, reset); };

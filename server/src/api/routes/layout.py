@@ -32,6 +32,7 @@ from ...auth import get_current_user, require_roles
 from ...db import get_db
 from ...models import LayoutMarker, Line, Machine, Plant, PlantLayout, User, UserRole
 from ...services import audit
+from ...services import operator_scope as opscope
 from ...services.layout import images
 from ...services.layout.service import auto_view, layout_out, published_view
 from ...services.validation import is_uuid
@@ -165,13 +166,13 @@ async def get_published(plant_id: str, user: CurrentUser, db: DB, kpis: bool = T
         raise HTTPException(status_code=404, detail={
             "message": "Nenhum layout publicado para esta planta.", "code": "no_published_layout",
             "auto_url": f"/api/plants/{p.id}/layout/auto"})
-    return await published_view(db, user.tenant_id, p, lay, with_kpis=kpis)
+    return await published_view(db, user.tenant_id, p, lay, with_kpis=kpis, line_ids=opscope.operator_lines(user))
 
 
 @plants_router.get("/{plant_id}/layout/auto")
 async def get_auto(plant_id: str, user: CurrentUser, db: DB, kpis: bool = True):
     p = await _plant(db, plant_id, user.tenant_id)
-    return await auto_view(db, user.tenant_id, p, with_kpis=kpis)
+    return await auto_view(db, user.tenant_id, p, with_kpis=kpis, line_ids=opscope.operator_lines(user))
 
 
 # ── layout level ─────────────────────────────────────────────────────────────

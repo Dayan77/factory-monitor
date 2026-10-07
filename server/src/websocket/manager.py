@@ -38,21 +38,28 @@ class ConnectionManager:
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
         # WebSocket → user id (per-user messages: {type: 'notification'})
         self._users: dict[WebSocket, str] = {}
+        # WebSocket → line scope of a pure operator (services/operator_scope.py): only messages about machines,
+        # tags and positions of his lines are sent to that socket (§3.2 "nunca outras linhas")
+        self._scopes: dict[WebSocket, "WsScope"] = {}
         # Set in a process without the sockets (the predictive worker, src/worker.py): messages are relayed to the
         # app process through Postgres NOTIFY (websocket/relay.py) instead of sent here.
         self.relay = None
 
-    async def connect(self, ws: WebSocket, tenant_id: str, accept: bool = True, user_id: Optional[str] = None) -> None:
+    async def connect(self, ws: WebSocket, tenant_id: str, accept: bool = True, user_id: Optional[str] = None,
+                      scope: Optional["WsScope"] = None) -> None:
         if accept:
             await ws.accept()
         self._connections[tenant_id].add(ws)
         if user_id:
             self._users[ws] = str(user_id)
+        if scope is not None:
+            self._scopes[ws] = scope
         log.info("ws.connected", tenant_id=tenant_id, total=len(self._connections[tenant_id]))
 
     def disconnect(self, ws: WebSocket, tenant_id: str) -> None:
         self._connections[tenant_id].discard(ws)
         self._users.pop(ws, None)
+        self._scopes.pop(ws, None)
 
     async def send_to_user(self, tenant_id: str, user_id: str, message: dict) -> int:
         """Sends to the sockets of one user of the tenant (tenant isolation: only that tenant's
@@ -82,12 +89,56 @@ class ConnectionManager:
         # raised "Set changed size during iteration", which aborted the whole MQTT reading
         # (no Influx write, no usage) — seen on the live stack with browsers reconnecting.
         for ws in list(self._connections.get(tenant_id, ())):
+            scope = self._scopes.get(ws)
+            if scope is not None and not scope.allows(message):
+                continue
             try:
                 await ws.send_json(message)
             except Exception:
                 dead.add(ws)
         for ws in dead:
             self._connections[tenant_id].discard(ws)
+            self._scopes.pop(ws, None)
+
+
+class WsScope:
+    """What an operator restricted to some lines may receive: messages about other machines/tags/positions are
+    dropped; messages that name none of them (e.g. tenant notices) pass."""
+
+    def __init__(self, machine_ids: set[str], tag_ids: set[str], position_ids: set[str]):
+        self.machine_ids, self.tag_ids, self.position_ids = machine_ids, tag_ids, position_ids
+
+    def allows(self, message: dict) -> bool:
+        ev = message.get("event") if isinstance(message.get("event"), dict) else {}
+        mid = message.get("machine_id") or ev.get("machine_id")
+        if mid and str(mid) not in self.machine_ids:
+            return False
+        tid = message.get("tag_id")
+        if tid and str(tid) not in self.tag_ids:
+            return False
+        pid = message.get("position_id") or ev.get("position_id")
+        if pid and str(pid) not in self.position_ids:
+            return False
+        return True
+
+
+async def operator_ws_scope(user_id: str, tenant_id: str) -> Optional[WsScope]:
+    """WsScope of a pure operator with lines assigned; None for everybody else."""
+    from ..db import AsyncSessionLocal
+    from ..models import Machine, Position, Tag, User
+    from ..services.operator_scope import operator_lines
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+        lines = operator_lines(user) if user is not None else None
+        if lines is None:
+            return None
+        mids = {str(x) for x in (await db.execute(select(Machine.id).where(
+            Machine.tenant_id == tenant_id, Machine.line_id.in_(list(lines))))).scalars()}
+        tags = {str(x) for x in (await db.execute(select(Tag.id).where(
+            Tag.tenant_id == tenant_id, Tag.machine_id.in_(list(mids))))).scalars()} if mids else set()
+        poss = {str(x) for x in (await db.execute(select(Position.id).where(
+            Position.tenant_id == tenant_id, Position.machine_id.in_(list(mids))))).scalars()} if mids else set()
+    return WsScope(mids, tags, poss)
 
 
 manager = ConnectionManager()
@@ -161,7 +212,13 @@ async def sensor_stream(ws: WebSocket, tenant_id: str):
         return
 
     tenant_id = ensure_uuid(tenant_id)   # same canonical form the MQTT subscriber broadcasts to
-    await manager.connect(ws, tenant_id, accept=False, user_id=ws_user_id)
+    try:
+        scope = await operator_ws_scope(ws_user_id, tenant_id) if ws_user_id else None
+    except Exception as e:  # noqa: BLE001 — fail closed: no scope could be computed for a possible operator
+        log.warning("ws.scope_error", error=str(e)[:200])
+        await ws.close(code=1011)
+        return
+    await manager.connect(ws, tenant_id, accept=False, user_id=ws_user_id, scope=scope)
     try:
         while True:
             # Keep connection alive; server pushes via manager.broadcast().

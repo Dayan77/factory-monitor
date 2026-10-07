@@ -404,3 +404,19 @@ def test_pt_br_formatting():
     assert fmt.minutes(25 * 60).replace(fmt.NBSP, " ") == "25 min"
     assert fmt.minutes(90).replace(fmt.NBSP, " ") == "1,5 min"
     assert fmt.with_reason(fmt.pct(None), "no_planned_time") == "— (sem tempo planejado neste período)"
+
+
+def test_productive_day_today_follows_the_night_shift():
+    """StopsPage 'Exportar paradas do dia' sends productive_day='today': at 02:00 in Turno C (22:00–06:00) that is
+    the productive day the shift started (C19/S3-8), not the civil date."""
+    tz = ZoneInfo("America/Sao_Paulo")
+    cal = Calendar(tz, [ShiftDef("A", "Turno A", "06:00", "14:00", tuple(range(7))),
+                        ShiftDef("B", "Turno B", "14:00", "22:00", tuple(range(7))),
+                        ShiftDef("C", "Turno C", "22:00", "06:00", tuple(range(7)))])
+    at_2am = datetime(2026, 10, 7, 2, 0, tzinfo=tz).astimezone(timezone.utc)
+    per = P.resolve_period("daily_production", cal, {"productive_day": "today"}, at_2am)
+    assert per.first_day == date(2026, 10, 6)
+    at_10am = datetime(2026, 10, 7, 10, 0, tzinfo=tz).astimezone(timezone.utc)
+    assert P.resolve_period("daily_production", cal, {"productive_day": "today"}, at_10am).first_day == date(2026, 10, 7)
+    # an explicit ISO date is unchanged
+    assert P.resolve_period("daily_production", cal, {"productive_day": "2026-10-01"}, at_2am).first_day == date(2026, 10, 1)

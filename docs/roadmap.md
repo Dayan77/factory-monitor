@@ -79,6 +79,9 @@ SEO e desempenho (`site/`, gerador estático, ex. Astro). Hoje existe só a `Lan
 - [ ] Navegação drill-down Fábrica → Linha → Máquina → Componente, com KPIs em cada nível
 - [ ] Mapa/layout da planta com status ao vivo
 - [ ] App responsivo/PWA para chão de fábrica (tablet do operador, celular do técnico)
+  - [ ] **Pendente (sprint6 §3.2)**: vínculo do tablet por código de 8 caracteres (10 min) com token de dispositivo
+        preso à linha e revogável; entrada do operador por PIN ou crachá com bloqueio após 5 erros. Hoje o tablet
+        entra com e-mail e senha (manual/operador.md descreve só isso).
 - [ ] Relatórios exportáveis (PDF/Excel) e agendados
 
 ## Fase 6 — Produção e campo ⬜

@@ -117,6 +117,14 @@ services:
       MQTT_BROKER_PORT: "1883"     # listener interno (autenticado); TLS 8883 é para os gateways
       # Proxies confiáveis p/ X-Forwarded-For (Traefik na rede easypanel). Nunca "*". docs/operations.md §IP do cliente
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      # Volume de arquivos dos tenants (plantas baixas do mapa, docs/operations.md §Arquivos): fora do container,
+      # sobrevive a redeploy/recriação. Mesmo caminho do volume abaixo.
+      FILES_DIR: /app/data/files
+      # demo-bot → API de controle da planta virtual (profile demo, §10): sem o token ela responde 403
+      DEMO_VIRTUAL_PLANT_CONTROL_URL: ${DEMO_VIRTUAL_PLANT_CONTROL_URL:-}
+      DEMO_VIRTUAL_PLANT_CONTROL_TOKEN: ${DEMO_VIRTUAL_PLANT_CONTROL_TOKEN:-}
+    volumes:
+      - server-files:/app/data/files
     depends_on:
       postgres:
         condition: service_healthy
@@ -365,6 +373,7 @@ networks:
 
 volumes:
   postgres-data:
+  server-files:          # FILES_DIR do servidor (plantas baixas dos layouts) — dono uid 10001 (imagem)
   influxdb-data:
   mosquitto-data:
   prometheus-data:

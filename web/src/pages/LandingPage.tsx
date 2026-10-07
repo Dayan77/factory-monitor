@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { isAxiosError } from "axios";
 import { publicApi } from "@/services/api";
 import { apiErrorMessage } from "@/utils/errors";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { demoApi } from "@/services/sprint6Api";
-import { useAuthStore } from "@/store/auth";
+import { Link, useSearchParams } from "react-router-dom";
+import { useOpenDemo } from "@/hooks/useOpenDemo";
 
 // ── Ícones inline ─────────────────────────────────────────────────
 
@@ -518,27 +517,7 @@ function Footer() {
  * dashboard. The data come from the virtual plant and every screen says so.
  */
 function DemoButton() {
-  const navigate = useNavigate();
-  const loadMe = useAuthStore((st) => st.loadMe);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function open() {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await demoApi.createSession();
-      localStorage.setItem("access_token", r.data.access_token);
-      localStorage.removeItem("refresh_token");
-      await loadMe();
-      navigate(r.data.redirect_to ?? "/dashboard");
-    } catch (err) {
-      const st = isAxiosError(err) ? err.response?.status : undefined;
-      setError(st === 429 ? "Muitas demonstrações abertas deste endereço. Tente novamente mais tarde."
-        : apiErrorMessage(err, "Demonstração indisponível no momento."));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const { open, busy, error } = useOpenDemo();
   return (
     <div className="flex flex-col items-center">
       <button type="button" onClick={() => void open()} disabled={busy} data-testid="open-demo"

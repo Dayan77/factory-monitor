@@ -128,3 +128,95 @@ async def test_client_action_keys_are_tenant_isolated(client, db):
     # B with the same key and A's event id: 404, nothing replayed from A
     await api(client, "PATCH", f"/api/downtime/{ev.id}", {**b.headers("operator"), "X-Client-Action-Id": key}, 404,
               json={"reason_code": "MAT-01"})
+
+
+def _png(w: int, h: int) -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + b"\xff\xff\xff" * w for _ in range(min(h, 4)))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+async def test_operator_reads_never_show_another_line(client, db):
+    """Review: the map (published/auto), overview, plant tree, machine list and the WebSocket returned every
+    machine of the plant to an operator restricted to L1. §3.2: 'nunca outras linhas'."""
+    t = await _tenant("OPR")
+    h, ho, hm = t.headers("admin"), t.headers("operator"), t.headers("manager")
+    p = await build_plant(client, t, "OPR")
+    pid = p.plant["id"]
+    line2 = await api(client, "POST", "/api/lines/", h, 201, json={"name": "Linha 2 OPR", "plant_id": pid})
+    m2 = await api(client, "POST", "/api/machines/", h, 201, json={"line_id": line2["id"], "name": "M2 OPR"})
+    await api(client, "PATCH", f"/api/users/{t.users['operator']['id']}", h, json={"line_ids": [p.line["id"]]})
+    mine, other = p.machine["id"], m2["id"]
+
+    def machine_ids(view):
+        return {m["machine_id"] for m in view["machines"]}
+
+    auto = await api(client, "GET", f"/api/plants/{pid}/layout/auto", ho)
+    assert machine_ids(auto) == {mine} and {ln["line_id"] for ln in auto["lines"]} == {p.line["id"]}
+    assert {mk["machine_id"] for mk in auto["markers"] if mk["machine_id"]} == {mine}
+    assert {ln["line_id"] for ln in auto["lanes"]} == {p.line["id"]}
+    assert machine_ids(await api(client, "GET", f"/api/plants/{pid}/layout/auto", hm)) == {mine, other}
+
+    lay = await api(client, "POST", f"/api/plants/{pid}/layouts", hm, 201)
+    r = await client.post(f"/api/layouts/{lay['id']}/image", headers=hm,
+                          files={"file": ("p.png", _png(400, 250), "application/octet-stream")})
+    assert r.status_code == 200, r.text
+    await api(client, "PUT", f"/api/layouts/{lay['id']}/markers", hm, json={"markers": [
+        {"kind": "machine", "machine_id": mine, "x": 0.1, "y": 0.3},
+        {"kind": "machine", "machine_id": other, "x": 0.5, "y": 0.3},
+        {"kind": "line_label", "line_id": line2["id"], "x": 0.5, "y": 0.1},
+        {"kind": "area_label", "label": "Almoxarifado", "x": 0.9, "y": 0.85}]})
+    await api(client, "POST", f"/api/layouts/{lay['id']}/publish", hm)
+    view = await api(client, "GET", f"/api/plants/{pid}/layout/published", ho)
+    assert machine_ids(view) == {mine} and {ln["line_id"] for ln in view["lines"]} == {p.line["id"]}
+    mk = view["layout"]["markers"]
+    assert other not in {m["machine_id"] for m in mk} and line2["id"] not in {m["line_id"] for m in mk}
+    assert "Almoxarifado" in {m["label"] for m in mk}                       # neutral labels stay
+    assert other not in view["unplaced_machine_ids"]
+    full = await api(client, "GET", f"/api/plants/{pid}/layout/published", hm)
+    assert machine_ids(full) == {mine, other} and len(full["layout"]["markers"]) == 4
+
+    ov = await api(client, "GET", "/api/overview", ho, params={"plant_id": pid})
+    assert {ln["line_id"] for ln in ov["lines"]} == {p.line["id"]}
+    assert all(m["line_id"] == p.line["id"] for m in ov["machines_in_error"])
+    tree = await api(client, "GET", "/api/plants/tree", ho)
+    tlines = [ln for pl in tree for ln in pl["lines"]]
+    assert {ln["id"] for ln in tlines} == {p.line["id"]}
+    assert {m["id"] for m in await api(client, "GET", "/api/machines/", ho)} == {mine}
+    assert {m["id"] for m in await api(client, "GET", "/api/machines/", hm)} >= {mine, other}
+
+    # WebSocket: the operator's socket only gets messages about his machines/tags/positions
+    from src.websocket.manager import operator_ws_scope
+    sc = await operator_ws_scope(t.users["operator"]["id"], t.id)
+    assert sc is not None and sc.machine_ids == {mine}
+    assert sc.allows({"type": "machine_status", "machine_id": mine})
+    assert not sc.allows({"type": "machine_status", "machine_id": other})
+    assert not sc.allows({"type": "downtime", "action": "open", "event": {"machine_id": other}})
+    assert not sc.allows({"type": "sensor_reading", "tag_id": str(uuid.uuid4())})
+    assert sc.allows({"type": "notification"})
+    assert await operator_ws_scope(t.users["manager"]["id"], t.id) is None
+
+
+async def test_broadcast_skips_sockets_out_of_scope():
+    from src.websocket.manager import ConnectionManager, WsScope
+
+    class FakeWs:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, m):
+            self.sent.append(m)
+
+    mgr = ConnectionManager()
+    op, sup = FakeWs(), FakeWs()
+    tid = str(uuid.uuid4())
+    await mgr.connect(op, tid, accept=False, scope=WsScope({"m1"}, {"t1"}, set()))
+    await mgr.connect(sup, tid, accept=False)
+    await mgr.broadcast(tid, {"type": "machine_status", "machine_id": "m2"})
+    await mgr.broadcast(tid, {"type": "sensor_reading", "tag_id": "t1"})
+    assert [m.get("tag_id") for m in op.sent] == ["t1"] and len(sup.sent) == 2

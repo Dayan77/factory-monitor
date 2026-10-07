@@ -43,7 +43,16 @@ function siren() {
     beep(t + 0.3, 660, 0.22);
     beep(t + 0.6, 880, 0.22);
   }
-  try { navigator.vibrate?.([400, 150, 400]); } catch { /* not supported */ }
+  if (canVibrate()) {
+    try { navigator.vibrate([400, 150, 400]); } catch { /* not supported */ }
+  }
+}
+
+/** navigator.vibrate needs a user activation first (Chrome logs "Blocked call to navigator.vibrate" otherwise). */
+export function canVibrate(nav: Navigator | undefined = typeof navigator === "undefined" ? undefined : navigator): boolean {
+  if (!nav || typeof nav.vibrate !== "function") return false;
+  const ua = (nav as Navigator & { userActivation?: { hasBeenActive: boolean } }).userActivation;
+  return ua ? ua.hasBeenActive : false;
 }
 
 /**

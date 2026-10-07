@@ -303,8 +303,12 @@ def components(md: MachineData, ws: datetime, we: datetime, now: datetime,
     for e, iv in planned_ivs:
         if e.reason in AO_EXCLUDED:
             c.ao_excluded_s += total_s(intersect([iv], sched))
+    # D_eq (kpis.md §2.6): EQP-* failures + PLN-03/MNT-02 maintenance. The preventive scheduled in the calendar
+    # (planned_stop PLN-03, S3-4) is a break of the instance — it is PDOT for the OEE but still equipment downtime
+    # for Ao (audit A-1, R6). Union of intervals: an event declared over that window is not counted twice.
+    eq_brk = intersect(normalize(iv for k, v in brk_by.items() if is_equipment(k) for iv in v), pot)
     eq = [iv for e, iv in planned_ivs + unplanned if is_equipment(e.reason)]
-    c.ao_equipment_s = total_s(intersect(normalize(eq), sched))
+    c.ao_equipment_s = total_s(normalize(intersect(normalize(eq), normalize(list(sched) + eq_brk)) + eq_brk))
 
     for piece_start, n, loss, short in md.micro:
         if ws <= piece_start < we:
@@ -320,9 +324,12 @@ def _production(c: Components, md: MachineData, ws: datetime, end: datetime, now
                 pot: list[Interval], pri: ProductPri) -> None:
     """Parts of the hourly buckets (D7) that fall in [ws, end): only the part inside the shift
     instances (POT) enters PQ/GQ (S3-7) — the rest is `produced_outside_schedule`. A bucket only partly
-    inside the window or the schedule counts pro rata of the overlap (parts assumed uniform within the
-    hour; the current hour by the time elapsed) and flags `counts_prorated`; hour-aligned windows and
-    shifts are exact."""
+    inside the window or the schedule counts pro rata of the overlap and flags `counts_prorated`; hour-aligned
+    windows and shifts are exact. Parts are assumed uniform over the part of the hour **with data** (the
+    machine's data spans): parts can only have been counted while readings arrived, so an hour that is only
+    partly covered (first readings of a new tenant, gateway outage) is never spread over its no-data part —
+    otherwise a window touching that hour gets parts the APT (which excludes no-data time) never had, and P/OEE
+    go above 1 (kpis.md C20). An hour with no span at all (legacy data) falls back to the time elapsed."""
     for b, vals in md.production.items():
         hour_end = b + timedelta(hours=1)
         if hour_end <= ws or b >= end:
@@ -331,9 +338,13 @@ def _production(c: Components, md: MachineData, ws: datetime, end: datetime, now
         if total <= 0 and good <= 0 and scrap <= 0:
             continue
         eff_end = min(hour_end, max(now, b + timedelta(seconds=1)))
-        span = (eff_end - b).total_seconds()
-        in_window = max((min(eff_end, end) - max(b, ws)).total_seconds(), 0.0) / span
-        in_pot = total_s(intersect([(b, eff_end)], pot)) / span
+        basis = intersect([(b, eff_end)], md.spans) or [(b, eff_end)]
+        span = total_s(basis)
+        if span <= 0:
+            basis, span = [(b, eff_end)], (eff_end - b).total_seconds()
+        win = [(max(b, ws), min(eff_end, end))] if min(eff_end, end) > max(b, ws) else []
+        in_window = total_s(intersect(basis, win)) / span
+        in_pot = total_s(intersect(basis, intersect([(b, eff_end)], pot))) / span
         in_window, in_pot = min(in_window, 1.0), min(in_pot, in_window, 1.0)
         if in_window <= 0:
             continue

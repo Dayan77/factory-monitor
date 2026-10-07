@@ -298,3 +298,42 @@ async def test_layout_example_block_is_accepted(client):
     await api(client, "POST", f"/api/layouts/{lay['id']}/publish", h)
     view = await api(client, "GET", f"/api/plants/{plant['id']}/layout/published", h)
     assert view["unplaced_machine_ids"] == [] and len(view["machines"]) == 5
+
+
+async def test_map_live_cadence_and_coverage_and_outside_calendar_badges(client, db):
+    """Review (A-19): markers showed the shift-average cadence as if live, and the §1.2 badges for data_coverage
+    < 0,95 and parts outside the calendar were missing. kpis.md §1.9: live cadence = parts of the last 15 min × 4."""
+    from src.models import MachineDataSpan, UsageBucket
+    t = await _tenant("LCD")
+    h = t.headers("admin")
+    p = await build_plant(client, t, "LCD")
+    mid, pid = p.machine["id"], p.plant["id"]
+    now = datetime.now(timezone.utc)
+    b0 = now.replace(minute=0, second=0, microsecond=0)
+    b1 = b0 - timedelta(hours=1)
+    db.add(MachineDataSpan(tenant_id=t.id, machine_id=mid, start=b1, end=now + timedelta(minutes=5)))
+    for b, v in ((b1, 600.0), (b0, 50.0)):
+        db.add(UsageBucket(tenant_id=t.id, scope="machine", entity_id=mid, measure="total", bucket_start=b, value=v))
+    await db.commit()
+    view = await api(client, "GET", f"/api/plants/{pid}/layout/auto", h)
+    m = next(x for x in view["machines"] if x["machine_id"] == mid)
+    e = max((now - b0).total_seconds() / 60.0, 1 / 60)
+    live = (50 * min(15.0, e) / e + 600 * max(0.0, 15.0 - e) / 60.0) * 4
+    k = m["kpis"]
+    assert abs(k["cadence_per_hour"] - live) < 2.0, (k, live)          # live, not the shift average
+    assert "cadence_shift_per_hour" in k and "ideal_cycle_time_suspect" in k
+    shift_start = datetime.fromisoformat(view["shift"]["start"])
+    if (now - shift_start) > (now - b1) / 0.9:                          # shift began well before the data
+        cov = next(b for b in m["badges"] if b["kind"] == "data_coverage")
+        assert cov["value"] < 0.95
+
+    # a shift that does not contain now (nor the last 12 h): every part counted is outside the calendar
+    tz = __import__("zoneinfo").ZoneInfo(p.plant["timezone"])
+    loc = now.astimezone(tz) + timedelta(hours=6)
+    await api(client, "POST", "/api/shifts/", h, 201, json={
+        "plant_id": pid, "name": "Turno longe", "start_local": loc.strftime("%H:00"),
+        "end_local": (loc + timedelta(hours=1)).strftime("%H:00"), "weekdays": list(range(7)), "breaks": []})
+    view = await api(client, "GET", f"/api/plants/{pid}/layout/auto", h)
+    m = next(x for x in view["machines"] if x["machine_id"] == mid)
+    out = next(b for b in m["badges"] if b["kind"] == "outside_calendar")
+    assert out["parts"] == 650 and out["window_h"] == 12 and m["kpis"] is None

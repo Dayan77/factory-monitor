@@ -48,16 +48,29 @@ export interface PlantLayout {
 
 export interface MachineKpis {
   oee: number | null;
+  performance?: number | null;
+  /** Live cadence (kpis.md §1.9): parts of the last 15 min × 4. */
   cadence_per_hour: number | null;
+  /** Realized cadence of the current shift (PQ/PBT). */
+  cadence_shift_per_hour?: number | null;
   good: number;
   scrap: number;
   reason?: string | null;
+  /** P > 1 (S3-2): the number is shown, never truncated, but always with a warning. */
+  ideal_cycle_time_suspect?: boolean;
+  data_coverage?: number | null;
+  counts_prorated?: boolean;
 }
 
 export interface MarkerBadge {
-  kind: "predictive" | string;
+  kind: "predictive" | "data_coverage" | "outside_calendar" | string;
   severity?: string;
   alert_id?: string | null;
+  /** data_coverage: fraction of the shift with data. */
+  value?: number;
+  /** outside_calendar: parts counted outside every shift in the last `window_h` hours (S3-7). */
+  parts?: number;
+  window_h?: number;
 }
 
 export interface MachineVisual {

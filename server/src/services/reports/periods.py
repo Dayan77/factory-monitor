@@ -186,15 +186,29 @@ def candidate_periods(report_type: str, cal: Calendar, now: datetime, lookback_d
     return out
 
 
+def productive_day_at(cal: Calendar, now: datetime) -> date:
+    """Productive day running at `now` (C19/S3-8): a night shift belongs to the day it started."""
+    inst = cal.instance_at(now)
+    return inst.productive_day if inst else now.astimezone(cal.tz).date()
+
+
+def _day_param(v, cal: Calendar, now: datetime) -> Optional[date]:
+    """productive_day param: ISO date, or "today" = the productive day running now (never the civil date: at
+    02:00 in a 22:00–06:00 shift "today" is the day the shift started)."""
+    if isinstance(v, str) and v.strip().lower() == "today":
+        return productive_day_at(cal, now)
+    return _date(v)
+
+
 def resolve_period(report_type: str, cal: Calendar, params: dict, now: datetime) -> Period:
     """On-demand generation: period parameters → Period (defaults: the last closed period)."""
     tz = cal.tz
     today = now.astimezone(tz).date()
     if report_type == "daily_production":
-        d = _date(params.get("productive_day")) or (today - timedelta(days=1))
+        d = _day_param(params.get("productive_day"), cal, now) or (today - timedelta(days=1))
         return day_period(cal, d)
     if report_type == "weekly_oee":
-        d = _date(params.get("week_start")) or _date(params.get("productive_day")) or \
+        d = _date(params.get("week_start")) or _day_param(params.get("productive_day"), cal, now) or \
             (today - timedelta(days=today.weekday() + 7))
         return week_period(cal, d)
     if report_type == "monthly_maintenance":
@@ -214,7 +228,7 @@ def resolve_period(report_type: str, cal: Calendar, params: dict, now: datetime)
         return Period(report_type, f"cut-{cut.isoformat()}", None, cut - timedelta(days=1), None, midnight(cut, tz),
                       f"histórico até {cut:%d/%m/%Y}")
     if report_type == "shift":
-        d = _date(params.get("productive_day")) or today
+        d = _day_param(params.get("productive_day"), cal, now) or productive_day_at(cal, now)
         sid = params.get("shift_id")
         insts = [i for i in cal.day_instances(d) if sid is None or i.shift_id == sid]
         if not insts:

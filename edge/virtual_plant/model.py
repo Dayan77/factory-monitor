@@ -321,6 +321,7 @@ class SetupProcess:
         self.enabled = enabled and len(self.products) > 1
         self.remaining_s = 0.0
         self._done_for: Optional[float] = None
+        self._first_check = True
         self.events: list[dict] = []
 
     @property
@@ -334,9 +335,14 @@ class SetupProcess:
     def maybe_start(self, cal: CalendarState, plant_s: float, now: float) -> bool:
         if not self.enabled or cal.shift_start is None or self._done_for == cal.shift_start:
             return False
+        first, self._first_check = self._first_check, False
         if plant_s < cal.shift_start + self.offset_s:
             return False
         self._done_for = cal.shift_start
+        if first:
+            # The plant (re)started after this shift's setup time: that setup belongs to before the start. Doing it
+            # now would stop every machine at t≈0 of every restart (QA sprint 6: ~20 min without production).
+            return False
         prev = self.product.product
         self.index = (self.index + 1) % len(self.products)
         self.remaining_s = self.duration_s

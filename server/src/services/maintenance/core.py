@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 USAGE_MEASURES = ("cycles", "hours", "starts")
 TRIGGERS = ("cycles", "hours", "starts", "days")
 RATE_WINDOW_DAYS = 14          # kpis.md §4.2 / C17
+RATE_MIN_DAYS = 3              # kpis.md §4.2: fewer days of data → no usage projection
 EPS = 1e-9                     # C18: an integer quotient does not round up
 PROJECTION_HORIZON_DAYS = 3650  # projections beyond ~10 years are not dated (reason beyond_horizon)
 
@@ -44,6 +45,8 @@ class PlanStatus:
     calendar_due_date: Optional[date]
     past_due: bool
     reason: Optional[str] = None
+    # kpis.md §4.2 (audit A-3): the usage pace came from fewer than 14 days of data
+    low_confidence: bool = False
 
     @property
     def since_maintenance(self) -> dict:
@@ -83,7 +86,12 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
                         tolerance: float = 0.10, due_soon_at: float = 0.8,
                         window_days: float = RATE_WINDOW_DAYS) -> Optional[PlanStatus]:
     """Whichever-comes-first status of a plan. `intervals`: {cycles|hours|starts|days: value}; usage
-    since maintenance = usage_now − last_reset_usage (S4-2, never the component counter)."""
+    since maintenance = usage_now − last_reset_usage (S4-2, never the component counter).
+    `window_days`: days of data behind `usage_window` (kpis.md §4.2, audit A-3): min(14, days with data); below
+    RATE_MIN_DAYS the usage triggers get no projected date (`insufficient_data`); below 14 → `low_confidence`."""
+    window_days = min(float(window_days), float(RATE_WINDOW_DAYS))
+    low_conf = window_days < RATE_WINDOW_DAYS
+    too_little = window_days < RATE_MIN_DAYS
     ref = local_date(last_reset_at, tz)
     trig: list[TriggerStatus] = []
     calendar_due: Optional[date] = None
@@ -107,7 +115,7 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
             continue
         base = float(last_reset_usage.get(m, 0.0) or 0.0)
         used = float(usage_now.get(m, 0.0) or 0.0) - base
-        rate = float(usage_window.get(m, 0.0) or 0.0) / window_days if window_days > 0 else 0.0
+        rate = 0.0 if too_little else float(usage_window.get(m, 0.0) or 0.0) / window_days
         rem = iv - used
         if rem <= 0:
             days: Optional[int] = 0
@@ -131,13 +139,15 @@ def compute_plan_status(intervals: Mapping[str, Optional[float]], last_reset_at:
         # S4-3: overdue → days_to_due 0, today, past_due (whatever the projections say)
         zero = [t for t in dated if t.days == 0]
         due_t = max(zero, key=lambda t: t.consumed).measure if zero else best.measure
-        return PlanStatus(state, consumed, best.measure, trig, 0, due_t, today, calendar_due, True)
+        return PlanStatus(state, consumed, best.measure, trig, 0, due_t, today, calendar_due, True,
+                          low_confidence=low_conf)
     if not dated:
         return PlanStatus(state, consumed, best.measure, trig, None, None, None, calendar_due, False,
-                          reason="beyond_horizon" if beyond_horizon else "no_recent_usage")
+                          reason="beyond_horizon" if beyond_horizon
+                          else "insufficient_data" if too_little else "no_recent_usage", low_confidence=low_conf)
     first = min(dated, key=lambda t: (t.days, -t.consumed))           # earliest date; tie → larger %
     return PlanStatus(state, consumed, best.measure, trig, first.days, first.measure,
-                      today + timedelta(days=first.days), calendar_due, False)
+                      today + timedelta(days=first.days), calendar_due, False, low_confidence=low_conf)
 
 
 # ── work-order state machine (domain.md §5.3, S4-5) ──────────────────────────

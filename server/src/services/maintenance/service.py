@@ -88,6 +88,8 @@ async def evaluate_plans(db: AsyncSession, tenant_id: str, plans: list[Maintenan
     pos_win = await mu.rate_window(db, tenant_id, "position", pos_ids, now)
     m_now = await mu.totals(db, tenant_id, "machine", mach_ids)
     m_win = await mu.rate_window(db, tenant_id, "machine", mach_ids, now)
+    pos_days = await mu.data_days(db, tenant_id, "position", pos_ids, now)
+    m_days = await mu.data_days(db, tenant_id, "machine", mach_ids, now)
     tzs = await mu.machine_tz(db, tenant_id, [p.machine_id for p in plans])
     out = []
     for p in plans:
@@ -95,12 +97,15 @@ async def evaluate_plans(db: AsyncSession, tenant_id: str, plans: list[Maintenan
         today = now.astimezone(tz).date()
         if p.position_id:
             u_now, u_win = pos_now.get(p.position_id, {}), pos_win.get(p.position_id, {})
+            days = pos_days.get(p.position_id, 0.0)
         else:
             u_now, u_win = m_now.get(p.machine_id, {}), m_win.get(p.machine_id, {})
+            days = m_days.get(p.machine_id, 0.0)
         try:
+            # audit A-3: the pace divides by the days with data (min 14), not always by 14
             st = core.compute_plan_status(plan_intervals(p), p.last_reset_at, p.last_reset_usage or {}, u_now, u_win,
                                           today, tz, tolerance=(p.tolerance_pct or 0) / 100.0,
-                                          due_soon_at=cfg.due_soon_at)
+                                          due_soon_at=cfg.due_soon_at, window_days=days)
         except Exception:  # noqa: BLE001 — one bad plan must not break the listing or the engine
             log.exception("maintenance.plan.evaluate_error", tenant_id=tenant_id, plan_id=p.id)
             st = None
@@ -253,6 +258,7 @@ def status_row(ev: PlanEval, names: dict, open_wo: Optional[WorkOrder]) -> dict:
         "days_to_due": st.days_to_due if st else None,
         "calendar_due_date": st.calendar_due_date.isoformat() if st and st.calendar_due_date else None,
         "past_due": bool(st.past_due) if st else False,
+        "low_confidence": bool(st.low_confidence) if st else False,
         "reason": st.reason if st else "no_triggers",
         "since_maintenance": st.since_maintenance if st else {},
         "consumed_by_trigger": st.consumed_by_trigger if st else {},

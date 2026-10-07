@@ -1,6 +1,7 @@
 """Public demo tenant CLI (docs/sprint6.md §5).
 
     cd server && python -m src.demo bootstrap [--map ../edge/config/plant.json] [--rotate-gateway]
+    cd server && python -m src.demo enroll-code       # one-time enrollment code of the demo gateway (24 h)
     cd server && python -m src.demo bot-once          # one pass of demo-bot (normally a background task)
     cd server && python -m src.demo status
 
@@ -37,6 +38,20 @@ async def _bootstrap(args) -> int:
     return 0
 
 
+async def _enroll_code(_args) -> int:
+    from .db import AsyncSessionLocal
+    from .services.demo.bootstrap import BootstrapError, issue_enroll_code
+    try:
+        async with AsyncSessionLocal() as db:
+            out = await issue_enroll_code(db)
+    except BootstrapError as e:
+        print(f"erro: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    print("\nPonha DEMO_GATEWAY_ENROLL_CODE=<code> no .env (uso único, vale 24 h) e suba o demo-gateway.")
+    return 0
+
+
 async def _bot_once(_args) -> int:
     from .db import AsyncSessionLocal
     from .services.demo.bot import run_once
@@ -60,10 +75,11 @@ def main(argv=None) -> int:
     b = sub.add_parser("bootstrap", help="cria/completa o tenant demo a partir do mapa da planta virtual")
     b.add_argument("--map", default=None, help="mapa v1 da planta virtual (padrão: edge/config/plant.json)")
     b.add_argument("--rotate-gateway", action="store_true", help="gera novo token/senha MQTT do gateway da demo")
+    sub.add_parser("enroll-code", help="código de cadastro (uso único, 24 h) do gateway da demo — opção A")
     sub.add_parser("bot-once", help="uma passada do demo-bot")
     sub.add_parser("status", help="estado da demo (planta virtual parada?)")
     args = ap.parse_args(argv)
-    fn = {"bootstrap": _bootstrap, "bot-once": _bot_once, "status": _status}[args.cmd]
+    fn = {"bootstrap": _bootstrap, "enroll-code": _enroll_code, "bot-once": _bot_once, "status": _status}[args.cmd]
     return asyncio.run(fn(args))
 
 

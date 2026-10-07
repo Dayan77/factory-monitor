@@ -8,6 +8,7 @@ import { formatDuration, reasonLabel } from "@/utils/efficiency";
 import { drillLink, drillPaths, type DrillContext } from "@/utils/drilldown";
 import { markerText } from "@/utils/visualState";
 import { StateChip } from "./StateIcon";
+import { SUSPECT_TITLE, badgeText, oeeText } from "@/utils/mapKpis";
 
 interface Props {
   machine: MachineVisual | null;
@@ -40,13 +41,20 @@ export default function MachineSummarySheet({ machine, now, ctx, onClose }: Prop
             <div className="rounded-lg border border-line p-3">
               <dt className="text-caption text-fg-subtle">OEE do turno</dt>
               <dd className="text-title tabular text-fg">{machine.kpis?.oee == null ? "—" : formatPct(machine.kpis.oee)}</dd>
+              {oeeText(machine.kpis).suspect && <dd className="text-caption text-[#b45309]" data-testid="summary-suspect">⚠ {SUSPECT_TITLE}</dd>}
               {machine.kpis?.oee == null && machine.kpis?.reason && <dd className="text-caption text-fg-subtle">{machine.kpis.reason.replace(/_/g, " ")}</dd>}
             </div>
             <div className="rounded-lg border border-line p-3">
-              <dt className="text-caption text-fg-subtle">Cadência</dt>
+              <dt className="text-caption text-fg-subtle">Cadência ao vivo (15 min)</dt>
               <dd className="text-title tabular text-fg">{machine.kpis?.cadence_per_hour == null ? "—" : formatDec1(machine.kpis.cadence_per_hour)} <span className="text-caption text-fg-subtle">pç/h</span></dd>
+              {machine.kpis?.cadence_shift_per_hour != null && <dd className="text-caption text-fg-subtle">média do turno {formatDec1(machine.kpis.cadence_shift_per_hour)} pç/h</dd>}
             </div>
           </dl>
+          {machine.badges.map(badgeText).filter(Boolean).length > 0 && (
+            <ul className="space-y-1 text-caption text-fg-muted" data-testid="summary-badges">
+              {machine.badges.map(badgeText).filter(Boolean).map((t) => <li key={t}>ⓘ {t}</li>)}
+            </ul>
+          )}
           <ul className="space-y-2 text-body">
             {machine.detail.downtime_id && (
               <li className="rounded-lg border border-[#b45309]/40 bg-[#f59e0b]/10 p-3">

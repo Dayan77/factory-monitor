@@ -63,8 +63,14 @@ async function waitStops(lineId, n, ms) {
   }
 }
 
-// 403 on another line (API, operator token)
-const other = (await api("GET", "/api/downtime/?limit=500", admin)).data.find((x) => x.line_id === usinagem.id);
+// 403 on another line (API, operator token). Needs one real stop of Linha de Usinagem: if the plant has not had one
+// yet (the map check's forced failures last < 2 s, below the 120 s micro-stop threshold), the control API stops the lathe.
+const usinagemStop = async () => (await api("GET", "/api/downtime/?limit=500", admin)).data.find((x) => x.line_id === usinagem.id);
+let other = await usinagemStop();
+if (!other) {
+  await fetch(`${VP}/force-failure`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ machine: "usinagem.torno", duration_s: 150 }) }).catch(() => {});
+  for (let t0 = Date.now(); !other && Date.now() - t0 < 420000; ) { await sleep(5000); other = await usinagemStop(); }
+}
 if (other) {
   const r = await api("PATCH", `/api/downtime/${other.id}`, opTok, { reason_code: "MAT-01" });
   check(r.status === 403, "operator → other line's stop: 403", r);
@@ -175,8 +181,11 @@ if (PREVIEW) {
   check(ctrl, "service worker controls /op");
   await pctx.setOffline(true);
   await page.reload().catch(() => {});
-  const shell = await page.getByTestId("op-login").isVisible().catch(() => false);
-  check(shell, "app shell opens offline");
+  // reload() resolves on the load event; React may render the shell a moment later (seen under CPU load), so wait
+  const t0 = Date.now();
+  const shell = await page.getByTestId("op-login").waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+  const shown = shell ? `${Date.now() - t0} ms` : (await page.locator("body").innerText().catch(() => "")).slice(0, 200);
+  check(shell, `app shell opens offline (${shell ? shown : "not rendered in 10 s"})`, shown);
   await pctx.close();
 } else console.log("  (PREVIEW_URL not set: installability not checked)");
 await browser.close();

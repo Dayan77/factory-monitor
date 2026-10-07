@@ -30,9 +30,9 @@ Feita pelo papel `reliability-engineer`, por leitura do código e execução das
 
 | # | Item | Severidade | Onde | Teste |
 |---|---|---|---|---|
-| A-1 | Ao ignora a preventiva `PLN-03` programada no calendário (não entra em D_eq) | **Alta** | `server/src/services/oee/engine.py:components` | `test_A1_*` |
+| A-1 | ✅ **corrigido** — Ao ignorava a preventiva `PLN-03` programada no calendário (não entrava em D_eq) | **Alta** | `server/src/services/oee/engine.py:components` | `test_A1_*` |
 | A-2 | Ritmo da RUL nominal divide pelos dias desde `installed_at`, não pelos dias com dados (componente com data de instalação antiga) | Média (lacuna de spec) | `server/src/services/usage/queries.py:component_usage_detail` | `test_A2_*` |
-| A-3 | Ritmo dos planos sempre ÷ 14, sem a regra "< 14 dias → dias disponíveis + `low_confidence`" | **Alta** | `server/src/services/maintenance/service.py:evaluate_plans` | `test_A3_*` |
+| A-3 | ✅ **corrigido** — Ritmo dos planos sempre ÷ 14, sem a regra "< 14 dias → dias disponíveis + `low_confidence`" | **Alta** | `server/src/services/maintenance/service.py:evaluate_plans` | `test_A3_*` |
 | A-4 | MTBF = 0 h e Ai = 0 quando há falhas mas tempo de operação 0 (deveria ser `null` + `reason`) | Média | `server/src/services/oee/kpi.py:reliability`, `server/src/services/maintenance/core.py:reliability_row` | `test_A4_*` |
 | A-5 | Pareto com PBT = 0 devolve 3 linhas de 0 min com `pct = null` (S3-1: lista vazia) | Média | `server/src/services/oee/kpi.py:pareto` | `test_A5_*` |
 | A-6 | `failures_outside_production` (kpis S5-1c item 6, DEVE) ausente das respostas de confiabilidade; o relatório mensal usa um *proxy* | Média | `server/src/services/oee/service.py:reliability_for`, `server/src/services/maintenance/kpis.py:reliability`, `server/src/services/reports/builders.py:build_monthly_maintenance` | `test_A6_*` |
@@ -60,7 +60,11 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
 
 ## Divergências e casos de borda
 
-### A-1 — Ao sem a preventiva programada no calendário · **Alta**
+### A-1 — Ao sem a preventiva programada no calendário · **Alta** · ✅ corrigido
+
+> **Corrigido** (Sprint 6, antes do merge): `engine.components` soma a D_eq a união das pausas de calendário com
+> código de equipamento (`PLN-03`/`MNT-02`) ∩ POT com os eventos `EQP-*`/`PLN-03`/`MNT-02` (sem contar duas vezes).
+> Contraexemplo agora dá Ao = 0,822222; `test_A1_ao_calendar_preventive_spec` passa sem `xfail`.
 
 - **Spec**: kpis.md §2.6 — `D_eq` = falhas `EQP-*` + manutenção `PLN-03` e `MNT-02`; `T_req` = POT − `PLN-01/02/04/05`.
   Exemplo R6: preventiva de 6 h **está** em D_eq (Ao = 0,98). S3-4: `PLN-03` só existe se estiver no calendário antes
@@ -105,7 +109,12 @@ preditiva e Weibull conferem com os exemplos numéricos da spec (seção "Invent
   vida fica subestimado até a primeira troca. Sugestão para o assistente: coluna opcional "uso já acumulado" no CSV de
   ativos.
 
-### A-3 — Planos: ritmo sempre ÷ 14 · **Alta**
+### A-3 — Planos: ritmo sempre ÷ 14 · **Alta** · ✅ corrigido
+
+> **Corrigido** (Sprint 6, antes do merge): `evaluate_plans` passa `window_days` = min(14, agora − 1º bucket de uso
+> da posição/máquina) (`maintenance/usage.py:data_days`); `< 3` dias → sem projeção por uso
+> (`reason = insufficient_data`); `< 14` → `low_confidence = true` em `PlanStatus` e em `/api/maintenance-plans/status`.
+> Contraexemplo: 15 dias, 20/10/2026. A regra de "dias com dados" para a RUL nominal (A-2) continua pendente.
 
 - **Spec**: kpis.md §4.2 — "Para planos, o mesmo cálculo …" com as mesmas bordas (dias disponíveis, mínimo 3,
   `low_confidence`). S4-3: `dias = ceil((intervalo − uso)/ritmo − ε)` com ritmo de 14 dias corridos.

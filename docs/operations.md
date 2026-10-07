@@ -96,6 +96,12 @@ Variáveis: `BACKUP_DIR` (padrão `./backups`), `BACKUP_KEEP` (14), `BACKUP_UPLO
 `BACKUP_PING_URL`, `BACKUP_SKIP_INFLUX`, `BACKUP_INFLUX_COUNT` — documentadas no topo do script.
 A rotação só acontece depois de um backup completo; um backup com falha não apaga nada.
 
+**Arquivos dos tenants (`FILES_DIR`)** — plantas baixas do mapa (`<tenant_id>/layouts/<asset_id>.<ext>`). Em produção
+o compose fixa `FILES_DIR=/app/data/files` no volume nomeado `server-files` (dono uid 10001, criado pela imagem):
+sobrevive a `dc up -d` com imagem nova e a recriação do container. **Ainda não entra no `backup.sh`**; até lá, copie
+o volume junto com o backup:
+`docker run --rm -v factory-monitor_server-files:/f:ro -v "$BACKUP_DIR":/b alpine tar czf /b/files-$(date -u +%Y%m%dT%H%M%SZ).tgz -C /f .`
+
 ### 4.2 Agendamento no VPS (cron)
 ```bash
 sudo install -d -m 700 -o fmonitor -g fmonitor /var/backups/factory-monitor   # setup_vps.sh já cria
@@ -363,12 +369,15 @@ make mqtt-gateway-add GATEWAY=gw-demo TENANT=<tenant_id do passo 1>
 #    DEMO_VIRTUAL_PLANT_CONTROL_URL=http://demo-plant:7070     # lido pelo servidor (demo-bot)
 #    COMPOSE_PROFILES=demo            # ou monitoring,demo
 dc up -d server                       # o servidor passa a ver DEMO_VIRTUAL_PLANT_CONTROL_URL/_TOKEN
+# o demo-bot manda X-Control-Token em POST /replace; resposta não-2xx fica em audit_events
+# (demo_bot.virtual_plant_replace_failed) e o bot deixa a posição em paz por DEMO_BOT_FAILURE_BACKOFF_S (6 h)
 ```
 
 ### 10.2 Cadastro do gateway da demo
-- **Opção A — código de cadastro** (mesmo fluxo de um cliente, docs/gateways.md): gere um código para o gateway da
-  demo (`POST /api/gateways/{gateway_id}/enroll-token` com um admin do tenant demo; vale 24 h, uso único) e ponha
-  `DEMO_GATEWAY_ENROLL_CODE=<código>` no `.env`. Na 1ª partida o gateway troca o código pelo token e grava a
+- **Opção A — código de cadastro** (mesmo fluxo de um cliente, docs/gateways.md): o tenant demo não tem admin que
+  entre com senha, então gere o código pela CLI — `docker exec fm_server python -m src.demo enroll-code` (vale 24 h,
+  uso único; equivale a `POST /api/gateways/{gateway_id}/enroll-token`) — e ponha `DEMO_GATEWAY_ENROLL_CODE=<código>`
+  no `.env`. Na 1ª partida o gateway troca o código pelo token e grava a
   credencial em `/data/gateway_credentials.json` (0600, volume `demo-gateway-data`); depois o código pode sair do
   `.env` (é ignorado). A senha MQTT do cadastro **não** é usada: o broker só aceita o usuário do passo 2.
 - **Opção B — token do bootstrap**: `DEMO_GATEWAY_ID=<gateway_id>` e `DEMO_GATEWAY_TOKEN=<token>` impressos no
@@ -413,7 +422,8 @@ curl -fsS https://app.factoryconnect.tech/api/public/demo-status   # "plant_runn
 ### 10.5 Rotação e desligamento
 - Token da API de controle: novo `DEMO_VIRTUAL_PLANT_CONTROL_TOKEN` → `dc up -d server demo-plant`.
 - Senha MQTT do gateway da demo: `make mqtt-gateway-add GATEWAY=gw-demo TENANT=<uuid>` → `.env` → `dc up -d demo-gateway`.
-- Token do gateway: `python -m src.demo bootstrap --rotate-gateway` (opção B) ou novo código (opção A, apague
+- Token do gateway: `python -m src.demo bootstrap --rotate-gateway` (opção B) ou novo código
+  (`python -m src.demo enroll-code`, opção A; apague
   `/data/gateway_credentials.json` do volume `demo-gateway-data`).
 - Desligar a demo: tire `demo` de `COMPOSE_PROFILES` e `dc stop demo-plant demo-gateway` (o site continua com o
   botão; a sessão abre com a faixa "planta simulada temporariamente parada").

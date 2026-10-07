@@ -105,6 +105,22 @@ def test_setup_once_per_shift_changes_product_code():
     assert [s["start_s"] for s in ev["montagem.robo"]["setups"]] == [6300, 6300 + 8 * H, 6300 + 16 * H]
 
 
+def test_restart_mid_shift_does_not_replay_the_shift_setup():
+    """QA sprint 6: every restart of the (demo) plant started a SET-01 on every machine at t≈0.1 s. A plant (re)started
+    after the shift's setup time assumes that setup happened before; the next shift's setup runs normally."""
+    m = PlantModel(seed=4, faults=False, start_second_of_day=10 * H, config=quiet(setups=True))
+    m.run_for(2 * H)
+    ev = m.snapshot()["truth"]["events"]
+    assert all(ev[k]["setups"] == [] for k in ("usinagem.torno", "usinagem.centro", "montagem.robo"))
+    assert m.values()["usinagem.torno.run_state"] is True
+    m.run_for(6 * H)                               # 14:00 shift: its setup at 15:00 (= 5 h after the start)
+    assert [s["start_s"] for s in m.snapshot()["truth"]["events"]["usinagem.torno"]["setups"]] == [5 * H]
+    # started before the setup time (06:30): the setup of that shift still happens at 07:00
+    m2 = PlantModel(seed=4, faults=False, start_second_of_day=6 * H + 1800, config=quiet(setups=True))
+    m2.run_for(H)
+    assert [s["start_s"] for s in m2.snapshot()["truth"]["events"]["usinagem.torno"]["setups"]] == [1800]
+
+
 def test_machine_stopped_without_fault_during_setup():
     m = PlantModel(seed=4, faults=False, config=quiet(setups=True))
     m.run_for(H + 1)

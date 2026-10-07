@@ -54,6 +54,8 @@ export interface PlanStatus {
   line_id?: string | null;
   /** Why no date could be projected (no_recent_usage, no_triggers…). */
   reason?: string | null;
+  /** kpis.md §4.2 (audit A-3): the usage pace comes from fewer than 14 days of data. */
+  low_confidence?: boolean;
 }
 
 export interface PlanStatusQuery {

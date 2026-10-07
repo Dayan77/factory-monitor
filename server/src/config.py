@@ -194,7 +194,8 @@ class ServerSettings(BaseSettings):
     # onboarding step 9: required tags must have data continuously for this long
     readiness_window_min: int = 15
     # public demo (docs/sprint6.md §5): read-only tenant fed by the virtual plant
-    demo_tenant_slug: str = "demo"
+    # not "demo": scripts/seed_dev.py uses that slug for the dev tenant (SEED_TENANT_SLUG)
+    demo_tenant_slug: str = "demo-publica"
     demo_session_hours: float = 2.0
     demo_rate_limit_per_hour: int = 10
     demo_ai_questions_per_session: int = 10
@@ -204,6 +205,11 @@ class ServerSettings(BaseSettings):
     demo_bot_tick_s: float = 60.0
     demo_bot_replace_after_s: float = 900.0
     demo_virtual_plant_control_url: str = ""
+    # X-Control-Token of the virtual plant control API (VP_CONTROL_TOKEN of the demo-plant container): required
+    # whenever the control API is reached from another host/container (edge/virtual_plant/control.py)
+    demo_virtual_plant_control_token: str = ""
+    # after the virtual plant refused/failed a /replace, the bot leaves that position alone for this long
+    demo_bot_failure_backoff_s: float = 6 * 3600.0
 
     # Sprint 6 (backend B) — reports (docs/reports.md §4–§5): scheduling engine tick, attachment limit
     # (above it the e-mail carries only a signed link valid 7 days) and catch-up window after downtime

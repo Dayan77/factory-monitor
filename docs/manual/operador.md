@@ -15,14 +15,17 @@ O que você **não** vê no tablet: outras linhas, horas e custos da manutençã
 
 ## Como entrar
 
-1. Na tela inicial do tablet, digite (ou leia com o leitor de crachá) o seu **usuário ou crachá** e a sua senha/PIN.
-2. Se aparecer "Este tablet fica em qual linha?", o tablet ainda não foi vinculado: chame o supervisor (ele faz isso
-   uma vez, veja [Supervisor — como cadastrar o tablet da linha](supervisor.md#tablet)).
-3. Na troca de turno ou de operador, toque em **Trocar operador**: o próximo entra em 2 toques, sem perder nada que
-   estava pendente. A sessão também termina sozinha no fim do turno ou depois de 15 min sem uso.
+1. Abra o app do tablet (endereço do FactoryConnect em `/op`, instalado na tela inicial). Na tela **Tablet do
+   operador**, digite o seu **usuário (e-mail) e senha** — os mesmos que o administrador cadastrou para você.
+2. Na primeira vez em cada tablet aparece "Este tablet fica em qual linha?": escolha a linha. A escolha fica guardada
+   no aparelho. Se você tem só uma linha atribuída, ela já vem escolhida; você nunca vê as outras linhas.
+3. Na troca de turno ou de operador, toque em **Trocar operador** e confirme: o próximo entra com o usuário dele.
+   A sessão também termina sozinha depois de 15 min sem uso — **exceto** se você tiver ações pendentes de envio:
+   aí ela continua aberta até a rede voltar e tudo ser enviado.
 
-Errou o PIN 5 vezes? O acesso fica bloqueado por 5 minutos. Esqueceu o PIN: o supervisor ou o administrador gera
-outro.
+> **Ainda não existe**: entrar com PIN ou crachá, bloqueio após erros de PIN e o cadastro (vínculo) do tablet com
+> código pelo supervisor. Estão no roadmap (Fase 5, pendências do §3.2). Até lá, cada operador precisa de um usuário
+> com e-mail e senha, criado pelo administrador.
 
 ## Como ver a linha agora
 
@@ -117,9 +120,15 @@ lançamento manual não é oferecido (para não contar duas vezes).
 
 O Wi-Fi da fábrica cai? Continue trabalhando:
 
-- Justificativas, paradas declaradas e trocas de produto ficam guardadas no tablet como **"pendente de envio"** (veja
-  **Pendentes de envio**).
+- **Justificativas** e **paradas declaradas** ficam guardadas no tablet como **"pendente de envio"** (veja
+  **Pendentes de envio**). A **troca de produto** precisa de rede.
+- O tablet guarda a lista de motivos e a última lista de paradas sem motivo: mesmo que ele seja reaberto já sem rede,
+  dá para justificar. A tela avisa "lista salva às HH:MM" — paradas que começaram depois disso só aparecem quando a
+  rede voltar.
 - Quando a rede volta, o tablet envia tudo **na ordem**, uma vez só.
+- As ações são enviadas com a sessão de quem as fez. Por isso o tablet não encerra a sua sessão por inatividade
+  enquanto houver pendentes; se você mesmo sair, a tela de entrada mostra "N ações pendentes de <seu nome>" e elas
+  saem quando você entrar de novo nesse tablet.
 - Se outra pessoa justificou a mesma parada antes, vale o que chegou primeiro no servidor e o tablet mostra o que foi
   gravado ("Esta parada já foi justificada").
 

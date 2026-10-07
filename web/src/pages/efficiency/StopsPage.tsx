@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import clsx from "clsx";
 import ExportMenu from "@/components/reports/ExportMenu";
-import { localDate } from "@/utils/period";
 import Button from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
@@ -317,7 +316,7 @@ export default function StopsPage() {
         <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-[auto_auto_auto]">
           {plant && (
             <ExportMenu report="daily_production" scopeType="plant" scopeId={plant.id} label="Exportar paradas do dia"
-              className="col-span-2 sm:col-span-1 [&>button]:min-h-14 [&>button]:w-full" params={{ productive_day: localDate(Date.now(), plant.timezone) }} />
+              className="col-span-2 sm:col-span-1 [&>button]:min-h-14 [&>button]:w-full" params={{ productive_day: "today" /* resolved by the server: the running productive day (C19), not the civil date */ }} />
           )}
           <Button size="lg" variant="secondary" className="min-h-14" onClick={() => setSheet("product")}>Trocar produto</Button>
           <Button size="lg" variant="secondary" className="min-h-14" onClick={() => setSheet("manual")}>Registrar parada</Button>

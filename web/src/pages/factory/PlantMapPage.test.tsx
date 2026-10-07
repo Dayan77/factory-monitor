@@ -86,4 +86,26 @@ describe("PlantMapPage (sprint6 §1)", () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 1100)); });
     expect(screen.getByTestId("live-paused")).toHaveTextContent(/Ao vivo pausado — última atualização \d\d:\d\d:\d\d/);
   });
+
+  it("never shows OEE above 100 % without a warning, and shows the coverage / outside-calendar badges (QA sprint 6)", async () => {
+    vi.mocked(plantsApi.tree).mockResolvedValue(ok(plantTree()));
+    vi.mocked(layoutApi.list).mockResolvedValue(ok([]));
+    const suspect = { oee: 1.962, performance: 2.05, cadence_per_hour: 90, good: 22, scrap: 0, ideal_cycle_time_suspect: true, data_coverage: 0.02 };
+    vi.mocked(layoutApi.auto).mockResolvedValue(ok({
+      ...auto,
+      machines: [mv("m-5", "Rotuladora R-01", {
+        kpis: suspect,
+        badges: [{ kind: "data_coverage", value: 0.02 }, { kind: "outside_calendar", parts: 40, window_h: 12 }],
+      })],
+      lines: [{ ...auto.lines[0], kpis: suspect }],
+    }));
+    renderWithClient(<PlantMapPage />);
+    const [marker] = await screen.findAllByTestId("map-marker");
+    expect(within(marker).getByText(/OEE 196,2/)).toBeInTheDocument();
+    expect(within(marker).getByTestId("oee-suspect")).toHaveAttribute("title", expect.stringMatching(/acima de 100 %/));
+    expect(marker).toHaveAccessibleName(/OEE suspeito.*dados incompletos \(2,0.%.*40 peças fora do calendário/);
+    const label = screen.getByTestId("map-line-label");
+    expect(within(label).getByTestId("oee-suspect")).toBeInTheDocument();
+    expect(label).toHaveAccessibleName(/suspeito/);
+  });
 });

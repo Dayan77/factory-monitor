@@ -588,8 +588,11 @@ esclarecimentos acima; os testes `server/tests/test_oee_*.py` e o cenário C as 
 - **D7 — Contagens horárias.** Peças, horas de operação e micro-paradas ficam em buckets horários. Micro-paradas
   entram na janela que contém o início do pedaço dentro do turno. **Peças**: entra na janela a parte do bucket que
   cai dentro da janela **e** dentro das instâncias de turno (POT), proporcional à sobreposição (peças supostas
-  uniformes na hora; a hora corrente pelo tempo decorrido) — janelas vizinhas nunca contam duas vezes e a soma das
-  partes é o total. Janelas e turnos alinhados à hora cheia são exatos; quando algum bucket foi repartido a
+  uniformes **na parte da hora com dados** — os `MachineDataSpan` da máquina; a hora corrente até agora; hora sem
+  nenhum span: pelo tempo decorrido, regra antiga) — janelas vizinhas nunca contam duas vezes e a soma das
+  partes é o total. Sprint 6 (QA, tenant recém-cadastrado com 1ª leitura às 07:28): repartir pela hora inteira
+  punha 35/60 das peças de 07:28–08:00 na janela até 07:35, cujo APT só tinha 7 min com dados → P 2,06 e OEE 200 %;
+  pela parte coberta a janela recebe 7/32 das peças (P 0,79). *Revisão do reliability-engineer pendente.* Janelas e turnos alinhados à hora cheia são exatos; quando algum bucket foi repartido a
   resposta traz `counts_prorated = true` e a UI avisa "contagem proporcional" (ex.: turno 05:30–14:00, consulta
   09:30–09:45). Antes, um bucket só contava inteiro se o seu início caísse na janela — 09:30–09:45 dava 0 peças e
   OEE 0. A produção de um

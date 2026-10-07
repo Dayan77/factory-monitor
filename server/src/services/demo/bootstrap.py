@@ -1,7 +1,7 @@
 """Bootstrap of the public demo tenant (docs/sprint6.md §5): `python -m src.demo bootstrap [--map PATH]`.
 
 Creates (idempotent — matched by slug / name / serial):
-* tenant `settings.demo_tenant_slug` ("demo"), flagged `is_demo` (hidden from superadmin client listings);
+* tenant `settings.demo_tenant_slug` ("demo-publica"; "demo" is the dev seed tenant), flagged `is_demo` (hidden from superadmin client listings);
 * the plant of the virtual plant map (edge/config/plant.json, `--map` / DEMO_PLANT_MAP) in America/Sao_Paulo,
   with its lines, machines, output/bottleneck machines, positions, components, tags, products and PRI, fault →
   reason maps, 3 × 8 h shifts every day;
@@ -121,6 +121,24 @@ async def _user(db: AsyncSession, tenant_id: str, email: str, name: str, role: U
     else:
         u.role, u.roles, u.is_active = role, sorted(set(roles)), True
     return u
+
+
+async def issue_enroll_code(db: AsyncSession, now: Optional[datetime] = None) -> dict:
+    """One-time enrollment code for the demo gateway (operations.md §10.2, option A) — the same as
+    POST /api/gateways/{id}/enroll-token, for the CLI (the demo tenant has no admin who can log in). Commits."""
+    t = await demo_tenant(db)
+    if t is None:
+        raise BootstrapError("tenant demo não existe: rode `python -m src.demo bootstrap` antes.")
+    gw = (await db.execute(select(Gateway).where(Gateway.tenant_id == t.id, Gateway.name == GATEWAY_NAME)
+                           .with_for_update())).scalars().first()
+    if gw is None:
+        raise BootstrapError("gateway da demo não existe: rode `python -m src.demo bootstrap` antes.")
+    now = now or datetime.now(timezone.utc)
+    code = gs.new_enroll_code()
+    gw.enroll_code_hash = gs.sha256(gs.normalize_code(code))
+    gw.enroll_expires_at = gs.enroll_expiry(now)
+    await db.commit()
+    return {"tenant_id": t.id, "gateway_id": gw.id, "code": code, "expires_at": gw.enroll_expires_at.isoformat()}
 
 
 async def bot_user(db: AsyncSession, tenant_id: str) -> Optional[User]:

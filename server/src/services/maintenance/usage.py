@@ -72,6 +72,25 @@ async def rate_window(db: AsyncSession, tenant_id: str, scope: str, ids: Iterabl
     return await window(db, tenant_id, scope, ids, now - timedelta(days=RATE_WINDOW_DAYS), now + timedelta(seconds=1))
 
 
+async def data_days(db: AsyncSession, tenant_id: str, scope: str, ids: Iterable[str], now: datetime
+                    ) -> dict[str, float]:
+    """Days with data behind the rate window (kpis.md §4.2, audit A-3): min(14, now − first usage bucket of the
+    entity). An entity without any bucket → 0 (no pace yet)."""
+    ids = list(set(ids))
+    if not ids:
+        return {}
+    rows = (await db.execute(
+        select(UsageBucket.entity_id, func.min(UsageBucket.bucket_start))
+        .where(UsageBucket.tenant_id == tenant_id, UsageBucket.scope == scope, UsageBucket.entity_id.in_(ids))
+        .group_by(UsageBucket.entity_id))).all()
+    first = {e: b for e, b in rows}
+    out = {}
+    for i in ids:
+        b = first.get(i)
+        out[i] = 0.0 if b is None else min(float(RATE_WINDOW_DAYS), max((now - b).total_seconds() / 86400.0, 0.0))
+    return out
+
+
 def _ceil_hour(ts: datetime) -> datetime:
     ts = ts.astimezone(timezone.utc)
     floor = ts.replace(minute=0, second=0, microsecond=0)

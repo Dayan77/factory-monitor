@@ -144,9 +144,9 @@ gateway (variáveis de ambiente).
   notificações e relatórios.
 - **Técnicos de plantão** por linha recebem os chamados emergenciais; sem plantão na linha, o chamado vai para
   planejamento e gestão.
-- **Operadores** entram no tablet com crachá/usuário e PIN; 5 erros bloqueiam por 5 min.
-- **Tablets**: o supervisor vincula com um código de 10 min (veja [Supervisor](supervisor.md#tablet)); você pode
-  **revogar** um tablet perdido.
+- **Operadores** entram no tablet (`/op`) com **e-mail e senha** — crie um usuário para cada operador e atribua a
+  linha dele (ele só vê e só justifica paradas dessa linha). Entrada por PIN/crachá com bloqueio após erros e o
+  vínculo do tablet por código **ainda não existem** (pendentes no roadmap; veja [Supervisor](supervisor.md#tablet)).
 
 <a id="relatorios"></a>
 ## Como configurar os relatórios agendados

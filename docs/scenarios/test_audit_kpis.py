@@ -318,13 +318,7 @@ def _a1_components() -> kpi.Components:
     return components(md, local(6), local(14), local(23))
 
 
-def test_A1_ao_calendar_preventive_code_today():
-    ao = kpi.availability_operational(_a1_components())
-    assert close(ao, 430 / 450)                                   # 0,955556: D_eq = 20 min (só a falha)
-    assert "0,955556" in AUDIT
-
-
-@pytest.mark.xfail(strict=True, reason="audit A-1: preventiva PLN-03 do calendário fora de D_eq (kpis.md §2.6, R6)")
+# A-1 corrigido (Sprint 6, correções pré-merge): a preventiva PLN-03 do calendário entra em D_eq.
 def test_A1_ao_calendar_preventive_spec():
     # T_req = 480 − 30 (PLN-01) = 450; D_eq = 20 (EQP) + 60 (PLN-03) = 80 → Ao = 370/450
     assert close(kpi.availability_operational(_a1_components()), 370 / 450)
@@ -359,16 +353,23 @@ def test_A2_rul_rate_divides_by_days_since_install_code_today():
     assert (r5.days, r5.date.isoformat(), r5.low_confidence) == (70, "2026-12-14", True)
 
 
-def test_A3_plan_rate_always_14_days_code_today():
-    """U4 com a posição conectada há 5 dias (100 000 ciclos em 5 dias = 20 000/dia real)."""
-    st = mcore.compute_plan_status({"cycles": 2_000_000, "days": 180}, datetime(2026, 8, 6, 12, tzinfo=UTC),
-                                   {"cycles": 0.0}, {"cycles": 1_700_000}, {"cycles": 100_000}, date(2026, 10, 5), TZ)
-    assert (st.days_to_due, st.next_due_date.isoformat(), st.state) == (42, "2026-11-16", "due_soon")
-    # the pure function already supports the fix (the caller has to pass the days of data):
+def test_A3_plan_rate_uses_the_days_with_data_spec():
+    """A-3 corrigido: U4 com a posição conectada há 5 dias (100 000 ciclos em 5 dias = 20 000/dia real). O serviço
+    passa os dias com dados (maintenance/usage.py:data_days); a função pura expõe low_confidence."""
     st5 = mcore.compute_plan_status({"cycles": 2_000_000, "days": 180}, datetime(2026, 8, 6, 12, tzinfo=UTC),
                                     {"cycles": 0.0}, {"cycles": 1_700_000}, {"cycles": 100_000}, date(2026, 10, 5),
                                     TZ, window_days=5)
-    assert (st5.days_to_due, st5.next_due_date.isoformat()) == (15, "2026-10-20")
+    assert (st5.days_to_due, st5.next_due_date.isoformat(), st5.low_confidence) == (15, "2026-10-20", True)
+    st14 = mcore.compute_plan_status({"cycles": 2_000_000, "days": 180}, datetime(2026, 8, 6, 12, tzinfo=UTC),
+                                     {"cycles": 0.0}, {"cycles": 1_700_000}, {"cycles": 280_000}, date(2026, 10, 5), TZ)
+    assert st14.low_confidence is False
+    # menos de 3 dias com dados: sem projeção por uso (insufficient_data), só o gatilho de calendário
+    st2 = mcore.compute_plan_status({"cycles": 2_000_000}, datetime(2026, 8, 6, 12, tzinfo=UTC), {"cycles": 0.0},
+                                    {"cycles": 1_700_000}, {"cycles": 40_000}, date(2026, 10, 5), TZ, window_days=2)
+    assert st2.days_to_due is None and st2.reason == "insufficient_data" and st2.low_confidence
+    import inspect
+    from src.services.maintenance import service as msvc
+    assert "window_days=days" in inspect.getsource(msvc.evaluate_plans)
 
 
 def test_A4_mtbf_zero_without_operating_time_code_today():

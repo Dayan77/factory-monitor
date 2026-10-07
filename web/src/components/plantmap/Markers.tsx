@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import type { LayoutMarker, LineVisual, MachineVisual, MarkerSize } from "@/services/sprint6Types";
+import { SUSPECT_TITLE, badgeText, oeeText } from "@/utils/mapKpis";
 import { STATE_META, markerText } from "@/utils/visualState";
 import { formatDec1, formatPct } from "@/utils/format";
 import StateIcon from "./StateIcon";
@@ -47,6 +48,10 @@ interface MachineMarkerProps {
   onHover?: (id: string | null, el: HTMLElement | null) => void;
 }
 
+function SuspectMark() {
+  return <span aria-label="valor suspeito" title={SUSPECT_TITLE} data-testid="oee-suspect" className="ml-0.5 font-bold text-[#b45309]">⚠</span>;
+}
+
 /** A machine on the map: colour + icon + text of its state (§1.2), duration, OEE and cadence for m/l (§1.4). */
 export const MachineMarker = memo(function MachineMarker({ marker, machine, now, selected, onSelect, onHover }: MachineMarkerProps) {
   const meta = STATE_META[machine.state];
@@ -54,6 +59,8 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
   const size = marker.size ?? "m";
   const text = markerText(machine, now);
   const pred = machine.badges.find((b) => b.kind === "predictive");
+  const extra = machine.badges.filter((b) => b.kind === "data_coverage" || b.kind === "outside_calendar");
+  const oee = oeeText(machine.kpis);
   return (
     <button
       type="button"
@@ -61,7 +68,7 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
       data-testid="map-marker"
       data-machine-id={machine.machine_id}
       data-state={machine.state}
-      aria-label={`${machine.name}: ${text}`}
+      aria-label={`${machine.name}: ${text}${oee.suspect ? " — OEE suspeito (desempenho acima de 100 %)" : ""}${extra.map((b) => ` — ${badgeText(b)}`).join("")}`}
       aria-pressed={selected || undefined}
       onClick={() => onSelect?.(machine.machine_id)}
       onMouseEnter={(e) => onHover?.(machine.machine_id, e.currentTarget)}
@@ -82,6 +89,12 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
           !
         </span>
       )}
+      {extra.length > 0 && (
+        <span data-testid="map-badge-data" title={extra.map(badgeText).join(" · ")}
+          className="absolute -left-2 -top-2 flex size-5 items-center justify-center rounded-full border-2 border-surface bg-[#475569] text-[10px] font-bold text-white">
+          i
+        </span>
+      )}
       <span className="flex min-w-0 items-center gap-1.5">
         <StateIcon state={machine.state} className={size === "s" ? "size-3.5" : "size-4"} />
         <span className={clsx("truncate font-semibold", size === "s" ? "text-[11px] leading-4" : "text-caption")}>{machine.name}</span>
@@ -90,9 +103,9 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
         <>
           <span className="mt-0.5 block truncate text-[11px] leading-4 opacity-95">{text}</span>
           <span className="mt-0.5 flex items-center justify-between gap-2 text-[11px] font-medium leading-4 tabular opacity-90">
-            <span>OEE {machine.kpis?.oee == null ? "—" : formatPct(machine.kpis.oee)}</span>
+            <span>{oee.text}{oee.suspect && <SuspectMark />}</span>
             {size === "l" || machine.kpis?.cadence_per_hour != null ? (
-              <span>{machine.kpis?.cadence_per_hour == null ? "— pç/h" : `${formatDec1(machine.kpis.cadence_per_hour)} pç/h`}</span>
+              <span title="Cadência ao vivo: peças dos últimos 15 min × 4">{machine.kpis?.cadence_per_hour == null ? "— pç/h" : `${formatDec1(machine.kpis.cadence_per_hour)} pç/h`}</span>
             ) : null}
           </span>
         </>
@@ -105,6 +118,7 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
 export const LineLabelMarker = memo(function LineLabelMarker({ marker, line, onOpen, anchor = "center" }: { marker: LayoutMarker; line: LineVisual | undefined; onOpen?: (lineId: string) => void; anchor?: "center" | "left" }) {
   if (!line) return null;
   const st = line.output_state;
+  const oee = oeeText(line.kpis);
   return (
     <button
       type="button"
@@ -112,11 +126,11 @@ export const LineLabelMarker = memo(function LineLabelMarker({ marker, line, onO
       data-testid="map-line-label"
       onClick={() => onOpen?.(line.line_id)}
       style={position(marker, anchor)}
-      aria-label={`Linha ${line.name}: OEE do turno ${line.kpis?.oee == null ? "indisponível" : formatPct(line.kpis.oee)}`}
+      aria-label={`Linha ${line.name}: OEE do turno ${line.kpis?.oee == null ? "indisponível" : formatPct(line.kpis.oee)}${oee.suspect ? " — suspeito (desempenho acima de 100 %)" : ""}`}
       className="absolute z-10 flex items-center gap-2 rounded-full border border-line-strong bg-surface/95 px-3 py-1 text-caption shadow-card hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
     >
       <span className="font-semibold text-fg">{line.name}</span>
-      <span className="tabular text-fg-muted">OEE {line.kpis?.oee == null ? "—" : formatPct(line.kpis.oee)}</span>
+      <span className="tabular text-fg-muted">{oee.text}{oee.suspect && <SuspectMark />}</span>
       {st && (
         <span className={clsx("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-semibold", STATE_META[st].marker)} title={`Máquina de saída: ${line.output_text ?? STATE_META[st].label}`}>
           <StateIcon state={st} className="size-3" />

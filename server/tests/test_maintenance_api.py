@@ -28,7 +28,9 @@ async def _cylinder(ctx, name="Cilindro X", total=1_000_000, recent=140_000, nom
         s.add(c)
         await s.flush()
         b = (NOW() - timedelta(days=2)).replace(minute=0, second=0, microsecond=0).isoformat()
-        await seed_usage(s, ctx.id, "position", p.id, {"cycles": total}, [(b, {"cycles": recent})])
+        # the position has had data for more than 14 days (audit A-3: the plan pace divides by the days with data)
+        first = (NOW() - timedelta(days=30)).replace(minute=0, second=0, microsecond=0).isoformat()
+        await seed_usage(s, ctx.id, "position", p.id, {"cycles": total}, [(first, {"cycles": 0}), (b, {"cycles": recent})])
         await seed_usage(s, ctx.id, "component", c.id, {"cycles": total - 100_000}, [(b, {"cycles": recent})])
         await s.commit()
         return {"position_id": p.id, "component_id": c.id, "machine_id": ctx.machines[machine]}
@@ -397,3 +399,27 @@ async def test_offline_replay_is_idempotent(client, m):
     assert d["labor_hours"] == 1.5 and len(d["labor"]) == 1
     d = await api(client, "POST", url + "/labor", {**tech, "X-Client-Action-Id": "act-3"}, 201, json={"hours": 0.5})
     assert d["labor_hours"] == 2.0
+
+
+async def test_plan_pace_uses_the_days_with_data_audit_A3(client, m):
+    """audit A-3: a position connected 5 days ago (100 000 cycles, 20 000/day). The pace was always ÷ 14
+    (290 000 left / 7 143 per day → 41 days); it must divide by the ~5 days with data (→ 15) and flag low_confidence."""
+    from src.db import AsyncSessionLocal
+    from src.models import ComponentType, Position
+    async with AsyncSessionLocal() as s:
+        p = Position(tenant_id=m.id, machine_id=m.machines["Estação de Fixação"], name="Cilindro A3",
+                     component_type=ComponentType.pneumatic_cylinder)
+        s.add(p)
+        await s.flush()
+        h0 = NOW().replace(minute=0, second=0, microsecond=0) - timedelta(days=5)
+        hours = [h0 + timedelta(hours=h) for h in range(0, 120, 24)]
+        await seed_usage(s, m.id, "position", p.id, {"cycles": 1_710_000},
+                         [(b.isoformat(), {"cycles": 20_000}) for b in hours])
+        await s.commit()
+        pid = p.id
+    pl = m.h("maintenance_planner")
+    plan = await api(client, "POST", "/api/maintenance-plans/", pl, 201, json={
+        "name": "U4", "position_id": pid, "interval_cycles": 2_000_000, "last_done_usage": {"cycles": 0}})
+    rows = {r["plan_id"]: r for r in await api(client, "GET", "/api/maintenance-plans/status", pl)}
+    row = rows[plan["id"]]
+    assert row["days_to_due"] == 15 and row["low_confidence"] is True

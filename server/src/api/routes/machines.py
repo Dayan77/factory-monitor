@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...services import operator_scope as opscope
 from ...db import get_db
 from ...models import User, UserRole, Machine, Line, Position, Component
 from ...auth import get_current_user, require_roles
@@ -38,6 +39,9 @@ async def list_machines(user: CurrentUser, db: DB, line_id: str | None = None):
         if not is_uuid(line_id):
             return []
         q = q.where(Machine.line_id == line_id)
+    own = opscope.operator_lines(user)       # operator PWA: only his lines (§3.2)
+    if own is not None:
+        q = q.where(Machine.line_id.in_(list(own)))
     result = await db.execute(q.order_by(Machine.name))
     return result.scalars().all()
 
