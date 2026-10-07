@@ -255,3 +255,28 @@ async def test_A19_map_marks_cadence_source(client):
         finally:
             lsvc.live_parts = orig
         assert per_m[p.machine["id"]]["cadence_source"] == "buckets"
+
+
+async def test_A19b_live_cadence_discards_counter_glitch(client):
+    """A-19b (domain.md §3.3 rule 4): one corrupted counter reading (60 000 among 1 000 … 1 015, 16-bit counter)
+    must not inflate the live cadence of the map. max_rate resolved like the pipeline (tag override 2/30 pç/s →
+    bound 16 per minute): the jump is a glitch, `prev` is kept → 15 parts → 60 parts/h (code before: 65 551)."""
+    from src.db import AsyncSessionLocal
+    from src.services.influx import influx
+    from src.services.layout.service import live_parts, part_counter_tags
+    t = await _tenant("S7GLI")
+    p = await build_plant(client, t, "S7GLI")
+    tag = await add_tag(client, t, p, "total", "part_counter_total", counter_max=65535, max_rate_per_s=2 / 30)
+    now = datetime.now(UTC).replace(microsecond=0)
+    for k in range(16):
+        await influx.write(t.id, tag["id"], 60000.0 if k == 7 else 1000.0 + k, machine_id=p.machine["id"],
+                           ts=now - timedelta(minutes=15 - k))
+    async with AsyncSessionLocal() as s:
+        tags = await part_counter_tags(s, t.id, [p.machine["id"]])
+    assert len(tags) == 1 and abs(tags[0][4] - 2 / 30) < 1e-12      # tag max_rate travels to live_parts
+    got = await live_parts(t.id, [p.machine["id"]], tags, now)
+    assert got[p.machine["id"]] == 15.0
+    # tenant isolation: another tenant never resolves this tenant's tags
+    other = await _tenant("S7GLIB")
+    async with AsyncSessionLocal() as s:
+        assert await part_counter_tags(s, other.id, [p.machine["id"]]) == []

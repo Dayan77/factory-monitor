@@ -977,3 +977,8 @@ Os casos de §6 e os cenários de ouro A–F continuam exatos.
   `/api/maintenance-plans/status` guardam a resposta por `API_CACHE_TTL_S` (10 s) por usuário e consulta; qualquer
   gravação do próprio tenant neste processo invalida na hora (o usuário vê a própria justificativa/OS). Dados da
   ingestão e dos detectores aparecem em até 10 s — a mesma ordem do ciclo dos detectores (`DOWNTIME_TICK_S` = 10 s).
+- **S7-20 — Filtro de plausibilidade na cadência ao vivo (A-19b).** A cadência ao vivo do mapa (S7-13) aplica **todas**
+  as regras de delta de domain.md §3.3, inclusive a regra 4, pela mesma função do pipeline (`counter_step`): delta
+  `> max_rate × Δt × 1,5 + 10` é glitch, vale 0 e mantém o `prev` aceito; salto confirmado pela leitura seguinte faz
+  re-baseline (o salto nunca conta). `max_rate` = tag, senão `2 / PRI` da máquina, senão o padrão do servidor.
+  Ex.: 1 000 … 1 015 em 15 min com uma leitura de 60 000 → 15 peças → 60 pç/h (antes: 262 204 pç/h).

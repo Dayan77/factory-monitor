@@ -328,3 +328,94 @@ async def test_tenant_prefetch_equals_one_query_per_machine(client, monkeypatch)
         ra, rb = await _snapshot_results(ten["PFA"][0].id, ma), await _snapshot_results(ten["PFB"][0].id, mb)
         assert ra[0] and (ra[1] or ra[2]) and ra == rb
         assert await _checkpoint(ma) == await _checkpoint(mb)
+
+
+async def test_slice_shrinks_after_timeout_so_a_slow_host_still_catches_up(client, monkeypatch):
+    """Sprint 7b: on a slow/contended host even a bounded slice can exceed DOWNTIME_MACHINE_TIMEOUT_S. The timed-out
+    pass is rolled back (checkpoint unchanged); re-running the SAME slice would time out forever. The slice of that
+    machine is halved after a timeout (and grows back after successes), so the checkpoint always advances and the
+    result equals one unbounded pass of a twin machine. Simulated host: a pass over more than 600 readings per tag
+    takes "5 s", the timeout is 1 s."""
+    import asyncio
+
+    from src.config import settings
+    from src.db import AsyncSessionLocal
+    from src.models import DowntimeDetectorState
+    from src.services.oee import detector
+    from src.services.oee.engine import load_calendar, machine_infos
+    monkeypatch.setattr(settings, "downtime_settle_s", 0.0)
+    monkeypatch.setattr(settings, "downtime_machine_timeout_s", 1.0)
+    monkeypatch.setattr(settings, "downtime_slice_readings", 2000)
+    t = await _tenant("CUS")
+    p = await build_plant(client, t, "CUS")
+    a = p.machine
+    a_run = await add_tag(client, t, p, "a_run", "run_state", data_type="bool")
+    a_fault = await add_tag(client, t, p, "a_fault", "fault_state")
+    r = await client.post("/api/machines/", headers=t.headers("admin"), json={"line_id": p.line["id"], "name": "B"})
+    b = r.json()
+    p.machine = b
+    b_run = await add_tag(client, t, p, "b_run", "run_state", data_type="bool")
+    b_fault = await add_tag(client, t, p, "b_fault", "fault_state")
+    t0 = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=10)
+    end = t0 + timedelta(hours=8)
+    run, fault = signals(t0)
+    run = [x for x in run if x[0] < end]
+    fault = [x for x in fault if x[0] < end]
+    fx = FakeInflux()
+    for tag, pts in ((a_run, run), (a_fault, fault), (b_run, run), (b_fault, fault)):
+        fx.add(tag["id"], pts)
+    async with AsyncSessionLocal() as s:
+        for mid in (a["id"], b["id"]):
+            s.add(DowntimeDetectorState(machine_id=mid, tenant_id=t.id, checkpoint=t0 - timedelta(seconds=1),
+                                        state={}))
+        await s.commit()
+        infos = await machine_infos(s, t.id, [a["id"], b["id"]])
+        cal = await load_calendar(s, t.id, infos[a["id"]].plant_id, infos[a["id"]].tz)
+
+    real = detector.detect_machine
+    seen_slices = []
+
+    async def slow_host(db, info, cal_, now, fetch, *args, slice_readings=None, **kw):
+        if info.id == a["id"]:
+            seen_slices.append(slice_readings)
+            if not slice_readings or slice_readings > 600:
+                await asyncio.sleep(5)                       # cancelled by the 1 s timeout
+        return await real(db, info, cal_, now, fetch, *args, slice_readings=slice_readings, **kw)
+    monkeypatch.setattr(detector, "detect_machine", slow_host)
+
+    timeouts, out = 0, None
+    for _ in range(40):                                      # ticks
+        out = await detector.run_machine(infos[a["id"]], cal, end, fx.fetch, budget_s=30)
+        timeouts += out["timeout"]
+        if out["caught_up"]:
+            break
+    assert out["caught_up"], seen_slices
+    assert timeouts >= 1 and min(s for s in seen_slices if s) <= 600   # shrank below the "slow" size
+    monkeypatch.setattr(settings, "downtime_slice_readings", 0)            # twin: one unbounded pass, fast host
+    monkeypatch.setattr(settings, "downtime_machine_timeout_s", 120.0)
+    for _ in range(3):                         # first pass only records what it saw (maturity); then one pass
+        whole = await detector.run_machine(infos[b["id"]], cal, end, fx.fetch, budget_s=120)
+        if whole["checkpoint"] == out["checkpoint"]:
+            break
+    assert whole["passes"] == 1 and whole["caught_up"]
+    assert out["checkpoint"] == whole["checkpoint"]
+    ra, rb = await _snapshot_results(t.id, a["id"]), await _snapshot_results(t.id, b["id"])
+    assert len(ra[0]) >= 8 and ra == rb
+
+
+def test_slice_feedback_halves_on_timeout_and_grows_back(monkeypatch):
+    from src.config import settings
+    from src.services.oee import detector
+    monkeypatch.setattr(settings, "downtime_slice_readings", 20000)
+    mid = "slice-feedback-machine"
+    detector._slice_size.pop(mid, None)
+    assert detector.slice_for(mid) == 20000
+    for expect in (10000, 5000, 2500):
+        detector._slice_feedback(mid, True)
+        assert detector.slice_for(mid) == expect
+    for _ in range(10):
+        detector._slice_feedback(mid, True)
+    assert detector.slice_for(mid) == detector.SLICE_MIN_READINGS
+    for _ in range(10):
+        detector._slice_feedback(mid, False)
+    assert detector.slice_for(mid) == 20000 and mid not in detector._slice_size

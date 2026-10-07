@@ -864,6 +864,32 @@ SELECT DISTINCT t.tenant_id::text, t.machine_id::text
 # per-machine outcome of the latest tick (observability, tests): machine_id → dict
 last_tick_stats: dict[str, dict] = {}
 
+# Sprint 7b: adaptive catch-up slice per machine. A slice that times out (slow host, contended database) is rolled
+# back and the checkpoint does not move; re-running the same slice would time out forever. On a timeout the slice of
+# that machine is halved (down to SLICE_MIN_READINGS) so the next pass is smaller and the checkpoint always advances;
+# successful passes grow it back (×2) up to settings.downtime_slice_readings. Only the slice size changes — slices
+# are exact (test_detector_catchup.py: any slicing gives the result of one unbounded pass).
+SLICE_MIN_READINGS = 200
+_slice_size: dict[str, int] = {}
+
+
+def slice_for(machine_id: str) -> int:
+    return _slice_size.get(machine_id, settings.downtime_slice_readings)
+
+
+def _slice_feedback(machine_id: str, timed_out: bool) -> None:
+    cur = slice_for(machine_id)
+    full = settings.downtime_slice_readings
+    if timed_out:
+        # an unbounded pass (full <= 0) that times out starts bounded slices at the default size
+        _slice_size[machine_id] = max(SLICE_MIN_READINGS, (cur if cur > 0 else 20000) // 2)
+    elif machine_id in _slice_size:
+        nxt = cur * 2
+        if (full > 0 and nxt >= full) or nxt > 1_000_000:
+            _slice_size.pop(machine_id, None)
+        else:
+            _slice_size[machine_id] = nxt
+
 
 async def run_machine(info: MachineInfo, cal: Calendar, now: datetime, fetch: Fetch = influx_fetch,
                       budget_s: Optional[float] = None, tags: Optional[SignalTags] = None) -> dict:
@@ -880,14 +906,17 @@ async def run_machine(info: MachineInfo, cal: Calendar, now: datetime, fetch: Fe
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                res = await asyncio.wait_for(detect_machine(db, info, cal, now, fetch, tags=tags),
+                res = await asyncio.wait_for(detect_machine(db, info, cal, now, fetch, tags=tags,
+                                                            slice_readings=slice_for(info.id)),
                                              timeout=settings.downtime_machine_timeout_s)
         except asyncio.TimeoutError:
-            # nothing is lost: the machine's cursor did not advance, the next tick picks it up again
+            # nothing is lost: the machine's cursor did not advance; the next pass uses a smaller slice
+            _slice_feedback(info.id, True)
             log.warning("downtime.detector.timeout", machine_id=info.id[:8],
-                        timeout_s=settings.downtime_machine_timeout_s)
+                        timeout_s=settings.downtime_machine_timeout_s, next_slice_readings=slice_for(info.id))
             out["timeout"] = True
             break
+        _slice_feedback(info.id, False)
         out["passes"] += 1
         out["readings"] += res.readings
         out["caught_up"], out["lag_s"] = res.caught_up, res.lag_s

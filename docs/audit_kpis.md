@@ -450,11 +450,11 @@ alterações em andamento). Método: (1) leitura do código citado em cada item 
 quebrar cada correção com combinações que os testes das correções não cobrem —
 [`docs/scenarios/test_audit_verification_s7.py`](scenarios/test_audit_verification_s7.py).
 
-Execuções (todas verdes, salvo o `xfail` de A-19b, de propósito):
+Execuções (todas verdes; o `xfail` de A-19b foi retirado quando o item foi corrigido no Sprint 7b):
 
 | Comando | Resultado |
 |---|---|
-| `.venv/bin/python -m pytest -q docs/scenarios` | todos passam (264 no fechamento desta seção, incluindo as 11 sondas abaixo); 1 xfailed (A-19b, de propósito) |
+| `.venv/bin/python -m pytest -q docs/scenarios` | todos passam (265 após a correção de A-19b no Sprint 7b, incluindo as sondas abaixo); 0 xfailed |
 | `cd server && FM_TEST_DB=fm_test_docs ../.venv/bin/python -m pytest -q tests/test_audit_s7.py tests/test_kpi_spec_cases.py tests/test_detector_late_rewind.py` | 36 passed |
 | `cd server && FM_TEST_DB=fm_test_docs ../.venv/bin/python -m pytest -q tests/test_detector_catchup.py tests/test_backlog_engines.py tests/test_break_fault_s5.py tests/test_reports_core.py` | 34 passed (S7-16/S7-17: quedas longas, resultado idêntico ao contínuo) |
 
@@ -480,12 +480,12 @@ Execuções (todas verdes, salvo o `xfail` de A-19b, de propósito):
 | A-16 | ✅ confirmado | `operating_seconds(..., now)`; `test_A16_*` |
 | A-17 | ✅ confirmado | `test_conformance` passa os casos de §6 pelas funções do servidor |
 | A-18 | ✅ confirmado | `< 3` dias → `rate_per_day = null`, `p_reason = insufficient_data`; `< 14` → `low_confidence` |
-| A-19 | ⚠️ **corrigido com ressalva — item novo A-19b** | a cadência ao vivo agora vem das leituras brutas (60 pç/h no contraexemplo), mas sem o filtro de plausibilidade; ver abaixo |
+| A-19 | ✅ confirmado (após A-19b) | a cadência ao vivo vem das leituras brutas (60 pç/h no contraexemplo); o filtro de plausibilidade entrou no Sprint 7b (A-19b, abaixo) |
 | A-20 | ✅ confirmado | `mart_min` 20 min com 2 de 3 reparos apontados; nenhum apontado → `mart_reason = no_repair_times` |
 
 V5 (falha aberta, cálculo às 13:30 → Ao = 390/420) confirma que T_req e D_eq param no `now` do motor.
 
-### A-19b — Cadência ao vivo do mapa sem o filtro de plausibilidade · Média · ⬜ aberto
+### A-19b — Cadência ao vivo do mapa sem o filtro de plausibilidade · Média · ✅ corrigido (Sprint 7b)
 
 - **Spec**: kpis.md S7-13 — cadência ao vivo pelas leituras brutas com "regras de delta de domain.md §3.3"; a regra 4
   (filtro de plausibilidade, DEVE) descarta um delta `> max_rate × Δt × 1,5 + 10`, mantém `prev` e registra
@@ -501,10 +501,14 @@ V5 (falha aberta, cálculo às 13:30 → Ao = 390/420) confirma que T_req e D_eq
 - **Impacto**: o mapa é a tela "o que está acontecendo agora" e fica na TV da fábrica; um número absurdo desacredita o
   produto no piloto (pilot.md H2). Leitura corrompida isolada é rara, mas acontece com CLP reiniciando, troca de
   palavra de 32 bits lida em duas metades (Modbus) ou gateway com registrador errado.
-- **Correção sugerida**: em `live_parts`, usar `counter_step` (ou `counter_delta` com `dt_s` entre leituras e
-  `max_rate` de `usage/core.resolve_max_rate` — tag, senão `2 / PRI` da máquina, senão o padrão do servidor),
-  mantendo o `prev` aceito. Quando corrigido: apagar `test_A19b_live_cadence_glitch_code_today`, tirar o `xfail` de
-  `test_A19b_live_cadence_glitch_spec` e marcar este item como corrigido.
+- **Correção (Sprint 7b)**: `live_parts` passa cada leitura por `usage/core.counter_step` — a mesma função do
+  pipeline de ingestão —, com `dt_s` entre leituras e `max_rate` resolvido por `part_counter_tags` com
+  `resolve_max_rate` (tag, senão `2 / PRI` da máquina, senão `usage_default_max_rate_per_s`). O glitch contribui 0
+  e mantém o `prev` aceito; um salto real confirmado pela leitura seguinte faz re-baseline como no pipeline (o salto
+  nunca é contado). Contraexemplo agora dá **15 peças → 60 pç/h**.
+- **Testes**: `docs/scenarios/test_audit_verification_s7.py::test_A19b_live_cadence_glitch_spec` (sem `xfail`;
+  `…_code_today` removido), `…::test_A19b_live_cadence_real_jump_rebaselines` e, com Postgres + InfluxDB reais,
+  `server/tests/test_audit_s7.py::test_A19b_live_cadence_discards_counter_glitch` (inclui isolamento de tenant).
 
 ### Observações (não mudam KPI; sem ação obrigatória)
 
@@ -525,3 +529,7 @@ V5 (falha aberta, cálculo às 13:30 → Ao = 390/420) confirma que T_req e D_eq
 **Conclusão**: dos 20 itens, **19 confirmados corrigidos** e **1 (A-19) corrigido com ressalva**, que gerou o item
 aberto **A-19b** (Média, só a exibição ao vivo do mapa; nenhum KPI calculado é afetado). As fórmulas de OEE, Ao,
 MTBF/MCBF/MTTR/MART, λ, MTTF, PMP, cumprimento, backlog, RUL e planos conferem com a especificação e com as sondas.
+
+**Atualização Sprint 7b**: A-19b corrigido (ver item acima, testes citados). Com isso **os 20 itens e o item de
+verificação A-19b estão corrigidos**; nenhum item da auditoria permanece aberto. Cenários dourados A–F inalterados
+(`make test-golden`).

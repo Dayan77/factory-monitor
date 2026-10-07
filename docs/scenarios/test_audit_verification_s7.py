@@ -5,10 +5,8 @@ Written by the reliability-engineer role after the backend fixes of A-1 … A-20
 verification — cases that the fix tests did not cover and that try to break each fix:
 
 * `test_V*` — probes that the fixed code passes (combinations of A-1/A-14, open failures, attribution, nulls).
-* `test_A19b_*` — the counter-example still open: the live cadence of the map (S7-13) applies the delta rules 1–3
-  of domain.md §3.3 but not rule 4 (plausibility filter), so one corrupted counter reading inflates the cadence.
-  `..._code_today` pins today's number; `..._spec` is `xfail(strict=True)`. When it is fixed both fail on purpose:
-  mark A-19b as fixed in docs/audit_kpis.md, delete `..._code_today` and drop the `xfail`.
+* `test_A19b_*` — counter-example of A-19b (fixed in Sprint 7b): the live cadence of the map (S7-13) now applies
+  all delta rules of domain.md §3.3 including rule 4 (plausibility filter) through `counter_step`.
 
 Run:  .venv/bin/python -m pytest docs/scenarios/test_audit_verification_s7.py -q
 """
@@ -144,9 +142,9 @@ def test_V9_rate_window_never_exceeds_14_days_nor_the_data():
     assert close(d, 2.5)
 
 
-# ═══ A-19b — still open: live cadence without the plausibility filter ═══════
+# ═══ A-19b — live cadence with the plausibility filter (fixed) ═══════════════
 
-def _glitch_live_parts() -> float:
+def _glitch_live_parts(max_rate=2 / 30) -> float:
     """1 peça/min nos últimos 15 min (16 leituras de 1 000 a 1 015) com UMA leitura corrompida (60 000) no minuto 7.
     Máquina com PRI 30 s → max_rate = 2/30 peça/s; Δt = 60 s → limite do filtro (domain.md §3.3 regra 4) =
     2/30 × 60 × 1,5 + 10 = 16 peças: o salto de ~59 000 é glitch e deve ser descartado, mantendo `prev`."""
@@ -157,18 +155,27 @@ def _glitch_live_parts() -> float:
     async def fetch(_tenant, _tags, _a, _b):
         return [("t1", ts, v) for ts, v in vals]
 
-    return asyncio.run(live_parts("T", ["m"], [("t1", "m", "part_counter_total", 65535)], now, fetch))["m"]
+    return asyncio.run(live_parts("T", ["m"], [("t1", "m", "part_counter_total", 65535, max_rate)], now, fetch))["m"]
 
 
-def test_A19b_live_cadence_glitch_code_today():
-    # 1000→…→1006→60000 (+58 994) → 1008 (60000 ≥ 0,9 × 65 535: lido como rollover, +6 544) → … → 1015
-    assert _glitch_live_parts() == 65551.0          # × 4 = 262 204 pç/h no mapa
-
-
-@pytest.mark.xfail(strict=True, reason="A-19b: live_parts não aplica o filtro de plausibilidade (domain.md §3.3 regra 4)")
 def test_A19b_live_cadence_glitch_spec():
-    # glitch descartado, prev mantido em 1006 → 1006→1008 = 2 → total 15 peças → 60 pç/h
-    assert _glitch_live_parts() == 15.0
+    # glitch descartado, prev mantido em 1006 → 1006→1008 = 2 → total 15 peças → 60 pç/h (PRI 30 s → 2/30 pç/s)
+    assert _glitch_live_parts(2 / 30) == 15.0
+    # sem max_rate resolvido: padrão do servidor (10 contagens/s → limite 910 por minuto) também descarta o salto
+    assert _glitch_live_parts(None) == 15.0
+
+
+def test_A19b_live_cadence_real_jump_rebaselines():
+    """Salto real do contador (CLP trocado/preset) confirmado pela leitura seguinte: re-baseline como no pipeline
+    (counter_step) — o salto em si nunca é contado, só o que vem depois dele."""
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=UTC)
+    vals = [(now - timedelta(minutes=15 - k), 1000.0 + k if k < 7 else 50000.0 + k) for k in range(16)]
+
+    async def fetch(_tenant, _tags, _a, _b):
+        return [("t1", ts, v) for ts, v in vals]
+
+    parts = asyncio.run(live_parts("T", ["m"], [("t1", "m", "part_counter_total", 65535, 2 / 30)], now, fetch))["m"]
+    assert parts == 6 + 1 + 7      # 1000→1006 (6) + re-baseline 50007→50008 (1) + 50008→50015 (7)
 
 
 # ═══ the verification section itself ════════════════════════════════════════

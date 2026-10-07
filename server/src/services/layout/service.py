@@ -65,39 +65,46 @@ COVERAGE_BADGE_BELOW = 0.95           # §1.2 selo "dados incompletos": data_cov
 LIVE_LOOKBACK_MIN = 10                # baseline reading searched up to 10 min before the 15-min window
 
 
-async def live_parts(tenant_id: str, machine_ids: list[str], tags: list[tuple[str, str, str, Optional[int]]],
+async def live_parts(tenant_id: str, machine_ids: list[str], tags: list[tuple],
                      now: datetime, fetch=None) -> dict[str, float]:
     """kpis.md §1.9 / audit A-19: parts of the last LIVE_CADENCE_MIN minutes per machine from the **raw counter
     readings** (InfluxDB), not from the hourly buckets — a bucket cannot tell the last 15 min from the rest of the
-    hour. `tags`: (tag_id, machine_id, role, counter_max) of the part counters; parts = part_counter_total, else
-    good + scrap. Delta rules of domain.md §3.3 (rollover/reset) between consecutive readings, from the last reading
-    at or before the window start (or the first inside it). Machines without readings are left out (the caller
-    falls back to the buckets)."""
+    hour. `tags`: (tag_id, machine_id, role, counter_max[, max_rate_per_s]) of the part counters; parts =
+    part_counter_total, else good + scrap. All delta rules of domain.md §3.3 between consecutive readings, from the
+    last reading at or before the window start (or the first inside it), through the same `counter_step` the
+    ingestion pipeline uses — including rule 4 (plausibility filter, audit A-19b): a delta above
+    `max_rate × Δt × 1,5 + 10` is a glitch, contributes 0 and keeps the accepted `prev`. `max_rate_per_s` absent →
+    the server default (`usage_default_max_rate_per_s`). Machines without readings are left out (the caller falls
+    back to the buckets)."""
+    from ...config import settings
     from ..oee.detector import influx_fetch
-    from ..usage.core import counter_delta
+    from ..usage.core import counter_step
     fetch = fetch or influx_fetch
     if not tags:
         return {}
     w0 = now - timedelta(minutes=LIVE_CADENCE_MIN)
-    rows = await fetch(tenant_id, [t for t, *_ in tags], w0 - timedelta(minutes=LIVE_LOOKBACK_MIN), now)
+    rows = await fetch(tenant_id, [t[0] for t in tags], w0 - timedelta(minutes=LIVE_LOOKBACK_MIN), now)
     by_tag: dict[str, list[tuple[datetime, float]]] = {}
     for tag_id, ts, v in rows:
         by_tag.setdefault(tag_id, []).append((ts, v))
     per_tag: dict[str, float] = {}
-    for tag_id, *_rest in tags:
-        pts = sorted(by_tag.get(tag_id, []))
+    for t in tags:
+        tag_id, cmax = t[0], t[3]
+        max_rate = t[4] if len(t) > 4 and t[4] is not None else settings.usage_default_max_rate_per_s
+        pts = sorted(by_tag.get(tag_id, []), key=lambda p: p[0])
         if not pts:
             continue
-        cmax = _rest[2]
         base = [p for p in pts if p[0] <= w0]
         seq = ([base[-1]] if base else []) + [p for p in pts if p[0] > w0]
-        tot = 0.0
-        for (_, a), (_, b) in zip(seq, seq[1:]):
-            tot += counter_delta(int(a), int(b), cmax)[0]
+        track, tot = None, 0.0
+        for ts, v in seq:
+            res = counter_step(track, v, ts, cmax, max_rate)
+            track = res.track
+            tot += res.delta
         per_tag[tag_id] = tot
     out: dict[str, float] = {}
     for mid in machine_ids:
-        mine = [(t, role) for t, m, role, _ in tags if m == mid and t in per_tag]
+        mine = [(t[0], t[2]) for t in tags if t[1] == mid and t[0] in per_tag]
         total = [per_tag[t] for t, role in mine if role == "part_counter_total"]
         if total:
             out[mid] = total[0]
@@ -107,19 +114,26 @@ async def live_parts(tenant_id: str, machine_ids: list[str], tags: list[tuple[st
 
 
 async def part_counter_tags(db: AsyncSession, tenant_id: str, machine_ids: list[str]
-                            ) -> list[tuple[str, str, str, Optional[int]]]:
+                            ) -> list[tuple[str, str, str, Optional[int], Optional[float]]]:
+    """(tag_id, machine_id, role, counter_max, max_rate_per_s) — max_rate resolved like the ingestion pipeline
+    (usage/core.resolve_max_rate: tag override, else 2 / PRI of the machine, else the server default)."""
+    from ...config import settings
+    from ..usage.core import resolve_max_rate
     if not machine_ids:
         return []
-    rows = (await db.execute(select(Tag.id, Tag.machine_id, Tag.semantic_role, Tag.counter_max).where(
-        Tag.tenant_id == tenant_id, Tag.machine_id.in_(machine_ids), Tag.is_active.is_(True),
-        Tag.position_id.is_(None), Tag.semantic_role.in_(list(PART_ROLES))).order_by(Tag.created_at, Tag.id))).all()
+    rows = (await db.execute(select(Tag.id, Tag.machine_id, Tag.semantic_role, Tag.counter_max, Tag.max_rate_per_s,
+                                    Machine.ideal_cycle_time_s)
+                             .join(Machine, Machine.id == Tag.machine_id).where(
+        Tag.tenant_id == tenant_id, Machine.tenant_id == tenant_id, Tag.machine_id.in_(machine_ids),
+        Tag.is_active.is_(True), Tag.position_id.is_(None), Tag.semantic_role.in_(list(PART_ROLES)))
+        .order_by(Tag.created_at, Tag.id))).all()
     seen, out = set(), []
-    for tid, mid, role, cmax in rows:
+    for tid, mid, role, cmax, tag_rate, ict in rows:
         r = role.value if hasattr(role, "value") else str(role)
         if (mid, r) in seen:
             continue
         seen.add((mid, r))
-        out.append((tid, mid, r, cmax))
+        out.append((tid, mid, r, cmax, resolve_max_rate(tag_rate, ict, 1, settings.usage_default_max_rate_per_s)))
     return out
 
 
