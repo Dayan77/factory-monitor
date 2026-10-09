@@ -553,6 +553,19 @@ export interface DowntimeEvent {
   unjustified?: boolean;
 }
 
+/** Sprint 7b (kpis.md S7-22): parts of a window WITHOUT data of one machine (GET /api/downtime/no-data). */
+export interface MachineNoData {
+  machine_id: string;
+  intervals: { start: string; end: string }[];
+}
+
+export interface NoDataQuery {
+  machine_id?: string;
+  line_id?: string;
+  start: string;
+  stop?: string;
+}
+
 export interface DowntimeQuery {
   machine_id?: string;
   line_id?: string;

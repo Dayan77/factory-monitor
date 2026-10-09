@@ -215,6 +215,46 @@ async def load_machine_data(db: AsyncSession, info: MachineInfo, cal: Calendar, 
     return (await load_machines_data(db, {info.id: info}, cal, start, stop, now))[info.id]
 
 
+async def data_spans(db: AsyncSession, tenant_id: str, machine_ids: list[str], start: datetime, stop: datetime,
+                     now: datetime) -> dict[str, list[Interval]]:
+    """Intervals WITH data of each machine overlapping [start, stop): the detector's `machine_data_spans` plus the
+    live part not yet folded into a span (covered_until → last reading + machine_offline_timeout_s, capped at
+    `now`). Not normalized. Every query filters tenant_id."""
+    spans: dict[str, list[Interval]] = defaultdict(list)
+    if not machine_ids:
+        return spans
+    for mid, a, b in (await db.execute(
+            select(MachineDataSpan.machine_id, MachineDataSpan.start, MachineDataSpan.end).where(
+                MachineDataSpan.tenant_id == tenant_id, MachineDataSpan.machine_id.in_(machine_ids),
+                MachineDataSpan.start < stop, MachineDataSpan.end > start))).all():
+        spans[mid].append((a, b))
+    for det in (await db.execute(select(DowntimeDetectorState).where(
+            DowntimeDetectorState.tenant_id == tenant_id,
+            DowntimeDetectorState.machine_id.in_(machine_ids)))).scalars().all():
+        if det.covered_until is not None:
+            last = (det.state or {}).get("last_data")
+            if last:
+                live_until = min(now, datetime.fromisoformat(last) + timedelta(seconds=settings.machine_offline_timeout_s))
+                if live_until > det.covered_until:
+                    spans[det.machine_id].append((det.covered_until, live_until))
+    return spans
+
+
+async def no_data_intervals(db: AsyncSession, tenant_id: str, machine_ids: list[str], start: datetime,
+                            stop: datetime, now: datetime) -> dict[str, list[Interval]]:
+    """Sprint 7b (kpis.md S7-22): the parts of [start, min(stop, now)) WITHOUT data per machine — the complement of
+    `data_spans`, the same "sem dados" the OEE engine uses (Components.nodata_s). The future (after `now`) is not
+    returned: it is not a gap of data. A machine with no span at all is one interval covering the whole window."""
+    end = min(stop, now)
+    out: dict[str, list[Interval]] = {mid: [] for mid in machine_ids}
+    if end <= start:
+        return out
+    spans = await data_spans(db, tenant_id, machine_ids, start, end, now)
+    for mid in machine_ids:
+        out[mid] = subtract([(start, end)], normalize(spans.get(mid, [])))
+    return out
+
+
 async def load_machines_data(db: AsyncSession, infos: dict[str, MachineInfo], cal: Calendar, start: datetime,
                              stop: datetime, now: datetime) -> dict[str, MachineData]:
     """MachineData of every machine in `infos` (same tenant, same calendar) — one query per table for all of them
@@ -230,20 +270,7 @@ async def load_machines_data(db: AsyncSession, infos: dict[str, MachineInfo], ca
                 or_(DowntimeEvent.end.is_(None), DowntimeEvent.end > start))
             .order_by(DowntimeEvent.start))).scalars().all():
         events[e.machine_id].append(EventLite(e.id, e.start, e.end, effective_reason(e), bool(e.planned)))
-    spans: dict[str, list[Interval]] = defaultdict(list)
-    for mid, a, b in (await db.execute(
-            select(MachineDataSpan.machine_id, MachineDataSpan.start, MachineDataSpan.end).where(
-                MachineDataSpan.tenant_id == tid, MachineDataSpan.machine_id.in_(ids),
-                MachineDataSpan.start < stop, MachineDataSpan.end > start))).all():
-        spans[mid].append((a, b))
-    for det in (await db.execute(select(DowntimeDetectorState).where(
-            DowntimeDetectorState.tenant_id == tid, DowntimeDetectorState.machine_id.in_(ids)))).scalars().all():
-        if det.covered_until is not None:
-            last = (det.state or {}).get("last_data")
-            if last:
-                live_until = min(now, datetime.fromisoformat(last) + timedelta(seconds=settings.machine_offline_timeout_s))
-                if live_until > det.covered_until:
-                    spans[det.machine_id].append((det.covered_until, live_until))
+    spans = await data_spans(db, tid, ids, start, stop, now)
     micro: dict[str, list] = defaultdict(list)
     for r in (await db.execute(select(MicroStopBucket).where(
             MicroStopBucket.tenant_id == tid, MicroStopBucket.machine_id.in_(ids),

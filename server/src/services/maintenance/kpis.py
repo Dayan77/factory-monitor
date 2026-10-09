@@ -41,13 +41,15 @@ def default_month(now: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
 
 
 def default_reliability_window(now: datetime, tz: ZoneInfo) -> tuple[datetime, datetime]:
-    """S4-8: 12 months ending today 00:00 local."""
+    """S4-8 as amended by S7-21 (kpis.md "Decisões Sprint 7"): from local midnight of the same day 12 months ago
+    up to **now** — today's failures are in the default window (it used to end today 00:00 local, so a failure that
+    happened today never showed on the reliability screen until tomorrow)."""
     today = now.astimezone(tz).date()
     try:
         first = today.replace(year=today.year - 1)
     except ValueError:                      # 29/02
         first = today.replace(year=today.year - 1, day=28)
-    return _local_midnight(first, tz), _local_midnight(today, tz)
+    return _local_midnight(first, tz), now
 
 
 def _facts(w: WorkOrder) -> core.WoFacts:

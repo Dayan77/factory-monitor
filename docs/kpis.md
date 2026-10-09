@@ -982,3 +982,29 @@ Os casos de §6 e os cenários de ouro A–F continuam exatos.
   `> max_rate × Δt × 1,5 + 10` é glitch, vale 0 e mantém o `prev` aceito; salto confirmado pela leitura seguinte faz
   re-baseline (o salto nunca conta). `max_rate` = tag, senão `2 / PRI` da máquina, senão o padrão do servidor.
   Ex.: 1 000 … 1 015 em 15 min com uma leitura de 60 000 → 15 peças → 60 pç/h (antes: 262 204 pç/h).
+- **S7-21 — Janela padrão da confiabilidade termina agora (emenda S4-8; bug da rodada de capturas).** Sem `start`/`stop`,
+  `GET /api/maintenance/reliability` usa `[00:00 local do mesmo dia 12 meses atrás, agora)` — antes terminava hoje
+  00:00 local e a falha de hoje só aparecia amanhã na tela de confiabilidade. Uma janela explícita continua exata
+  (o cenário E usa a janela do cenário e não muda; o padrão dele passa a terminar em `evaluate_at`). O MTTR padrão da
+  posição usado pelos chamados emergenciais (`position_mttr_s`) usa a mesma janela. A tela deve pedir sem `stop`
+  (ou com `stop = agora`). Teste: `server/tests/test_sprint7b_bugs.py::test_reliability_default_window_includes_todays_failure`.
+- **S7-22 — "Sem dados" explícito na linha do tempo de estados (bug da rodada de capturas).** A linha do tempo pintava
+  todo o tempo entre paradas como "sem parada registrada" (verde), inclusive horas em que o gateway não mandou nada.
+  `GET /api/downtime/no-data?start&stop&line_id|machine_id` devolve, por máquina, os intervalos de
+  `[start, min(stop, agora))` **sem** dados — o complemento dos intervalos com dados do detector
+  (`machine_data_spans` + a parte ao vivo até a última leitura + `MACHINE_OFFLINE_TIMEOUT_S`), o mesmo "sem dados" do
+  OEE (`nodata_s`). Máquina sem nenhum intervalo com dados → a janela inteira. O futuro não é lacuna de dados (não é
+  devolvido; a tela o pinta como "sem dados / futuro"). Na tela, parada registrada tem precedência sobre a lacuna;
+  "sem parada registrada" só onde havia dados. Se a consulta das lacunas falhar, a tela avisa (nunca verde em
+  silêncio). Testes: `test_sprint7b_bugs.py::test_no_data_*`, `web/src/utils/efficiency.test.ts` ("paints the gaps
+  without data…"), `TimelinePage.test.tsx`.
+- **S7-23 — Falha aberta há muito tempo (bug da rodada de capturas).** Uma `FailureRecord` sem `restored_at` aberta há
+  mais de `FAILURE_STALE_OPEN_H` (padrão **72 h**, configurável) **não** é mostrada como falha ao vivo no mapa, no
+  tablet do operador e no Raio-X: o marcador mantém o estado pelas demais regras de sprint6.md §1.2 (uma máquina que
+  reporta falha agora continua "falha" pelo `status = error`) e ganha o selo `stale_failure` e o texto
+  "falha aberta há muito tempo — verificar" (provável restabelecimento não apontado). `GET /api/failures/` traz
+  `open_stale = true` nesses registros. Falha `incipient` aberta também não põe a máquina em "falha" (ISO 14224: a
+  função não foi perdida). Os KPIs não mudam (MTBF conta a falha por `failed_at`; MTTR só com restabelecimento,
+  S4-10). O seed de desenvolvimento passou a restabelecer as falhas históricas que cria e corrige bancos já semeados
+  (`scripts/seed_dev.py:restore_seed_failures`). Testes: `test_sprint7b_bugs.py::test_stale_open_failure_is_flagged_not_live`,
+  `test_seed_demo_plant.py::test_seed_demo_maintenance`.

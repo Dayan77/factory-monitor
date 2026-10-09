@@ -258,8 +258,18 @@ export function eventState(ev: Pick<DowntimeEvent, "planned" | "fault_code" | "s
  * planned segments; time between them is "running" (no stop recorded) up to `now`, and the part of
  * the window after `now` is "nodata". Overlapping events are clipped, open events run until `now`.
  */
-export function buildTimeline(events: DowntimeEvent[], start: number, stop: number, now: number): TimelineSegment[] {
+/**
+ * Segments of one machine strip. Time between stops is "running" (sem parada registrada) **only where the server
+ * had data**: `noData` (GET /api/downtime/no-data, kpis.md S7-22) marks the gaps without data, painted "nodata";
+ * the future (after `now`) is always "nodata". Stops take precedence over gaps.
+ */
+export function buildTimeline(events: DowntimeEvent[], start: number, stop: number, now: number,
+  noData?: { start: string; end: string }[] | null): TimelineSegment[] {
   const horizon = Math.min(stop, now);
+  const gaps = (noData ?? [])
+    .map((g) => [Date.parse(g.start), Date.parse(g.end)] as const)
+    .filter(([a, b]) => !Number.isNaN(a) && !Number.isNaN(b) && b > a)
+    .sort((x, y) => x[0] - y[0]);
   const segs: TimelineSegment[] = [];
   let cursor = start;
   const push = (state: TimelineState, a: number, b: number, event?: DowntimeEvent) => {
@@ -272,15 +282,26 @@ export function buildTimeline(events: DowntimeEvent[], start: number, stop: numb
     .map((e) => ({ e, a: Date.parse(e.start), b: e.end ? Date.parse(e.end) : now }))
     .filter((x) => !Number.isNaN(x.a) && !Number.isNaN(x.b))
     .sort((x, y) => x.a - y.a);
+  /** [a, b) between stops: running where there was data, nodata in the gaps. */
+  const fill = (a: number, b: number) => {
+    let c = a;
+    for (const [ga, gb] of gaps) {
+      if (gb <= c || ga >= b) continue;
+      push("running", c, Math.max(c, ga));
+      push("nodata", Math.max(c, ga), Math.min(b, gb));
+      c = Math.min(b, gb);
+    }
+    push("running", c, b);
+  };
   for (const { e, a, b } of sorted) {
     const s = Math.max(a, cursor, start);
     const t = Math.min(b, horizon);
     if (t <= s) continue;
-    push("running", cursor, s);
+    fill(cursor, s);
     push(eventState(e), s, t, e);
     cursor = t;
   }
-  push("running", cursor, horizon);
+  fill(cursor, horizon);
   push("nodata", Math.max(cursor, horizon), stop);
   return segs;
 }

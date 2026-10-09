@@ -129,6 +129,21 @@ describe("buildTimeline", () => {
     ]);
     expect(segs[1].event?.id).toBe("a");
   });
+  it("paints the gaps without data as nodata, not running; stops take precedence (S7-22)", () => {
+    const iso = (t: number) => new Date(t).toISOString();
+    const evs = [downtime({ id: "a", start: iso(T(9)), end: iso(T(9, 30)), fault_code: 17 })];
+    // no data 8:00–10:00 (the stop at 9:00 has its own evidence and stays), and 11:00–11:30
+    const gaps = [{ start: iso(T(8)), end: iso(T(10)) }, { start: iso(T(11)), end: iso(T(11, 30)) }];
+    const segs = buildTimeline(evs, T(7), T(13), T(12), gaps);
+    expect(segs.map((s) => [s.state, (s.start - T(7)) / 60000, (s.end - T(7)) / 60000])).toEqual([
+      ["running", 0, 60], ["nodata", 60, 120], ["error", 120, 150], ["nodata", 150, 180], ["running", 180, 240],
+      ["nodata", 240, 270], ["running", 270, 300], ["nodata", 300, 360],
+    ]);
+    // no data at all → the whole past is nodata (one merged segment up to the window end)
+    expect(buildTimeline([], T(7), T(13), T(12), [{ start: iso(T(7)), end: iso(T(12)) }]).map((s) => s.state)).toEqual(["nodata"]);
+    // without the gaps (legacy callers) the strip is unchanged
+    expect(buildTimeline([], T(7), T(13), T(12)).map((s) => s.state)).toEqual(["running", "nodata"]);
+  });
   it("clips events to the window and resolves overlaps", () => {
     const evs = [
       downtime({ id: "a", start: new Date(T(6)).toISOString(), end: new Date(T(7, 30)).toISOString(), fault_code: null, source: "auto_run_state" }),

@@ -291,6 +291,18 @@ class ReasonCodeOut(BaseModel):
 
 # ── downtime ──────────────────────────────────────────────────────────────
 
+class NoDataInterval(BaseModel):
+    start: datetime
+    end: datetime
+
+
+class MachineNoData(BaseModel):
+    """Sprint 7b (kpis.md S7-22): parts of the window without data of one machine (the state timeline paints them
+    as "sem dados", never as "sem parada registrada")."""
+    machine_id: str
+    intervals: list[NoDataInterval]
+
+
 class DowntimeOut(BaseModel):
     id: str
     machine_id: str

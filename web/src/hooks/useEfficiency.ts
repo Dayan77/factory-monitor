@@ -16,7 +16,7 @@ import {
 } from "@/services/api";
 import { isUnjustified } from "@/services/realtime";
 import type {
-  CalendarExceptionBody, DowntimeCreateBody, DowntimeEvent, DowntimePatchBody, DowntimeQuery, MachineProductBody,
+  CalendarExceptionBody, DowntimeCreateBody, DowntimeEvent, DowntimePatchBody, DowntimeQuery, MachineProductBody, NoDataQuery,
   OeeQuery, OeeScope, ReasonCodeCreateBody, ReasonCodeUpdateBody, ShiftBody, TreePlant,
 } from "@/services/types";
 import { usePlantTree } from "./useAssets";
@@ -28,6 +28,7 @@ export const effKeys = {
   reliability: (q: object) => ["efficiency", "reliability", q] as const,
   shiftReport: (q: object) => ["efficiency", "shift-report", q] as const,
   downtime: (q: DowntimeQuery) => ["downtime", q] as const,
+  noData: (q: NoDataQuery) => ["efficiency", "no-data", q] as const,
   reasonCodes: (all: boolean) => ["reason-codes", all] as const,
   shifts: (plantId?: string) => ["shifts", plantId ?? null] as const,
   calendar: (plantId?: string) => ["calendar", plantId ?? null] as const,
@@ -101,6 +102,16 @@ export function useDowntime(q: DowntimeQuery | null, refetchMs: number | false =
   return useQuery({
     queryKey: effKeys.downtime(q ?? {}),
     queryFn: () => downtimeApi.list(q as DowntimeQuery).then((r) => r.data),
+    enabled: !!q,
+    refetchInterval: refetchMs,
+  });
+}
+
+/** Sprint 7b: intervals without data per machine (the timeline paints them as "sem dados"). */
+export function useNoData(q: NoDataQuery | null, refetchMs: number | false = 60_000) {
+  return useQuery({
+    queryKey: effKeys.noData(q ?? { start: "" }),
+    queryFn: () => downtimeApi.noData(q as NoDataQuery).then((r) => r.data),
     enabled: !!q,
     refetchInterval: refetchMs,
   });

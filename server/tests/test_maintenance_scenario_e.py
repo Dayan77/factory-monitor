@@ -310,9 +310,9 @@ async def test_scenario_e_end_to_end(client, scenario_clock):
 
     # ── reliability (12-month window) ───────────────────────────────────────
     win = {"start": E["reliability_window"]["start_utc"], "stop": E["reliability_window"]["stop_utc"]}
-    # default window = 12 months ending today 00:00 local = the scenario window
+    # default window (S7-21) = from local midnight 12 months ago up to now (the scenario window + today so far)
     dflt = await api(client, "GET", "/api/maintenance/reliability", planner, params={"group_by": "position"})
-    assert ts(dflt["period_start"]) == ts(win["start"]) and ts(dflt["period_end"]) == ts(win["stop"])
+    assert ts(dflt["period_start"]) == ts(win["start"]) and ts(dflt["period_end"]) == ts(E["evaluate_at"])
 
     def _cmp(row, exp, key):
         assert row["n"] == exp["n"] and row["restored"] == exp["restored"], key

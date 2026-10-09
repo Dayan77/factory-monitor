@@ -9,6 +9,9 @@ are counted by the client from the server clock).
 Rules (first true wins):
   1 offline      Machine.status = unknown or no reading for > machine_offline_timeout_s (last_seen_at)
   2 failure      open FailureRecord (no restored_at) or Machine.status = error  (before the break rules: kpis S5-1)
+                 S7-23: an `incipient` record never stops the machine, and a record open for longer than
+                 FAILURE_STALE_OPEN_H does not make the state (a machine that reports a fault now is still
+                 "failure" by its status); it adds the badge/text "falha aberta há muito tempo — verificar"
   3 maintenance  Machine.status = maintenance or a WO in_progress that stops the machine
   4 planned_stop break of the shift, planned stop of the calendar, open PLN-* downtime
   5 off_shift    no shift instance now (D6/D9)
@@ -36,6 +39,7 @@ ICONS = {"offline": "cloud-off", "failure": "wrench", "maintenance": "hard-hat",
 LABELS = {"offline": "sem dados", "failure": "falha", "maintenance": "manutenção", "planned_stop": "pausa",
           "off_shift": "fora do turno", "stopped": "parada", "running": "rodando"}
 OPEN_ALERT_STATES = ("open", "acknowledged")
+STALE_FAILURE_TEXT = "falha aberta há muito tempo — verificar"
 SEV_RANK = {"watch": 1, "warning": 2, "critical": 3}
 
 
@@ -107,6 +111,13 @@ def describe(facts: Mapping) -> dict:
         detail["downtime_id"] = facts.get("downtime_id")
         detail["reason_code"] = reason
     badges = []
+    if facts.get("stale_failure"):
+        # S7-23: explicit, never a normal live failure — someone must check the record (forgotten restore?)
+        detail["stale_failure_id"] = facts.get("stale_failure_id")
+        detail["stale_failure_since"] = _iso(facts.get("stale_failure_since"))
+        badges.append({"kind": "stale_failure", "failure_id": facts.get("stale_failure_id"),
+                       "since": _iso(facts.get("stale_failure_since")), "text": STALE_FAILURE_TEXT})
+        text = f"{text} · {STALE_FAILURE_TEXT}"
     if facts.get("predictive_severity"):
         badges.append({"kind": "predictive", "severity": facts["predictive_severity"],
                        "alert_id": facts.get("predictive_alert_id")})
@@ -142,11 +153,18 @@ async def load_facts(db: AsyncSession, tenant_id: str, plant, machines: Iterable
         nxt = cal.instances(now, now + timedelta(days=8))
         next_start = next((i.start for i in nxt if i.start > now), None)
 
-    failures = {}
+    # S7-23: open = no restored_at and not incipient (an incipient failure does not stop the function, ISO 14224);
+    # a record open for longer than failure_stale_open_h is "stale" — kept apart from the live ones
+    stale_after = timedelta(hours=settings.failure_stale_open_h)
+    failures, stale_failures = {}, {}
     for fr in (await db.execute(select(FailureRecord).where(
             FailureRecord.tenant_id == tenant_id, FailureRecord.machine_id.in_(mids),
-            FailureRecord.restored_at.is_(None)).order_by(FailureRecord.failed_at))).scalars():
-        failures.setdefault(fr.machine_id, fr)
+            FailureRecord.restored_at.is_(None), FailureRecord.severity != "incipient")
+            .order_by(FailureRecord.failed_at, FailureRecord.id))).scalars():
+        if now - fr.failed_at > stale_after:
+            stale_failures.setdefault(fr.machine_id, fr)
+        else:
+            failures.setdefault(fr.machine_id, fr)
     wos = {}
     for wo in (await db.execute(select(WorkOrder).where(
             WorkOrder.tenant_id == tenant_id, WorkOrder.machine_id.in_(mids), WorkOrder.state == "in_progress",
@@ -180,6 +198,11 @@ async def load_facts(db: AsyncSession, tenant_id: str, plant, machines: Iterable
         if fault_ev is not None:
             f.update(fault_code=fault_ev.fault_code, fault_reason=effective_reason(fault_ev))
             f.setdefault("failure_since", fault_ev.fault_since or fault_ev.start)
+        old_fr = stale_failures.get(m.id)
+        if old_fr is not None:
+            # never `open_failure`: the state comes from the other rules (a machine that reports a fault now is
+            # still "failure" by its status); the old record is flagged for checking
+            f.update(stale_failure=True, stale_failure_id=old_fr.id, stale_failure_since=old_fr.failed_at)
         wo = wos.get(m.id)
         if wo is not None:
             f.update(wo_in_progress_stops_machine=True, wo_id=wo.id, wo_label=wo_label(wo.number),

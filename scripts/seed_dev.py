@@ -370,6 +370,27 @@ DEMO_PLANS = [
 ]
 
 
+SEED_INCIPIENT_RESTORE_H = 26          # incipient failure of the seed: corrected at the next day's planned stop
+
+
+async def restore_seed_failures(db, tenant_id: str) -> int:
+    """Seeded historical failures left open by older versions of this script (restored_at empty) get restored at
+    failed_at + SEED_INCIPIENT_RESTORE_H. Only records of the seed (note ending in "(seed)") of `tenant_id`, older
+    than one day. Returns how many were fixed. Commits."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from src.models import FailureRecord
+    now = datetime.now(timezone.utc)
+    rows = (await db.execute(select(FailureRecord).where(
+        FailureRecord.tenant_id == tenant_id, FailureRecord.restored_at.is_(None),
+        FailureRecord.note.like("%(seed)"), FailureRecord.failed_at < now - timedelta(days=1)))).scalars().all()
+    for f in rows:
+        f.restored_at = min(now, f.failed_at + timedelta(hours=SEED_INCIPIENT_RESTORE_H))
+    if rows:
+        await db.commit()
+    return len(rows)
+
+
 async def seed_demo_maintenance(db, tenant_id: str, plant_id: str) -> dict:
     """Planner, technician (on call for Linha de Montagem) and production supervisor (dev passwords from env
     defaults), maintenance plans on the Planta Manaus positions, and a few historical work orders / failures
@@ -382,7 +403,7 @@ async def seed_demo_maintenance(db, tenant_id: str, plant_id: str) -> dict:
     from src.services.maintenance import service as ms
     from src.services.maintenance import usage as mu
 
-    stats = {"users": 0, "plans": 0, "work_orders": 0, "failures": 0}
+    stats = {"users": 0, "plans": 0, "work_orders": 0, "failures": 0, "failures_restored": 0}
     if production_mode():
         return stats
     lines = {ln.name: ln for ln in (await db.execute(select(Line).where(Line.tenant_id == tenant_id,
@@ -406,6 +427,9 @@ async def seed_demo_maintenance(db, tenant_id: str, plant_id: str) -> dict:
     tech = await user(TECH_EMAIL, TECH_PASSWORD, "Tiago Técnico", UserRole.technician, line_ids=area, on_call=True)
     await user(SUPERVISOR_EMAIL, SUPERVISOR_PASSWORD, "Sílvia Supervisora", UserRole.production_supervisor, line_ids=area)
     await db.commit()
+    # Sprint 7b (bug: permanent "falha há 40 d" on the map/tablet): historical failures of the seed are always
+    # restored. Repairs databases seeded before the fix too (only the seed's own records: note ending in "(seed)").
+    stats["failures_restored"] = await restore_seed_failures(db, tenant_id)
     if (await db.execute(select(MaintenancePlan.id).where(MaintenancePlan.tenant_id == tenant_id).limit(1))).first():
         return stats
 
@@ -492,8 +516,11 @@ async def seed_demo_maintenance(db, tenant_id: str, plant_id: str) -> dict:
             await ms.transition(db, wo, "in_progress", tech, at=f_at + timedelta(minutes=8), check_permission=False)
             await ms.transition(db, wo, "completed", tech, at=f_at + timedelta(minutes=50), labor_hours=0.75,
                                 check_permission=False)
+            # incipient, found by condition monitoring and corrected at the next planned stop (restored, never open)
             db.add(FailureRecord(tenant_id=tenant_id, machine_id=fix.id, position_id=a1.id, component_id=f.component_id,
-                                 failed_at=now - timedelta(days=40), severity="incipient", failure_mode="PDE",
+                                 failed_at=now - timedelta(days=40),
+                                 restored_at=now - timedelta(days=40) + timedelta(hours=SEED_INCIPIENT_RESTORE_H),
+                                 severity="incipient", failure_mode="PDE",
                                  mechanism="6.4", cause="5.5", detection_method="continuous_condition_monitoring",
                                  status="complete", emergency_notified_at=now, note="tempo de curso subindo (seed)"))
             stats["failures"] += 2

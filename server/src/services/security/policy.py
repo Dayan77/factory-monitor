@@ -174,6 +174,7 @@ POLICY: dict[str, str] = {
     "GET /api/demo/session": "user",
     # downtime
     "GET /api/downtime/": "user",
+    "GET /api/downtime/no-data": "user",          # Sprint 7b (S7-22): state timeline gaps without data
     "POST /api/downtime/": "user",
     "PATCH /api/downtime/{event_id}": "user",
     # failure-codes

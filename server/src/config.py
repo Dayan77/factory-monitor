@@ -71,6 +71,9 @@ class ServerSettings(BaseSettings):
     # Machine status derived from data: a machine with no reading for longer than
     # this is marked 'unknown' (offline). The sweeper runs every N seconds.
     machine_offline_timeout_s: int = 60
+    # Sprint 7b (kpis.md S7-23): an open failure (no restored_at) older than this is "falha aberta há muito tempo —
+    # verificar" on the map/tablet/Raio-X, not a live failure (unless the machine itself reports a fault now)
+    failure_stale_open_h: float = 72.0
     machine_status_sweep_interval_s: int = 15
     # Minimum interval between persisted last_seen_at updates (limits DB writes).
     machine_last_seen_write_interval_s: int = 5

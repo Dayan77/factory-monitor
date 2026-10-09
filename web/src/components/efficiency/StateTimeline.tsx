@@ -10,6 +10,8 @@ export interface TimelineRow {
   id: string;
   name: string;
   events: DowntimeEvent[];
+  /** Gaps without data (GET /api/downtime/no-data) — painted "sem dados", never "sem parada registrada". */
+  noData?: { start: string; end: string }[] | null;
 }
 
 interface Props {
@@ -58,7 +60,7 @@ export default function StateTimeline({ rows, start, stop, now, tz, reasons, onS
     [tz, multiDay],
   );
   const fmtFull = useMemo(() => new Intl.DateTimeFormat("pt-BR", { timeZone: tz, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }), [tz]);
-  const strips = useMemo(() => rows.map((r) => ({ ...r, segs: buildTimeline(r.events, start, stop, now) })), [rows, start, stop, now]);
+  const strips = useMemo(() => rows.map((r) => ({ ...r, segs: buildTimeline(r.events, start, stop, now, r.noData) })), [rows, start, stop, now]);
   const tickList = ticks(start, stop);
 
   function describe(seg: TimelineSegment): string {

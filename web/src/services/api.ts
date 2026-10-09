@@ -9,7 +9,7 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type {
   AlertEvent, CalendarException, CalendarExceptionBody, Camera, Component, ComponentCreateBody, DowntimeCreateBody,
   DowntimeEvent, DowntimePatchBody, DowntimeQuery, LeadBody, Line, LineProduction, Machine, MachineProduct,
-  MachineProductBody, MachineUsage, NominalLife, OeeQuery, OeeResult, Overview, ParetoRow, Position, PositionDetail,
+  MachineNoData, MachineProductBody, MachineUsage, NoDataQuery, NominalLife, OeeQuery, OeeResult, Overview, ParetoRow, Position, PositionDetail,
   Product, ProductionRun, ReasonCode, ReasonCodeCreateBody, ReasonCodeUpdateBody, Reliability, RemovalReason,
   SensorHistory, Shift, ShiftBody, ShiftReport, Tag, TreePlant, UsageHistory, UsageMeasure,
 } from "./types";
@@ -269,6 +269,7 @@ export const efficiencyApi = {
 
 export const downtimeApi = {
   list: (q: DowntimeQuery) => api.get<DowntimeEvent[]>("/api/downtime/", { params: q }),
+  noData: (q: NoDataQuery) => api.get<MachineNoData[]>("/api/downtime/no-data", { params: q }),
   justify: (id: string, body: DowntimePatchBody) => api.patch<DowntimeEvent>(`/api/downtime/${id}`, body),
   create: (body: DowntimeCreateBody) => api.post<DowntimeEvent>("/api/downtime/", body),
 };

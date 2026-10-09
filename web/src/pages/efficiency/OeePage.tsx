@@ -15,7 +15,8 @@ import DataWarnings from "@/components/efficiency/DataWarnings";
 import PeriodPicker from "@/components/efficiency/PeriodPicker";
 import StateTimeline from "@/components/efficiency/StateTimeline";
 import { OeeTrendChart, ParetoChart, WaterfallChart } from "@/components/efficiency/charts";
-import { useDowntime, useOee, usePareto, usePlant, useReasonCodes, useReliability, useShifts } from "@/hooks/useEfficiency";
+import { useDowntime, useNoData, useOee, usePareto, usePlant, useReasonCodes, useReliability, useShifts } from "@/hooks/useEfficiency";
+import { NoDataWarning } from "./TimelinePage";
 import type { OeeGroupBy, OeeResult, OeeScope, TreePlant } from "@/services/types";
 import { formatDec1, formatInt, formatPct } from "@/utils/format";
 import { buildWaterfall, formatDuration, formatHours, oeeTone, shapePareto, trendLabel } from "@/utils/efficiency";
@@ -106,6 +107,7 @@ export default function OeePage() {
   const reasons = useReasonCodes();
   const timelineMachines = scope === "machine" ? allMachines.filter((m) => m.id === id) : scope === "line" ? allMachines.filter((m) => m.line_id === id) : [];
   const downtime = useDowntime(win && id && scope !== "plant" ? { [scope === "line" ? "line_id" : "machine_id"]: id, ...win } : null);
+  const noData = useNoData(win && id && scope !== "plant" ? { [scope === "line" ? "line_id" : "machine_id"]: id, ...win } : null);
 
   const bars = useMemo(() => shapePareto(pareto.data ?? []), [pareto.data]);
   const steps = useMemo(() => (oee.data ? buildWaterfall(oee.data) : []), [oee.data]);
@@ -220,8 +222,12 @@ export default function OeePage() {
                 action={<Link to={`/timeline?${scope === "line" ? `line=${id}` : `line=${allMachines.find((m) => m.id === id)?.line_id ?? ""}`}&period=${pp.preset}${pp.from ? `&from=${pp.from}&to=${pp.to}` : ""}`} className="text-caption font-medium text-ok hover:underline">Abrir</Link>} />
               <QueryView query={downtime} errorTitle="Não foi possível carregar as paradas" loading={<Skeleton className="h-24" />}>
                 {(evs) => (
-                  <StateTimeline tz={tz} start={Date.parse(period.start)} stop={Date.parse(period.stop)} now={Date.now()} reasons={reasons.data}
-                    rows={timelineMachines.map((m) => ({ id: m.id, name: m.name, events: evs.filter((e) => e.machine_id === m.id) }))} />
+                  <>
+                    {noData.isError && <NoDataWarning onRetry={() => void noData.refetch()} />}
+                    <StateTimeline tz={tz} start={Date.parse(period.start)} stop={Date.parse(period.stop)} now={Date.now()} reasons={reasons.data}
+                      rows={timelineMachines.map((m) => ({ id: m.id, name: m.name, events: evs.filter((e) => e.machine_id === m.id),
+                        noData: noData.data?.find((r) => r.machine_id === m.id)?.intervals ?? [] }))} />
+                  </>
                 )}
               </QueryView>
             </Card>

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import get_current_user, has_any, require_any
 from ...db import get_db
+from ...config import settings as app_settings
 from ...models import (Component, ComponentType, DowntimeEvent, FailureRecord, Line, Machine, MaintenanceAbsence,
                        MaintenancePlan, Plant, Position, RemovalReason, User, WorkOrder, WorkOrderReplacement)
 from ...notifications import service as notif
@@ -641,6 +642,9 @@ def _failure_dict(f: FailureRecord, names: dict, comp) -> dict:
         "detection_method": f.detection_method, "status": f.status, "usage_at_failure": f.usage_at_failure,
         "note": f.note, "open": f.restored_at is None and (f.downtime_event_id is not None
                                                       or f.detection_method == "production_interference"),
+        # S7-23: still open after FAILURE_STALE_OPEN_H → "falha aberta há muito tempo — verificar" (forgotten restore?)
+        "open_stale": f.restored_at is None
+        and (clock.now() - f.failed_at).total_seconds() > app_settings.failure_stale_open_h * 3600,
         "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
     }
 
@@ -852,8 +856,8 @@ async def maintenance_reliability(user: CurrentUser, db: DB,
                                                     "manufacturer_model"] = "position",
                                   start: Optional[datetime] = None, stop: Optional[datetime] = None,
                                   plant_id: Optional[str] = None, line_id: Optional[str] = None):
-    """MTBF/MCBF/MTTR (kpis.md §2, S4-8 … S4-10) and MTTF (S4-11). Default window: 12 months ending today
-    00:00 local."""
+    """MTBF/MCBF/MTTR (kpis.md §2, S4-8 … S4-10) and MTTF (S4-11). Default window (S7-21): from local midnight
+    12 months ago up to now (today's failures included)."""
     if plant_id:
         await _get(db, Plant, plant_id, user.tenant_id, "plant_id")
     if line_id:

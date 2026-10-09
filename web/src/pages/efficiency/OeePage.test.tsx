@@ -10,7 +10,7 @@ vi.mock("@/services/api", () => ({
   plantsApi: { tree: vi.fn() },
   shiftsApi: { list: vi.fn() },
   efficiencyApi: { oee: vi.fn(), pareto: vi.fn(), reliability: vi.fn() },
-  downtimeApi: { list: vi.fn() },
+  downtimeApi: { list: vi.fn(), noData: vi.fn() },
   reasonCodesApi: { list: vi.fn() },
 }));
 
@@ -25,6 +25,7 @@ describe("OeePage", () => {
     vi.mocked(efficiencyApi.reliability).mockResolvedValue(ok({ failures: 2, short_faults: 1, operating_h: 120, mtbf_h: 60, mttr_h: 0.5, mttr_s: 1800, availability_inherent: 0.9917 }));
     vi.mocked(downtimeApi.list).mockResolvedValue(ok([downtime({ machine_id: "m-1", start: new Date(Date.now() - 3600e3).toISOString(), end: new Date(Date.now() - 3000e3).toISOString() })]));
     vi.mocked(reasonCodesApi.list).mockResolvedValue(ok(reasonCodes()));
+    vi.mocked(downtimeApi.noData).mockResolvedValue(ok([]));
   });
 
   it("queries the selected scope and period and shows A/P/Q/OEE/TEEP", async () => {

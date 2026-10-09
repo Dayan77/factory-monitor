@@ -186,7 +186,7 @@ async def test_seed_demo_maintenance(client, monkeypatch):
         out = await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"])
         assert out["users"] == 3 and out["plans"] == len(seed_dev.DEMO_PLANS) and out["work_orders"] == 6
         again = await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"])
-        assert again == {"users": 0, "plans": 0, "work_orders": 0, "failures": 0}
+        assert again == {"users": 0, "plans": 0, "work_orders": 0, "failures": 0, "failures_restored": 0}
         users = (await db.execute(select(User).where(User.tenant_id == t.id))).scalars().all()
         tech = next(u for u in users if u.role.value == "technician")
         assert tech.on_call and len(tech.line_ids) == 1
@@ -202,6 +202,24 @@ async def test_seed_demo_maintenance(client, monkeypatch):
         assert hist >= 20
         assert (await db.execute(select(func.count()).select_from(FailureRecord).where(
             FailureRecord.tenant_id == t.id))).scalar_one() == 2
+        # Sprint 7b: no seeded historical failure is left open (it showed as a permanent "falha há 40 d")
+        assert (await db.execute(select(func.count()).select_from(FailureRecord).where(
+            FailureRecord.tenant_id == t.id, FailureRecord.restored_at.is_(None)))).scalar_one() == 0
+        # a database seeded by the old script (open incipient record) is repaired on the next seed run
+        from datetime import datetime, timedelta, timezone
+        old_f = FailureRecord(tenant_id=t.id, machine_id=wos[0].machine_id, severity="incipient",
+                              failed_at=datetime.now(timezone.utc) - timedelta(days=40), status="complete",
+                              note="tempo de curso subindo (seed)")
+        manual = FailureRecord(tenant_id=t.id, machine_id=wos[0].machine_id, severity="critical",
+                               failed_at=datetime.now(timezone.utc) - timedelta(days=40), status="draft",
+                               note="registrada pelo cliente")
+        db.add_all([old_f, manual])
+        await db.commit()
+        rep = await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"])
+        assert rep["failures_restored"] == 1
+        await db.refresh(old_f)
+        await db.refresh(manual)
+        assert old_f.restored_at is not None and manual.restored_at is None      # only the seed's own records
     monkeypatch.setenv("SEED_ENFORCE_PROD_CREDENTIALS", "1")
     async with AsyncSessionLocal() as db:
         assert (await seed_dev.seed_demo_maintenance(db, t.id, st["plant_id"]))["users"] == 0

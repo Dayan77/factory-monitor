@@ -11,7 +11,7 @@ import Sheet from "@/components/ui/Sheet";
 import Badge from "@/components/ui/Badge";
 import PeriodPicker from "@/components/efficiency/PeriodPicker";
 import StateTimeline from "@/components/efficiency/StateTimeline";
-import { useDowntime, usePlant, useReasonCodes, useShifts } from "@/hooks/useEfficiency";
+import { useDowntime, useNoData, usePlant, useReasonCodes, useShifts } from "@/hooks/useEfficiency";
 import { useNow } from "@/hooks/useNow";
 import type { DowntimeEvent } from "@/services/types";
 import { formatDateTime } from "@/utils/format";
@@ -24,6 +24,16 @@ const SOURCE_LABEL: Record<string, string> = {
   auto_cycle_gap: "Automática — sem ciclos",
   manual: "Manual",
 };
+
+/** The gaps without data could not be loaded: say so (never a silent "sem parada registrada"). */
+export function NoDataWarning({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <p role="status" className="rounded-lg border border-warn-solid/40 bg-warn-solid/10 px-3 py-2 text-caption text-fg">
+      Não foi possível verificar os períodos sem dados: trechos “sem parada registrada” podem não ter dados.
+      {onRetry && <button type="button" onClick={onRetry} className="ml-2 font-medium underline">Tentar de novo</button>}
+    </p>
+  );
+}
 
 /** Machine state timeline (Gantt-like) per line for the selected period. */
 export default function TimelinePage() {
@@ -38,6 +48,8 @@ export default function TimelinePage() {
 
   const win = pp.period.unavailable ? null : { start: pp.period.start, stop: pp.period.stop };
   const downtime = useDowntime(win ? { ...(lineId ? { line_id: lineId } : {}), ...win, limit: 5000 } : null, 30_000);
+  const noData = useNoData(win ? { ...(lineId ? { line_id: lineId } : {}), ...win } : null, 30_000);
+  const gapsOf = (id: string) => noData.data?.find((r) => r.machine_id === id)?.intervals ?? [];
   const lines = useMemo(() => (plant?.lines ?? []).filter((l) => !lineId || l.id === lineId), [plant, lineId]);
 
   if (tree.isError) return <ErrorState error={tree.error} onRetry={() => void tree.refetch()} />;
@@ -71,13 +83,14 @@ export default function TimelinePage() {
           loading={<LoadingRegion><Skeleton className="h-64 rounded-xl" /></LoadingRegion>}>
           {(evs) => (
             <div className="space-y-4">
+              {noData.isError && <NoDataWarning onRetry={() => void noData.refetch()} />}
               {lines.map((l) => (
                 <Card key={l.id}>
                   <CardHeader as="h3" title={l.name} description={`${l.machines.length} máquina(s)`} />
                   {l.machines.length === 0 ? <EmptyState className="py-4" title="Sem máquinas" /> : (
                     <StateTimeline tz={tz} start={Date.parse(pp.period.start)} stop={Date.parse(pp.period.stop)} now={now}
                       reasons={reasons.data} onSelect={setSelected}
-                      rows={l.machines.map((m) => ({ id: m.id, name: m.name, events: evs.filter((e) => e.machine_id === m.id) }))} />
+                      rows={l.machines.map((m) => ({ id: m.id, name: m.name, events: evs.filter((e) => e.machine_id === m.id), noData: gapsOf(m.id) }))} />
                   )}
                 </Card>
               ))}

@@ -18,16 +18,17 @@ from ...services.oee import kpi
 from ...services.response_cache import cached_endpoint
 from ...services.oee.detector import ensure_failure, event_message
 from ...services.oee.engine import (UNJUSTIFIED, components as machine_components, effective_reason, load_calendar,
-                                    load_machines_data, machine_infos, reason_meta)
-from ...services.oee.service import (oee_delta, day_components, instances_of_day, load_units, oee_for, oee_payload,
-                                     pareto_for, parse_window, productive_today, reliability_for, resolve_scope,
+                                    load_machines_data, machine_infos, no_data_intervals, reason_meta)
+from ...services.oee.service import (MAX_RANGE_DAYS, oee_delta, day_components, instances_of_day, load_units,
+                                     oee_for, oee_payload, pareto_for, parse_window, productive_today, reliability_for, resolve_scope,
                                      _line_scope)
 from ...services import operator_scope as opscope
 from ...services.drilldown import resolve_period
 from ...services.usage import queries as uq
 from ...services.validation import is_uuid
 from ...websocket.manager import manager
-from ..schemas_production import (DowntimeCreate, DowntimeOut, DowntimePatch, MachineProduction, OeeOut,
+from ..schemas_production import (DowntimeCreate, DowntimeOut, DowntimePatch, MachineNoData, MachineProduction,
+                                  NoDataInterval, OeeOut,
                                   OverviewLine, OverviewOut, ParetoRow, ReliabilityOut, ShiftReportOut)
 from ..tenant_refs import ensure_owned
 
@@ -121,6 +122,41 @@ async def list_downtime(user: CurrentUser, db: DB, machine_id: Optional[str] = N
     evs = await query_downtime(db, user.tenant_id, mids, _aware(start), _aware(stop), open, unjustified, limit)
     names = await _names(db, user.tenant_id, [e.machine_id for e in evs])
     return [_out(e, names) for e in evs]
+
+
+NO_DATA_MAX_DAYS = MAX_RANGE_DAYS        # same range as GET /api/oee
+
+
+@downtime_router.get("/no-data", response_model=list[MachineNoData])
+async def list_no_data(user: CurrentUser, db: DB, start: datetime, stop: Optional[datetime] = None,
+                       machine_id: Optional[str] = None, line_id: Optional[str] = None):
+    """Sprint 7b (kpis.md S7-22): intervals WITHOUT data per machine in [start, min(stop, now)) — the complement of
+    the data spans the OEE engine uses for "sem dados". The state timeline paints them as no-data instead of
+    "sem parada registrada". Same scope rules as GET /api/downtime/ (tenant, line, operator lines)."""
+    now = datetime.now(timezone.utc)
+    s, e = _aware(start), _aware(stop) or now
+    if e <= s:
+        raise _422("stop deve ser após start.")
+    if e - s > timedelta(days=NO_DATA_MAX_DAYS):
+        raise _422(f"Intervalo máximo: {NO_DATA_MAX_DAYS} dias.")
+    q = select(Machine.id).where(Machine.tenant_id == user.tenant_id)
+    if machine_id:
+        if not is_uuid(machine_id):
+            return []
+        await opscope.check_machine(db, user, machine_id)
+        q = q.where(Machine.id == machine_id)
+    if line_id:
+        if not is_uuid(line_id):
+            return []
+        opscope.check_line(user, line_id)
+        q = q.where(Machine.line_id == line_id)
+    mids = list((await db.execute(q.order_by(Machine.name, Machine.id))).scalars().all())
+    allowed = await opscope.allowed_machine_ids(db, user)
+    if allowed is not None:
+        mids = [m for m in mids if m in allowed]
+    gaps = await no_data_intervals(db, user.tenant_id, mids, s, e, now)
+    return [MachineNoData(machine_id=m, intervals=[NoDataInterval(start=a, end=b) for a, b in gaps.get(m, [])])
+            for m in mids]
 
 
 async def _reason(db: AsyncSession, tenant_id: str, code: str) -> ReasonCode:
