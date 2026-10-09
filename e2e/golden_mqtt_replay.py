@@ -273,9 +273,11 @@ async def db_checks_and_seed(ids: dict) -> None:
         await add_total("component", ids["c_m"], "operating_seconds", sm["component_usage_since_install"]["hours"] * 3600)
         await add_total("position", ids["p_m"], "starts", sm["position_usage_total"]["starts"])
         await add_total("component", ids["c_m"], "starts", sm["component_usage_since_install"]["starts"])
-        # the scenario readings are inside the 14-day window: top up to window_14d_usage
-        wb = ts(A["evaluate_at"]) - SHIFT - timedelta(days=7)
-        wb = wb.replace(minute=0, second=0, microsecond=0)
+        # the scenario readings are inside the 14-day window: top up to window_14d_usage. The top-up bucket sits at
+        # the first hour of the window: since S7-2 (audit A-2) the pace divides by the days actually behind the
+        # window (first data of the component/position/machine), so a bucket in the middle of it would halve the
+        # history (7 d → rate × 2, low_confidence) — the scenario has 14 full days of data.
+        wb = (ts(A["evaluate_at"]) - SHIFT).replace(minute=0, second=0, microsecond=0) - timedelta(days=14)
         await add_bucket("component", ids["c_a1"], "cycles", wb, A["a1_cylinder"]["window_14d_usage"]["cycles"] - ea["cycles_delta"])
         await add_bucket("component", ids["c_m"], "operating_seconds", wb,
                          A["a2_motor"]["window_14d_usage"]["hours"] * 3600 - em["operating_seconds"])
