@@ -533,3 +533,15 @@ MTBF/MCBF/MTTR/MART, λ, MTTF, PMP, cumprimento, backlog, RUL e planos conferem 
 **Atualização Sprint 7b**: A-19b corrigido (ver item acima, testes citados). Com isso **os 20 itens e o item de
 verificação A-19b estão corrigidos**; nenhum item da auditoria permanece aberto. Cenários dourados A–F inalterados
 (`make test-golden`).
+
+### Sprint 7b — achados da rodada de capturas na planta virtual (fora da lista A-*)
+
+Três defeitos de **exibição** encontrados pelo dono do projeto na planta virtual ao vivo; nenhum muda fórmula, mas os
+três mostravam ao usuário um número/estado que a especificação não sustenta. Decisões em [`kpis.md`](kpis.md)
+"Decisões Sprint 7" (S7-21 … S7-23).
+
+| # | Achado | Decisão | Estado · teste |
+|---|---|---|---|
+| B-1 | Linha do tempo de estados pintava períodos **sem dados** como verde "sem parada registrada" | S7-22: `GET /api/downtime/no-data` (complemento dos intervalos com dados, o mesmo "sem dados" do OEE); a tela pinta "sem dados" e avisa se a consulta falhar | ✅ corrigido · `server/tests/test_sprint7b_bugs.py::test_no_data_intervals_are_explicit`, `::test_no_data_tenant_isolation`; `web/src/utils/efficiency.test.ts` ("paints the gaps without data…"), `web/src/pages/efficiency/TimelinePage.test.tsx` |
+| B-2 | Janela padrão da confiabilidade terminava hoje 00:00 local: a falha de hoje não aparecia | S7-21: `[00:00 local de 12 meses atrás, agora)` (emenda S4-8); cenário E inalterado com a janela explícita | ✅ corrigido na API · `test_sprint7b_bugs.py::test_reliability_default_window_includes_todays_failure`, `test_maintenance_scenario_e.py` (padrão termina em `evaluate_at`). A tela (`ReliabilityPage.reliabilityWindow`) ainda envia `stop` = hoje 00:00 — ajuste do frontend: pedir sem `stop` |
+| B-3 | Falha do seed com `restored_at` vazio aparecia como falha ao vivo "há 40 d" no mapa/tablet/Raio-X | S7-23: aberta > `FAILURE_STALE_OPEN_H` (72 h) → selo `stale_failure` + "falha aberta há muito tempo — verificar", estado pelas demais regras; `incipient` nunca põe a máquina em falha; `open_stale` em `/api/failures/`; seed restabelece as falhas históricas (e corrige bancos já semeados) | ✅ corrigido · `test_sprint7b_bugs.py::test_stale_open_failure_is_flagged_not_live`, `test_seed_demo_plant.py::test_seed_demo_maintenance` |
