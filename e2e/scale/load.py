@@ -417,7 +417,9 @@ async def ws_probe(tenant: dict, stop: asyncio.Event, lat: list) -> None:
 
 async def influx_count(tenant: str, start: datetime) -> int:
     from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
-    async with InfluxDBClientAsync(url=INFLUX["url"], token=INFLUX["token"], org=INFLUX["org"]) as c:
+    # count of millions of points on a loaded host: the client's default 10 s timeout is not enough
+    async with InfluxDBClientAsync(url=INFLUX["url"], token=INFLUX["token"], org=INFLUX["org"],
+                                   timeout=int(os.getenv("INFLUX_COUNT_TIMEOUT_MS", "600000"))) as c:
         q = f'''from(bucket: "{INFLUX["bucket"]}") |> range(start: {iso(start - timedelta(seconds=2))})
           |> filter(fn: (r) => r["_measurement"] == "sensors" and r["tenant_id"] == "{tenant}")
           |> filter(fn: (r) => r["_field"] == "value") |> group() |> count()'''
@@ -522,7 +524,11 @@ async def main() -> int:
         await asyncio.sleep(40)                            # detectors: a couple of ticks after the end
         m1 = metrics()
         ok = m1.get('fm_mqtt_messages_total{result="ok"}', 0) - m0.get('fm_mqtt_messages_total{result="ok"}', 0)
-        stored = sum([await influx_count(t["id"], load_start) for t in data["tenants"]])
+        try:
+            stored = sum([await influx_count(t["id"], load_start) for t in data["tenants"]])
+        except Exception as e:                          # keep every other measurement (OUT is written below)
+            print("   influx count failed:", repr(e), flush=True)
+            stored = None
         ok_at_end = samples[-1]["processed_ok"] if samples else None
         report["load"] = {"published": published, "wall_s": round(wall_s, 1), "rate_published": round(published / wall_s),
                           "rate_processed_during_load": round((ok_at_end or 0) / wall_s),
@@ -547,7 +553,7 @@ async def main() -> int:
         report["detectors"] = {"downtime_lag_max_s": m1.get('fm_detector_lag_max_seconds{detector="downtime"}'),
                                "downtime_lagging": m1.get('fm_detector_lagging{detector="downtime"}')}
         targets = {"ingestion_lag_p95_lt_2s": (report["ingestion_lag"]["ws_p95_s"] or 99) < 2.0,
-                   "no_loss": report["load"]["dropped"] == 0 and stored >= published * 0.999}
+                   "no_loss": report["load"]["dropped"] == 0 and stored is not None and stored >= published * 0.999}
         for k in ("overview", "oee_30d", "pareto_30d", "plans_status"):
             targets[f"{k}_p95_lt_500ms"] = (report["api_load"].get(k) or {}).get("p95_ms", 1e9) < 500
         targets["api_errors_lt_0_1pct"] = sum(len(v) - 1 if isinstance(v[-1], str) and v[-1].startswith("…") else len(v)
