@@ -102,7 +102,7 @@ export function useMaintenanceKpis(q: { plant_id?: string; start: string; stop: 
   });
 }
 
-export function useReliability(q: { group_by: ReliabilityGroupBy; start: string; stop: string }) {
+export function useReliability(q: { group_by: ReliabilityGroupBy; start?: string; stop?: string }) {
   return useQuery({
     queryKey: mntKeys.reliability(q),
     queryFn: () => maintenanceKpiApi.reliability(q),

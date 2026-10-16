@@ -130,6 +130,7 @@ async def load_facts(db: AsyncSession, tenant_id: str, plant, machines: Iterable
                      now: Optional[datetime] = None) -> dict[str, dict]:
     """Facts of §1.2 for `machines` (all of `plant`, tenant `tenant_id`) at `now`."""
     from ..maintenance.service import wo_label
+    from ..maintenance.stale import stale_open_ids
 
     now = now or datetime.now(timezone.utc)
     machines = list(machines)
@@ -154,14 +155,16 @@ async def load_facts(db: AsyncSession, tenant_id: str, plant, machines: Iterable
         next_start = next((i.start for i in nxt if i.start > now), None)
 
     # S7-23: open = no restored_at and not incipient (an incipient failure does not stop the function, ISO 14224);
-    # a record open for longer than failure_stale_open_h is "stale" — kept apart from the live ones
-    stale_after = timedelta(hours=settings.failure_stale_open_h)
+    # a record is "stale" (kept apart from the live ones) only when old AND contradicted by the data — its linked
+    # stop already ended or the machine runs again (services/maintenance/stale.py, shared with GET /api/failures/)
+    open_frs = list((await db.execute(select(FailureRecord).where(
+        FailureRecord.tenant_id == tenant_id, FailureRecord.machine_id.in_(mids),
+        FailureRecord.restored_at.is_(None), FailureRecord.severity != "incipient")
+        .order_by(FailureRecord.failed_at, FailureRecord.id))).scalars().all())
+    stale_ids = await stale_open_ids(db, tenant_id, open_frs, now, {m.id: m for m in machines})
     failures, stale_failures = {}, {}
-    for fr in (await db.execute(select(FailureRecord).where(
-            FailureRecord.tenant_id == tenant_id, FailureRecord.machine_id.in_(mids),
-            FailureRecord.restored_at.is_(None), FailureRecord.severity != "incipient")
-            .order_by(FailureRecord.failed_at, FailureRecord.id))).scalars():
-        if now - fr.failed_at > stale_after:
+    for fr in open_frs:
+        if fr.id in stale_ids:
             stale_failures.setdefault(fr.machine_id, fr)
         else:
             failures.setdefault(fr.machine_id, fr)

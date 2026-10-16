@@ -27,12 +27,12 @@ const GROUPS = [
   { value: "manufacturer_model", label: "Fabricante / modelo (MTTF)" },
 ] as const;
 
-/** 12 months ending today 00:00 (plant time zone) — S4-8. */
-export function reliabilityWindow(today: string, tz: string) {
+/** 12 months from local midnight a year ago up to now (plant time zone) — S4-8 amended by S7-21.
+ * No `stop` is sent: the API ends the window at "now", so today's failures count immediately. */
+export function reliabilityWindow(today: string, tz: string): { start: string } {
   const [y, m, d] = today.split("-").map(Number);
-  const stop = zonedToUtc(y, m, d, 0, 0, tz);
   const start = zonedToUtc(y - 1, m, d, 0, 0, tz);
-  return { start: new Date(start).toISOString(), stop: new Date(stop).toISOString() };
+  return { start: new Date(start).toISOString() };
 }
 
 /** Human label of a row (server labels carry raw type codes). */
@@ -159,7 +159,7 @@ export default function ReliabilityPage() {
         <div>
           <h2 className="text-title text-fg">Confiabilidade</h2>
           <p className="text-caption text-fg-subtle">
-            Últimos 12 meses ({formatDate(addDays(today, -365))} – {formatDate(addDays(today, -1))}). Só falhas críticas e degradadas entram em MTBF/MCBF/MTTR; MTTR só com restabelecimento.
+            Últimos 12 meses ({formatDate(addDays(today, -365))} – agora). Só falhas críticas e degradadas entram em MTBF/MCBF/MTTR; MTTR só com restabelecimento.
           </p>
         </div>
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">

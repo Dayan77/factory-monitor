@@ -177,6 +177,11 @@ describe("Confiabilidade", () => {
       ]) as never);
     renderRoute(<ReliabilityPage />, "/maintenance/reliability", "/maintenance/reliability");
     const rows = await screen.findAllByTestId("reliability-row");
+    // S7-21: the request never carries `stop` (the API ends at "now", so today's failures count)
+    const sent = vi.mocked(maintenanceKpiApi.reliability).mock.calls[0][0];
+    expect(sent).not.toHaveProperty("stop");
+    expect(sent.start).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(screen.getByText(/Últimos 12 meses \(.* – agora\)/)).toBeInTheDocument();
     expect(rows[0]).toHaveTextContent("1.733 h");
     expect(rows[0]).toHaveTextContent("1 h 23 min");
     expect(rows[1]).toHaveTextContent("—");
@@ -187,8 +192,8 @@ describe("Confiabilidade", () => {
     expect(screen.getByText("3.266.666 ciclos")).toBeInTheDocument();
   });
 
-  it("12-month window ending today 00:00 local", () => {
-    expect(reliabilityWindow("2026-12-01", "America/Manaus")).toEqual({ start: "2025-12-01T04:00:00.000Z", stop: "2026-12-01T04:00:00.000Z" });
+  it("12-month window from local midnight a year ago up to now (no stop sent — S7-21)", () => {
+    expect(reliabilityWindow("2026-12-01", "America/Manaus")).toEqual({ start: "2025-12-01T04:00:00.000Z" });
   });
 });
 

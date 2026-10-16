@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import get_current_user, has_any, require_any
 from ...db import get_db
-from ...config import settings as app_settings
 from ...models import (Component, ComponentType, DowntimeEvent, FailureRecord, Line, Machine, MaintenanceAbsence,
                        MaintenancePlan, Plant, Position, RemovalReason, User, WorkOrder, WorkOrderReplacement)
 from ...notifications import service as notif
@@ -32,6 +31,7 @@ from ...services.response_cache import cached_endpoint
 from ...services import clock, webhooks
 from ...services.maintenance import core, kpis as mk, service as ms
 from ...services.maintenance import usage as mu
+from ...services.maintenance.stale import stale_open_ids
 from ...services.validation import is_uuid
 from ..patching import apply_patch
 from ..schemas_maintenance import (AbsenceIn, EmergencyCallIn, FailureCreate, FailurePatch, LaborIn, PlanCreate,
@@ -609,7 +609,7 @@ def _failure_status(f: FailureRecord) -> str:
 async def _failure_out(db: AsyncSession, f: FailureRecord) -> dict:
     names = await ms.asset_names(db, f.tenant_id, [f.machine_id], [f.position_id])
     comp = await db.get(Component, f.component_id) if f.component_id else None
-    return _failure_dict(f, names, comp)
+    return _failure_dict(f, names, comp, await stale_open_ids(db, f.tenant_id, [f], clock.now()))
 
 
 async def _failures_out(db: AsyncSession, tenant_id: str, rows: list[FailureRecord]) -> list[dict]:
@@ -622,10 +622,11 @@ async def _failures_out(db: AsyncSession, tenant_id: str, rows: list[FailureReco
     cids = list({f.component_id for f in rows if f.component_id})
     comps = {c.id: c for c in (await db.execute(select(Component).where(
         Component.tenant_id == tenant_id, Component.id.in_(cids)))).scalars()} if cids else {}
-    return [_failure_dict(f, names, comps.get(f.component_id)) for f in rows]
+    stale = await stale_open_ids(db, tenant_id, rows, clock.now())
+    return [_failure_dict(f, names, comps.get(f.component_id), stale) for f in rows]
 
 
-def _failure_dict(f: FailureRecord, names: dict, comp) -> dict:
+def _failure_dict(f: FailureRecord, names: dict, comp, stale_ids: set[str]) -> dict:
     iso = clock.iso
     return {
         "id": f.id, "machine_id": f.machine_id, "machine_name": names.get(f.machine_id),
@@ -642,9 +643,9 @@ def _failure_dict(f: FailureRecord, names: dict, comp) -> dict:
         "detection_method": f.detection_method, "status": f.status, "usage_at_failure": f.usage_at_failure,
         "note": f.note, "open": f.restored_at is None and (f.downtime_event_id is not None
                                                       or f.detection_method == "production_interference"),
-        # S7-23: still open after FAILURE_STALE_OPEN_H → "falha aberta há muito tempo — verificar" (forgotten restore?)
-        "open_stale": f.restored_at is None
-        and (clock.now() - f.failed_at).total_seconds() > app_settings.failure_stale_open_h * 3600,
+        # S7-23: old open record contradicted by the data → "falha aberta há muito tempo — verificar"
+        # (same predicate as the plant map: services/maintenance/stale.py)
+        "open_stale": f.id in stale_ids,
         "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
     }
 

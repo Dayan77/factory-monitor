@@ -61,7 +61,7 @@ export const failuresApi = {
 export const maintenanceKpiApi = {
   kpis: (q: { plant_id?: string; start: string; stop: string }) =>
     api.get<MaintenanceKpis>("/api/maintenance/kpis", { params: clean(q) }),
-  reliability: (q: { group_by: ReliabilityGroupBy; start: string; stop: string }) =>
+  reliability: (q: { group_by: ReliabilityGroupBy; start?: string; stop?: string }) =>
     api.get<unknown>("/api/maintenance/reliability", { params: q }).then((r) => rowsOf<ReliabilityRow>(r.data)),
   components: (q: { plant_id?: string; line_id?: string } = {}) =>
     api.get<ComponentLifeRow[]>("/api/maintenance/components", { params: clean(q) }),

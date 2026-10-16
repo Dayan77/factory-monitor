@@ -178,9 +178,97 @@ async def test_stale_open_failure_is_flagged_not_live(client, monkeypatch):
         await s.execute(update(Machine).where(Machine.id == old_m).values(status=MachineStatus.error))
         await s.commit()
     view = markers(await api(client, "GET", f"/api/plants/{p.plant['id']}/layout/auto", h, params={"kpis": "false"}))
-    assert view[old_m]["state"] == "failure" and "verificar" in view[old_m]["text"]
+    assert view[old_m]["state"] == "failure"
+    # ... and the old record is then NOT contradicted by the data (machine not running, no closed linked stop):
+    # it is a live failure, no "verificar" (review S7-23: age alone never downgrades a failure)
+    assert "verificar" not in view[old_m]["text"] and not view[old_m]["badges"]
+    rows = await api(client, "GET", "/api/failures/", h, params={"machine_id": old_m})
+    assert [r["open_stale"] for r in rows if r["id"] == old_id] == [False]
 
     # tenant isolation: tenant B never reaches A's plant view
     b = await _tenant("STF2")
     await api(client, "GET", f"/api/plants/{p.plant['id']}/layout/auto", b.headers("admin"), 404,
               params={"kpis": "false"})
+
+
+async def _downtime(tenant_id, machine_id, start, end=None):
+    from src.db import AsyncSessionLocal
+    from src.models import DowntimeEvent
+    async with AsyncSessionLocal() as s:
+        ev = DowntimeEvent(tenant_id=tenant_id, machine_id=machine_id, start=start, end=end, source="auto_fault",
+                           reason_code="EQP-01", planned=False,
+                           duration_s=(end - start).total_seconds() if end else None)
+        s.add(ev)
+        await s.commit()
+        return ev.id
+
+
+async def _link(failure_id, event_id):
+    from src.db import AsyncSessionLocal
+    from src.models import FailureRecord
+    async with AsyncSessionLocal() as s:
+        await s.execute(update(FailureRecord).where(FailureRecord.id == failure_id).values(downtime_event_id=event_id))
+        await s.commit()
+
+
+async def test_long_real_failure_with_open_linked_stop_stays_failure(client):
+    """Review S7-23: press breaks Friday 14:00, its FailureRecord is linked to an open EQP stop and the machine stays
+    down (waiting for a spare part). On Monday 14:01 (> 72 h) it is still "falha" on the map and `open_stale` is
+    false — the open stop confirms it. Once that linked stop is closed (the machine ran again) without a restore,
+    the record becomes stale ("verificar") on the map AND in the API (one predicate)."""
+    t = await _tenant("STL")
+    p = await build_plant(client, t, "STL")
+    h = t.headers("admin")
+    mid = p.machine["id"]
+    from src.db import AsyncSessionLocal
+    from src.models import Machine, MachineStatus
+    async with AsyncSessionLocal() as s:
+        await s.execute(update(Machine).where(Machine.id == mid).values(
+            status=MachineStatus.stopped, last_seen_at=datetime.now(UTC)))
+        await s.commit()
+    failed = timedelta(hours=72, minutes=1)
+    fid = await _failure(t.id, mid, failed)
+    ev = await _downtime(t.id, mid, datetime.now(UTC) - failed)
+    await _link(fid, ev)
+
+    def marker(view):
+        return next(m for m in view["machines"] if m["machine_id"] == mid)
+
+    m = marker(await api(client, "GET", f"/api/plants/{p.plant['id']}/layout/auto", h, params={"kpis": "false"}))
+    assert m["state"] == "failure" and "verificar" not in m["text"] and not m["badges"]
+    rows = await api(client, "GET", "/api/failures/", h, params={"machine_id": mid})
+    assert [(r["open"], r["open_stale"]) for r in rows] == [(True, False)]
+    one = await api(client, "GET", f"/api/failures/{fid}", h)
+    assert one["open_stale"] is False
+
+    # the linked stop ended (the machine ran again) but nobody recorded the restore → stale, everywhere
+    async with AsyncSessionLocal() as s:
+        from src.models import DowntimeEvent
+        await s.execute(update(DowntimeEvent).where(DowntimeEvent.id == ev).values(
+            end=datetime.now(UTC) - timedelta(hours=24), duration_s=48 * 3600))
+        await s.commit()
+    m = marker(await api(client, "GET", f"/api/plants/{p.plant['id']}/layout/auto", h, params={"kpis": "false"}))
+    assert m["state"] != "failure" and "verificar" in m["text"]
+    assert any(b["kind"] == "stale_failure" and b["failure_id"] == fid for b in m["badges"])
+    rows = await api(client, "GET", "/api/failures/", h, params={"machine_id": mid})
+    assert [r["open_stale"] for r in rows] == [True]
+
+    # tenant isolation: tenant B never reads A's failure
+    b = await _tenant("STL2")
+    await api(client, "GET", f"/api/failures/{fid}", b.headers("admin"), 404)
+
+
+async def test_old_incipient_record_is_never_open_stale(client):
+    """Review S7-23: an `incipient` record (condition monitoring) left unrestored for 5 days: no badge on the map
+    and `open_stale` false in /api/failures/ — the same predicate as the map (state.py excludes incipient)."""
+    t = await _tenant("STI")
+    p = await build_plant(client, t, "STI")
+    h = t.headers("admin")
+    mid = p.machine["id"]
+    await _running([mid])
+    fid = await _failure(t.id, mid, timedelta(days=5), severity="incipient")
+    m = next(x for x in (await api(client, "GET", f"/api/plants/{p.plant['id']}/layout/auto", h,
+                                   params={"kpis": "false"}))["machines"] if x["machine_id"] == mid)
+    assert m["state"] != "failure" and not any(b["kind"] == "stale_failure" for b in m["badges"])
+    rows = await api(client, "GET", "/api/failures/", h, params={"machine_id": mid})
+    assert [(r["id"], r["open_stale"]) for r in rows] == [(fid, False)]
