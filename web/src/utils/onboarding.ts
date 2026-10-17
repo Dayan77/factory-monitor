@@ -171,7 +171,7 @@ export const ROLE_LABEL: Record<SemanticRole, string> = {
 
 /** CSV delimiter from the header line (`;` Excel pt-BR, or `,`). */
 export function detectDelimiter(text: string): ";" | "," {
-  const head = text.replace(/^﻿/, "").split(/\r?\n/, 1)[0] ?? "";
+  const head = text.replace(/^\uFEFF/, "").split(/\r?\n/, 1)[0] ?? "";
   return (head.match(/;/g)?.length ?? 0) >= (head.match(/,/g)?.length ?? 0) ? ";" : ",";
 }
 

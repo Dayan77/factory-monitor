@@ -100,7 +100,7 @@ Site público em `factoryconnect.tech` (app em `app.factoryconnect.tech`), `site
         (`web/e2e/a11y.verify.mjs`); medição Lighthouse do build de produção (`web/e2e/lighthouse.verify.mjs`)
 - [x] ✅ S6 — Navegação drill-down Fábrica → Linha → Máquina → Componente, com KPIs em cada nível
 - [x] ✅ S6 — Mapa/layout da planta com status ao vivo (cadência ao vivo pelas leituras do contador — S7;
-      ressalva aberta A-19b em [audit_kpis.md](audit_kpis.md#verificação-sprint-7))
+      filtro de leitura corrompida A-19b — S7b, [audit_kpis.md](audit_kpis.md#verificação-sprint-7))
 - [x] ✅ S6 — App responsivo/PWA para chão de fábrica (tablet do operador, celular do técnico)
   - [ ] ⬜ **Pendente (sprint6 §3.2)**: vínculo do tablet por código de 8 caracteres (10 min) com token de dispositivo
         preso à linha e revogável; entrada do operador por PIN ou crachá com bloqueio após 5 erros. Hoje o tablet
@@ -126,9 +126,9 @@ Site público em `factoryconnect.tech` (app em `app.factoryconnect.tech`), `site
         piloto ou acordar com a TI do cliente, por escrito, uma exceção (rede de automação isolada, só leitura)
   - [ ] ⬜ Teste de invasão por terceiro independente
 - [x] ✅ S6 — Gateway de borda empacotado (imagem multi-arquitetura para IPC/Raspberry) com cadastro por código
-- [x] ✅ S7 — Endurecimento dos indicadores: todos os itens da auditoria de KPIs fechados e reverificados
-      ([audit_kpis.md](audit_kpis.md)), exceto **A-19b** (cadência ao vivo do mapa sem filtro de leitura
-      corrompida — só exibição)
+- [x] ✅ S7/S7b — Endurecimento dos indicadores: todos os itens da auditoria de KPIs fechados e reverificados
+      ([audit_kpis.md](audit_kpis.md)), inclusive **A-19b** (filtro de leitura corrompida na cadência ao vivo do
+      mapa — corrigido no S7b)
 - [x] ✅ S7 — Detectores robustos depois de quedas longas (catch-up por checkpoint, resultado idêntico ao contínuo)
 - [x] 🟨 S7 — Escala: 100 máquinas (~1 300 leituras/s) dentro das metas (ingestão p95 1,1 s; telas p95 < 200 ms)
       num host de 4 vCPU compartilhado; 200 máquinas (~2 600/s) **não** fecham as metas nesse host — dimensionamento
@@ -140,7 +140,7 @@ Site público em `factoryconnect.tech` (app em `app.factoryconnect.tech`), `site
 
 ## Pendências honestas
 
-O que **não** existe ou **não** foi provado em 07/10/2026, em ordem de importância para vender:
+O que **não** existe ou **não** foi provado em 17/10/2026, em ordem de importância para vender:
 
 1. **Piloto em fábrica real** ([pilot.md](pilot.md)). Toda validação até aqui é na planta virtual, nos cenários de
    ouro e em testes. Ainda não sabemos, com dado de campo: erro da contagem de peças contra contagem manual, % de
@@ -157,8 +157,7 @@ O que **não** existe ou **não** foi provado em 07/10/2026, em ordem de import�
    (itens acima). Os dois primeiros precisam estar prontos, ou negociados com o cliente, antes do piloto.
 6. **Escala** medida só em host compartilhado de 4 vCPU; repetir em hardware dedicado de 8 vCPU antes de prometer
    200+ máquinas por instância.
-7. **A-19b** — filtro de leitura corrompida na cadência ao vivo do mapa.
-8. **Inglês** (site, app, manual) e **analytics** com consentimento no site.
-9. **Conectores específicos** de CMMS/ERP (SAP PM, TOTVS, Engeman) e teste de invasão independente.
-10. Registro da marca, termos de uso / contrato de nível de serviço (SLA) e política comercial — fora do software,
+7. **Inglês** (site, app, manual) e **analytics** com consentimento no site.
+8. **Conectores específicos** de CMMS/ERP (SAP PM, TOTVS, Engeman) e teste de invasão independente.
+9. Registro da marca, termos de uso / contrato de nível de serviço (SLA) e política comercial — fora do software,
     decisão do dono.

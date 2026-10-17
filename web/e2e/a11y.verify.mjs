@@ -64,6 +64,11 @@ async function cleanupEmergency() {
   }).catch((e) => console.log(`could not cancel the seeded emergency call: ${e.message}`));
 }
 
+// from here on a thrown error must not leave the seeded emergency call open (or the browser running)
+let browser = null;
+const report = [];
+try {
+
 const PUBLIC = ["/", "/login", "/register", "/esqueci-senha", "/redefinir-senha", "/convite", "/op/login", "/rota-que-nao-existe"];
 const APP = [
   "/dashboard", "/oee", "/timeline", "/stops", "/reports/shift", "/reports/scheduled",
@@ -84,8 +89,7 @@ const VIEWPORTS = {
 const SCHEMES = (process.env.SCHEMES ?? "light,dark").split(",");
 const VPS = (process.env.VIEWPORTS ?? "desktop,phone").split(",");
 
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
-const report = [];
+browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 
 async function newContext(vp, scheme, signedIn, extra = {}) {
   const ctx = await browser.newContext({ ...VIEWPORTS[vp], locale: "pt-BR", timezoneId: "America/Sao_Paulo", colorScheme: scheme, ...extra });
@@ -259,8 +263,10 @@ if (!ONLY) {
   await rctx.close();
 }
 
-await browser.close();
-await cleanupEmergency();
+} finally {
+  await browser?.close().catch(() => {});
+  await cleanupEmergency();
+}
 fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify(report, null, 2));
 const total = report.reduce((n, r) => n + r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").length, 0);
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${failures} failed check(s); ${total} serious/critical violation group(s); report: ${path.join(OUT, "report.json")}`);

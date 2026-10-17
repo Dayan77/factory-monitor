@@ -83,7 +83,7 @@ export default function SchedulePage() {
   const [notice, setNotice] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
-  const all = wos.data ?? [];
+  const all = useMemo(() => wos.data ?? [], [wos.data]);
   const byId = useMemo(() => new Map(all.map((w) => [w.id, w])), [all]);
   const toPlan = all.filter((w) => w.state === "approved" || w.state === "on_hold");
   const pending = all.filter((w) => w.state === "draft" || w.state === "open");

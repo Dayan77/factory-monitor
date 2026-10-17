@@ -121,7 +121,15 @@ const nMarkers = await page.getByTestId("map-marker").count();
 check(nMarkers === machineMarkers, `map shows ${machineMarkers} machine markers on the floor plan`, nMarkers);
 check(await page.locator("[data-testid=map-inner] img, [data-testid=map-inner] image").count() > 0, "floor-plan image rendered");
 await page.screenshot({ path: path.join(OUT, "map_published.png") });
-const stateOf = (name) => page.locator(`[data-testid=map-marker][aria-label^="${name}:"]`).getAttribute("data-state");
+// Sprint 7 (WCAG 2.5.3) dropped the marker's aria-label (the accessible name is now its visible text), so the
+// marker is found by machine id; its text (= accessible name) must still carry "<name>:".
+const idByName = Object.fromEntries(machines.map((m) => [m.name, m.id]));
+const markerOf = (name) => page.locator(`[data-testid=map-marker][data-machine-id="${idByName[name]}"]`);
+const stateOf = (name) => markerOf(name).getAttribute("data-state");
+for (const m of machines) {
+  const accName = await markerOf(m.name).evaluate((el) => el.textContent.replace(/\s+/g, " ").trim());
+  check(accName.includes(`${m.name}:`), `marker text carries "${m.name}:"`, accName);
+}
 const waitState = async (name, pred, ms) => { const t0 = Date.now(); for (;;) { const s = await stateOf(name); if (pred(s)) return { s, dt: Date.now() - t0 }; if (Date.now() - t0 > ms) return { s, dt: null }; await sleep(25); } };
 console.log("  initial states:", JSON.stringify(Object.fromEntries(await Promise.all(machines.map(async (m) => [m.name, await stateOf(m.name)])))));
 

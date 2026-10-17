@@ -97,7 +97,7 @@ export default function OeePage() {
   const pp = usePeriodParams(tz, shifts.data);
   const { params, update, period, groupBy } = pp;
   const scope = (["plant", "line", "machine"].includes(params.get("scope") ?? "") ? params.get("scope") : "plant") as OeeScope;
-  const lines = plant?.lines ?? [];
+  const lines = useMemo(() => plant?.lines ?? [], [plant?.lines]);
   const allMachines = useMemo(() => lines.flatMap((l) => l.machines.map((m) => ({ ...m, line: l.name, line_id: l.id }))), [lines]);
   const id = scope === "plant" ? plant?.id ?? "" : params.get("id") ?? (scope === "line" ? lines[0]?.id : allMachines[0]?.id) ?? "";
 

@@ -27,6 +27,8 @@ export function Tabs<V extends string>({ items, value, onChange, label, id, size
   // aria-controls only when the panel exists: many tab rows are segmented filters with no <TabPanel>, and an
   // aria-controls pointing at a missing id is invalid ARIA (axe: aria-valid-attr-value)
   const [hasPanel, setHasPanel] = useState(false);
+  // runs after every render on purpose (the panel can mount later); the inequality guard stops the loop
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(() => {
     const exists = !!document.getElementById(`${id}-panel`);
     if (exists !== hasPanel) setHasPanel(exists);

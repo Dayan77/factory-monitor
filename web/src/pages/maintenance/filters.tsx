@@ -9,7 +9,7 @@ export function useUrlFilters<K extends string>(keys: readonly K[]) {
   const [params, setParams] = useSearchParams();
   const values = useMemo(
     () => Object.fromEntries(keys.map((k) => [k, params.get(k) ?? ""])) as Record<K, string>,
-    [params, keys], // eslint-disable-line react-hooks/exhaustive-deps
+    [params, keys],
   );
   function set(patch: Partial<Record<K | string, string | null>>, replace = true) {
     const next = new URLSearchParams(params);

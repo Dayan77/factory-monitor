@@ -167,7 +167,7 @@ export function usePositionsIndex(machineIds: (string | null | undefined)[]) {
     const m = new Map<string, Position>();
     for (const list of data) for (const p of list ?? []) m.set(p.id, p);
     return m;
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data]);
 }
 
 /** Machine / position / assignee names for a work order (server fields first). */

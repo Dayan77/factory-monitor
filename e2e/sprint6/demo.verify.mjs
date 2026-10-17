@@ -77,7 +77,16 @@ let demoToken = null;
   check(errors.length === 0, "no console errors opening the demo", errors.slice(0, 3));
   await ctx.close();
 }
-if (!demoToken) demoToken = (await (await fetch(`${API}/api/public/demo-session`, { method: "POST" })).json()).access_token;
+if (!demoToken) {
+  const r = await fetch(`${API}/api/public/demo-session`, { method: "POST" });
+  if (r.status === 429) {
+    console.log("✗ POST /api/public/demo-session → 429: DEMO_RATE_LIMIT_PER_HOUR reached for this IP (each run opens 2 sessions);"
+      + " wait, or run against an API with a higher DEMO_RATE_LIMIT_PER_HOUR");
+    await browser.close();
+    process.exit(1);
+  }
+  demoToken = (await r.json()).access_token;
+}
 const H = { authorization: `Bearer ${demoToken}`, "content-type": "application/json" };
 const me = await (await fetch(`${API}/api/auth/me`, { headers: H })).json();
 check(me.roles?.includes("demo_viewer") && me.email == null, "/auth/me: demo_viewer, email null", { roles: me.roles, email: me.email });
@@ -94,9 +103,11 @@ const VPS = [["desktop", { width: 1366, height: 768 }, "light"], ["desktop", { w
 const summary = [];
 for (const [vpName, vp, scheme] of VPS) {
   const { ctx, page, errors, jsonEmails } = await newPage(vp, scheme);
-  await page.goto(`${BASE}/`);
-  await page.getByTestId("open-demo").first().click();
-  await page.waitForURL((u) => u.pathname.startsWith("/dashboard"), { timeout: 15000 });
+  // a and b already exercised the buttons; reuse the session from b (as useOpenDemo stores it) instead of opening
+  // one more per viewport — 6 sessions per run hit DEMO_RATE_LIMIT_PER_HOUR (10/IP) on the second run
+  await ctx.addInitScript((t) => { localStorage.setItem("access_token", t); localStorage.removeItem("refresh_token"); }, demoToken);
+  await page.goto(`${BASE}/dashboard`);
+  await page.getByTestId("demo-banner").waitFor({ timeout: 15000 });
   for (const s of SCREENS) {
     const nErr = errors.length;
     await page.goto(`${BASE}${s}`);

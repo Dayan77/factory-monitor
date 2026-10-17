@@ -45,6 +45,13 @@ Sprint 7b — Fase 6 (conclusão): auditoria de KPIs, detectores, escala e gate 
   do worker.
 - Acessibilidade: contraste do texto secundário dos marcadores do mapa (verde "rodando") e quadro da semana da
   programação rolável pelo teclado (axe).
+- Cadência ao vivo do mapa (A-19b): uma leitura corrompida do contador (CLP reiniciando, palavra de 32 bits lida em
+  duas metades) virava centenas de milhares de pç/h no marcador. Agora `live_parts` aplica o mesmo filtro de
+  plausibilidade da ingestão (`counter_step` com `max_rate` da tag ou da máquina): o glitch é descartado e mantém a
+  última leitura aceita; um salto real confirmado pela leitura seguinte faz nova base (docs/audit_kpis.md).
+- Acessibilidade (tema escuro): o token `--c-danger-solid` passa de `red-500` para `red-600` (texto branco sobre ele: 4,8:1;
+  antes 3,8:1), o hover dos botões de perigo vai para `red-700` e o cartão de chamado de emergência usa fundo de
+  superfície com borda vermelha.
 
 ## [0.7.0] - 2026-10-07
 
