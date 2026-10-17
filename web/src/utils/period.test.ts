@@ -42,6 +42,25 @@ describe("resolvePeriod", () => {
   });
 });
 
+describe("resolvePeriod — never an empty window (start == stop → API 422)", () => {
+  const MIDNIGHT = Date.UTC(2026, 9, 5, 3, 0); // 00:00 local (America/Sao_Paulo)
+  it("'today' right at local midnight still has a 1-minute window", () => {
+    const p = resolvePeriod("today", { now: MIDNIGHT, tz: TZ });
+    expect(p.start).toBe("2026-10-05T03:00:00.000Z");
+    expect(Date.parse(p.stop)).toBeGreaterThan(Date.parse(p.start));
+    expect(p.stop).toBe("2026-10-05T03:01:00.000Z");
+  });
+  it("'shift' in the first minute of the shift has a non-empty window, capped at the shift end", () => {
+    const at = Date.UTC(2026, 9, 5, 17, 0); // 14:00 local, Turno B start
+    const p = resolvePeriod("shift", { now: at, tz: TZ, shifts: [shift({ id: "s-2", name: "Turno B", start_local: "14:00", end_local: "22:00" })] });
+    expect(p.start).toBe("2026-10-05T17:00:00.000Z");
+    expect(p.stop).toBe("2026-10-05T17:01:00.000Z");
+  });
+  it("later in the day the stop is simply now", () => {
+    expect(resolvePeriod("today", { now: NOW, tz: TZ }).stop).toBe(new Date(NOW).toISOString());
+  });
+});
+
 describe("currentShiftInstance", () => {
   const night = shift({ id: "n", name: "Noite", start_local: "22:00", end_local: "06:00", weekdays: [0, 1, 2, 3, 4] });
   it("a shift crossing midnight belongs to the productive day it started", () => {

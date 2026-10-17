@@ -108,22 +108,26 @@ export function resolvePeriod(
     return zonedToUtc(y, m, d, 0, 0, tz);
   };
   const iso = (ms: number) => new Date(ms).toISOString();
+  // Open-ended windows ("até agora") must never be empty: in the first minute after midnight or a shift start
+  // `now` (floored to the minute) equals `start` and the API rejects start == stop with 422.
+  const MIN_WINDOW_MS = 60_000;
+  const openStop = (start: number, cap = Infinity) => Math.min(Math.max(now, start + MIN_WINDOW_MS), cap);
   switch (preset) {
     case "shift": {
       const inst = currentShiftInstance(opts.shifts ?? [], now, tz);
       if (!inst) {
         return {
-          start: iso(midnight(0)), stop: iso(now), groupBy: "hour", label: "Nenhum turno em andamento",
+          start: iso(midnight(0)), stop: iso(openStop(midnight(0))), groupBy: "hour", label: "Nenhum turno em andamento",
           unavailable: opts.shifts && opts.shifts.length ? "Nenhum turno em andamento agora." : "Nenhum turno cadastrado.",
         };
       }
       return {
-        start: iso(inst.start), stop: iso(Math.min(now, inst.end)), groupBy: "hour",
+        start: iso(inst.start), stop: iso(openStop(inst.start, inst.end)), groupBy: "hour",
         label: `${inst.shift.name} · ${inst.shift.start_local}–${inst.shift.end_local}`,
       };
     }
     case "today":
-      return { start: iso(midnight(0)), stop: iso(now), groupBy: "hour", label: "Hoje" };
+      return { start: iso(midnight(0)), stop: iso(openStop(midnight(0))), groupBy: "hour", label: "Hoje" };
     case "yesterday":
       return { start: iso(midnight(-1)), stop: iso(midnight(0)), groupBy: "hour", label: "Ontem" };
     case "7d":
@@ -135,7 +139,7 @@ export function resolvePeriod(
       const from = parse(opts.customFrom);
       const to = parse(opts.customTo) ?? from;
       if (!from || !to) {
-        return { start: iso(midnight(0)), stop: iso(now), groupBy: "hour", label: "Personalizado", unavailable: "Escolha as datas." };
+        return { start: iso(midnight(0)), stop: iso(openStop(midnight(0))), groupBy: "hour", label: "Personalizado", unavailable: "Escolha as datas." };
       }
       const start = zonedToUtc(from[0], from[1], from[2], 0, 0, tz);
       const [ey, em, ed] = addDays(to[0], to[1], to[2], 1);
