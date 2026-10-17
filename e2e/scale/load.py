@@ -422,7 +422,9 @@ async def influx_count(tenant: str, start: datetime) -> int:
                                    timeout=int(os.getenv("INFLUX_COUNT_TIMEOUT_MS", "600000"))) as c:
         q = f'''from(bucket: "{INFLUX["bucket"]}") |> range(start: {iso(start - timedelta(seconds=2))})
           |> filter(fn: (r) => r["_measurement"] == "sensors" and r["tenant_id"] == "{tenant}")
-          |> filter(fn: (r) => r["_field"] == "value") |> group() |> count()'''
+          |> filter(fn: (r) => r["_field"] == "value") |> count()'''
+        # count() per series is pushed down to storage; `group() |> count()` first merged millions of raw points
+        # in the query (Sprint 7b) — the per-series counts are summed here
         n = 0
         for table in await c.query_api().query(q):
             for rec in table.records:

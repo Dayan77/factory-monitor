@@ -16,6 +16,36 @@ processo de release; não há tag nem imagem publicada delas).
 
 ## [Unreleased]
 
+Sprint 7b — Fase 6 (conclusão): auditoria de KPIs, detectores, escala e gate completo do Sprint 7.
+
+### Adicionado
+- `GET /api/downtime/no-data?start&stop&line_id|machine_id`: intervalos explícitos **sem dados** por máquina
+  (S7-22). A linha do tempo de estados pinta "sem dados" em vez de verde "sem parada registrada".
+- Campo `open_stale` em `GET /api/failures/` e `GET /api/failures/{id}`, e selo `stale_failure` ("falha aberta há
+  muito tempo — verificar") nos marcadores do mapa, tablet e Raio-X (S7-23). Configuração nova
+  `FAILURE_STALE_OPEN_H` (padrão 72 h).
+- Auditoria de KPIs (`docs/audit_kpis.md`), com um teste para cada contraexemplo corrigido.
+
+### Alterado
+- A janela padrão de `GET /api/maintenance/reliability` termina **agora** (antes: hoje 00:00 local) (S7-21). A tela
+  de Confiabilidade não envia mais `stop`, então a falha de hoje entra em MTBF/MTTR no mesmo dia.
+- Uma falha aberta só é marcada "verificar" quando os dados a contradizem: a parada ligada já foi encerrada ou a
+  máquina voltou a rodar. A idade sozinha não basta. Uma quebra real longa, com parada ligada ainda aberta, continua
+  "falha". Registros `incipient` nunca põem a máquina em falha (S7-23).
+- O seed de desenvolvimento restabelece as falhas históricas que cria (e corrige bancos já semeados).
+- Broker MQTT (prod e dev): `max_inflight_messages` passa de 100 para 2000, igual a `MQTT_MAX_INFLIGHT`. Com 100 a
+  vazão tinha teto de ≈ 2 000 leituras/s.
+- InfluxDB em produção e staging com limite de memória do contêiner (`INFLUX_MEM_LIMIT`) e limites por consulta
+  (`INFLUXD_QUERY_*`) (docs/performance.md §5.1).
+
+### Corrigido
+- As tasks de agregação do InfluxDB (1 min e 1 h) usavam um fluxo compartilhado entre os cinco agregados, o que
+  impedia o pushdown para o armazenamento. Na carga nominal, uma execução levava 60 s e ~3 GB, e o InfluxDB era morto
+  por falta de memória em loop. Agora leva 6 s, com os mesmos valores. As tasks existentes são atualizadas na partida
+  do worker.
+- Acessibilidade: contraste do texto secundário dos marcadores do mapa (verde "rodando") e quadro da semana da
+  programação rolável pelo teclado (axe).
+
 ## [0.7.0] - 2026-10-07
 
 Sprint 7 — Fase 6: endurecimento e prontidão para produção.

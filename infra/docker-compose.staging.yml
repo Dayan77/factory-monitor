@@ -55,6 +55,17 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
       # staging guarda pouco histórico (retenção do bucket: 30 dias)
       DOCKER_INFLUXDB_INIT_RETENTION: ${STAGING_INFLUX_RETENTION:-30d}
+      # Limites de memória (docs/performance.md §5.1): sem eles uma consulta/compactação descontrolada levou o
+      # influxd a ~14 GB e o OOM killer do kernel o matou em loop (Sprint 7b). Com eles a consulta que estoura
+      # falha sozinha e o contêiner nunca derruba o Postgres/API do mesmo host.
+      INFLUXD_QUERY_CONCURRENCY: ${INFLUXD_QUERY_CONCURRENCY:-16}
+      INFLUXD_QUERY_QUEUE_SIZE: ${INFLUXD_QUERY_QUEUE_SIZE:-64}
+      INFLUXD_QUERY_INITIAL_MEMORY_BYTES: ${INFLUXD_QUERY_INITIAL_MEMORY_BYTES:-16777216}
+      INFLUXD_QUERY_MEMORY_BYTES: ${INFLUXD_QUERY_MEMORY_BYTES:-1073741824}
+      INFLUXD_QUERY_MAX_MEMORY_BYTES: ${INFLUXD_QUERY_MAX_MEMORY_BYTES:-2147483648}
+      INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE: ${INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE:-536870912}
+      INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS: ${INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS:-1}
+    mem_limit: ${INFLUX_MEM_LIMIT:-4g}
     volumes:
       - influxdb-data:/var/lib/influxdb2
     healthcheck:

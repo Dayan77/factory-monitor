@@ -16,12 +16,12 @@
   "api_cache_ttl_s": 10.0,
   "reports": true,
   "cpus": 4,
-  "loadavg_start": 1.896484375,
+  "loadavg_start": 0.52685546875,
   "readings_per_s": 2600.0,
-  "loadavg_end": 28.767578125
+  "loadavg_end": 4.22802734375
  },
  "seed": {
-  "seconds": 27.4,
+  "seconds": 26.7,
   "usage_buckets": 500400,
   "usage_totals": 800,
   "downtime_events": 20880,
@@ -31,1258 +31,1329 @@
  },
  "api_idle": {
   "overview": {
-   "n": 235,
-   "p50_ms": 8,
-   "p95_ms": 16
+   "n": 357,
+   "p50_ms": 6,
+   "p95_ms": 9
   },
   "oee_30d": {
-   "n": 234,
-   "p50_ms": 9,
-   "p95_ms": 108
+   "n": 357,
+   "p50_ms": 6,
+   "p95_ms": 65
   },
   "pareto_30d": {
-   "n": 234,
-   "p50_ms": 8,
-   "p95_ms": 67
+   "n": 357,
+   "p50_ms": 6,
+   "p95_ms": 43
   },
   "plans_status": {
-   "n": 234,
-   "p50_ms": 22,
-   "p95_ms": 42
+   "n": 357,
+   "p50_ms": 19,
+   "p95_ms": 30
   }
  },
  "load": {
   "published": 4680000,
-  "wall_s": 2144.1,
-  "rate_published": 2183,
-  "rate_processed_during_load": 1681,
-  "processed_ok": 4558759,
-  "influx_points": 4556753,
-  "drain_after_end_s": 688.6,
+  "wall_s": 1804.4,
+  "rate_published": 2594,
+  "rate_processed_during_load": 2594,
+  "processed_ok": 4680000,
+  "influx_points": 4680000,
+  "drain_after_end_s": 0.2,
   "dropped": 0.0,
   "dead_letters": 0.0,
   "samples": [
    {
     "t": 25,
     "published": 67600,
-    "inflight": 1989.0,
-    "processed_ok": 47794.0,
-    "detector_lag_max_s": 56.321821
+    "inflight": 2000.0,
+    "processed_ok": 65000.0,
+    "detector_lag_max_s": 54.859738
    },
    {
     "t": 36,
     "published": 93600,
-    "inflight": 1667.0,
-    "processed_ok": 80230.0,
-    "detector_lag_max_s": 56.321821
+    "inflight": 1808.0,
+    "processed_ok": 91194.0,
+    "detector_lag_max_s": 54.859738
    },
    {
     "t": 46,
-    "published": 122200,
-    "inflight": 1626.0,
-    "processed_ok": 109322.0,
-    "detector_lag_max_s": 73.321821
+    "published": 119600,
+    "inflight": 0.0,
+    "processed_ok": 119600.0,
+    "detector_lag_max_s": 68.859738
    },
    {
-    "t": 57,
-    "published": 148200,
-    "inflight": 1798.0,
-    "processed_ok": 135205.0,
-    "detector_lag_max_s": 73.321821
+    "t": 56,
+    "published": 147550,
+    "inflight": 0.0,
+    "processed_ok": 145600.0,
+    "detector_lag_max_s": 68.859738
    },
    {
     "t": 67,
     "published": 174200,
-    "inflight": 1874.0,
-    "processed_ok": 168150.0,
-    "detector_lag_max_s": 95.321821
+    "inflight": 1985.0,
+    "processed_ok": 172181.0,
+    "detector_lag_max_s": 68.859738
    },
    {
     "t": 77,
-    "published": 202800,
-    "inflight": 1559.0,
-    "processed_ok": 195401.0,
-    "detector_lag_max_s": 95.321821
+    "published": 200200,
+    "inflight": 1493.0,
+    "processed_ok": 198707.0,
+    "detector_lag_max_s": 40.0
    },
    {
-    "t": 88,
+    "t": 87,
     "published": 228800,
-    "inflight": 1632.0,
-    "processed_ok": 220740.0,
-    "detector_lag_max_s": 95.321821
+    "inflight": 2000.0,
+    "processed_ok": 226200.0,
+    "detector_lag_max_s": 40.0
    },
    {
     "t": 98,
-    "published": 257400,
-    "inflight": 1891.0,
-    "processed_ok": 250337.0,
-    "detector_lag_max_s": 95.321821
+    "published": 254800,
+    "inflight": 1386.0,
+    "processed_ok": 253509.0,
+    "detector_lag_max_s": 47.0
    },
    {
     "t": 108,
-    "published": 283400,
-    "inflight": 69.0,
-    "processed_ok": 280818.0,
-    "detector_lag_max_s": 95.321821
+    "published": 280800,
+    "inflight": 1096.0,
+    "processed_ok": 279704.0,
+    "detector_lag_max_s": 47.0
    },
    {
-    "t": 119,
-    "published": 309400,
-    "inflight": 1662.0,
-    "processed_ok": 306172.0,
-    "detector_lag_max_s": 95.321821
+    "t": 118,
+    "published": 307450,
+    "inflight": 0.0,
+    "processed_ok": 306800.0,
+    "detector_lag_max_s": 47.0
    },
    {
-    "t": 129,
-    "published": 338000,
-    "inflight": 1962.0,
-    "processed_ok": 330173.0,
-    "detector_lag_max_s": 41.0
-   },
-   {
-    "t": 140,
-    "published": 364000,
-    "inflight": 1728.0,
-    "processed_ok": 353279.0,
-    "detector_lag_max_s": 41.0
-   },
-   {
-    "t": 150,
-    "published": 390000,
-    "inflight": 1879.0,
-    "processed_ok": 379309.0,
-    "detector_lag_max_s": 41.0
-   },
-   {
-    "t": 160,
-    "published": 417950,
-    "inflight": 1947.0,
-    "processed_ok": 406323.0,
-    "detector_lag_max_s": 46.0
-   },
-   {
-    "t": 170,
-    "published": 444600,
-    "inflight": 1644.0,
-    "processed_ok": 435752.0,
-    "detector_lag_max_s": 46.0
-   },
-   {
-    "t": 181,
-    "published": 470600,
-    "inflight": 1822.0,
-    "processed_ok": 459073.0,
-    "detector_lag_max_s": 46.0
-   },
-   {
-    "t": 191,
-    "published": 496600,
-    "inflight": 1828.0,
-    "processed_ok": 484036.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 202,
-    "published": 525200,
-    "inflight": 1887.0,
-    "processed_ok": 512203.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 212,
-    "published": 551200,
-    "inflight": 1987.0,
-    "processed_ok": 537951.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 222,
-    "published": 579800,
-    "inflight": 1741.0,
-    "processed_ok": 564155.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 233,
-    "published": 605800,
-    "inflight": 1885.0,
-    "processed_ok": 587868.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 243,
-    "published": 631800,
-    "inflight": 1930.0,
-    "processed_ok": 620335.0,
-    "detector_lag_max_s": 52.0
-   },
-   {
-    "t": 253,
-    "published": 660400,
-    "inflight": 1663.0,
-    "processed_ok": 647379.0,
-    "detector_lag_max_s": 37.0
-   },
-   {
-    "t": 264,
-    "published": 686400,
-    "inflight": 1544.0,
-    "processed_ok": 673508.0,
-    "detector_lag_max_s": 37.0
-   },
-   {
-    "t": 274,
-    "published": 712400,
-    "inflight": 1968.0,
-    "processed_ok": 696442.0,
-    "detector_lag_max_s": 37.0
-   },
-   {
-    "t": 284,
-    "published": 741000,
-    "inflight": 1792.0,
-    "processed_ok": 721493.0,
-    "detector_lag_max_s": 51.0
-   },
-   {
-    "t": 295,
-    "published": 767000,
-    "inflight": 1774.0,
-    "processed_ok": 746874.0,
-    "detector_lag_max_s": 51.0
-   },
-   {
-    "t": 305,
-    "published": 795600,
+    "t": 128,
+    "published": 335400,
     "inflight": 2000.0,
-    "processed_ok": 764050.0,
-    "detector_lag_max_s": 51.0
+    "processed_ok": 332800.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 316,
-    "published": 821600,
-    "inflight": 1986.0,
-    "processed_ok": 773796.0,
-    "detector_lag_max_s": 51.0
-   },
-   {
-    "t": 326,
-    "published": 850200,
-    "inflight": 1701.0,
-    "processed_ok": 797085.0,
-    "detector_lag_max_s": 51.0
-   },
-   {
-    "t": 337,
-    "published": 876200,
-    "inflight": 1616.0,
-    "processed_ok": 822316.0,
-    "detector_lag_max_s": 51.0
-   },
-   {
-    "t": 347,
-    "published": 902200,
-    "inflight": 2000.0,
-    "processed_ok": 848650.0,
-    "detector_lag_max_s": 55.0
-   },
-   {
-    "t": 357,
-    "published": 930800,
-    "inflight": 1370.0,
-    "processed_ok": 873178.0,
-    "detector_lag_max_s": 55.0
-   },
-   {
-    "t": 368,
-    "published": 956800,
-    "inflight": 1589.0,
-    "processed_ok": 899920.0,
-    "detector_lag_max_s": 55.0
-   },
-   {
-    "t": 378,
-    "published": 982800,
-    "inflight": 1648.0,
-    "processed_ok": 921119.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 389,
-    "published": 1011400,
-    "inflight": 1516.0,
-    "processed_ok": 950605.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 399,
-    "published": 1037400,
-    "inflight": 1598.0,
-    "processed_ok": 971601.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 409,
-    "published": 1066000,
-    "inflight": 1760.0,
-    "processed_ok": 993915.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 420,
-    "published": 1092000,
-    "inflight": 1784.0,
-    "processed_ok": 1021192.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 430,
-    "published": 1118000,
-    "inflight": 1488.0,
-    "processed_ok": 1046794.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 440,
-    "published": 1146600,
-    "inflight": 1471.0,
-    "processed_ok": 1072803.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 451,
-    "published": 1172600,
-    "inflight": 1844.0,
-    "processed_ok": 1097470.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 461,
-    "published": 1198600,
-    "inflight": 1777.0,
-    "processed_ok": 1125101.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 471,
-    "published": 1227200,
-    "inflight": 1899.0,
-    "processed_ok": 1149301.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 482,
-    "published": 1253200,
-    "inflight": 1864.0,
-    "processed_ok": 1173041.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 492,
-    "published": 1281800,
-    "inflight": 1989.0,
-    "processed_ok": 1202621.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 503,
-    "published": 1307800,
-    "inflight": 2000.0,
-    "processed_ok": 1228909.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 513,
-    "published": 1336400,
-    "inflight": 2000.0,
-    "processed_ok": 1253115.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 524,
-    "published": 1362400,
-    "inflight": 2000.0,
-    "processed_ok": 1278148.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 534,
-    "published": 1391000,
-    "inflight": 1454.0,
-    "processed_ok": 1296131.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 544,
-    "published": 1417000,
-    "inflight": 2000.0,
-    "processed_ok": 1322392.0,
-    "detector_lag_max_s": 64.0
-   },
-   {
-    "t": 555,
-    "published": 1443000,
-    "inflight": 1724.0,
-    "processed_ok": 1347656.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 565,
-    "published": 1469000,
-    "inflight": 1820.0,
-    "processed_ok": 1374800.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 575,
-    "published": 1497600,
-    "inflight": 1957.0,
-    "processed_ok": 1403112.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 586,
-    "published": 1523600,
-    "inflight": 1771.0,
-    "processed_ok": 1428693.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 596,
-    "published": 1552200,
-    "inflight": 1449.0,
-    "processed_ok": 1452098.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 606,
-    "published": 1578200,
-    "inflight": 2000.0,
-    "processed_ok": 1471677.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 617,
-    "published": 1604200,
-    "inflight": 1941.0,
-    "processed_ok": 1478663.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 627,
-    "published": 1630200,
-    "inflight": 1688.0,
-    "processed_ok": 1496567.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 637,
-    "published": 1658800,
-    "inflight": 1594.0,
-    "processed_ok": 1516987.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 648,
-    "published": 1684800,
-    "inflight": 1904.0,
-    "processed_ok": 1539218.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 658,
-    "published": 1713400,
-    "inflight": 2000.0,
-    "processed_ok": 1559323.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 669,
-    "published": 1739400,
-    "inflight": 2000.0,
-    "processed_ok": 1583008.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 679,
-    "published": 1765400,
-    "inflight": 1678.0,
-    "processed_ok": 1608655.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 690,
-    "published": 1794000,
-    "inflight": 2000.0,
-    "processed_ok": 1631674.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 700,
-    "published": 1820000,
-    "inflight": 1639.0,
-    "processed_ok": 1646589.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 710,
-    "published": 1848600,
-    "inflight": 1965.0,
-    "processed_ok": 1668232.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 721,
-    "published": 1874600,
-    "inflight": 1680.0,
-    "processed_ok": 1692707.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 731,
-    "published": 1900600,
-    "inflight": 2000.0,
-    "processed_ok": 1716391.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 741,
-    "published": 1926600,
-    "inflight": 1868.0,
-    "processed_ok": 1741090.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 751,
-    "published": 1955200,
-    "inflight": 656.0,
-    "processed_ok": 1763364.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 762,
-    "published": 1981200,
-    "inflight": 1927.0,
-    "processed_ok": 1789064.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 772,
-    "published": 2007200,
-    "inflight": 1872.0,
-    "processed_ok": 1813086.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 782,
-    "published": 2035800,
-    "inflight": 1665.0,
-    "processed_ok": 1839335.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 793,
-    "published": 2061800,
-    "inflight": 1872.0,
-    "processed_ok": 1863090.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 803,
-    "published": 2087800,
-    "inflight": 1989.0,
-    "processed_ok": 1887176.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 813,
-    "published": 2116400,
+    "t": 139,
+    "published": 361400,
     "inflight": 1998.0,
-    "processed_ok": 1910750.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 358897.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 824,
-    "published": 2142400,
-    "inflight": 2000.0,
-    "processed_ok": 1933416.0,
-    "detector_lag_max_s": 168.0
+    "t": 149,
+    "published": 387400,
+    "inflight": 0.0,
+    "processed_ok": 387400.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 834,
-    "published": 2168400,
-    "inflight": 1945.0,
-    "processed_ok": 1959113.0,
-    "detector_lag_max_s": 168.0
+    "t": 159,
+    "published": 414700,
+    "inflight": 0.0,
+    "processed_ok": 413400.0,
+    "detector_lag_max_s": 61.0
    },
    {
-    "t": 845,
-    "published": 2197000,
-    "inflight": 1785.0,
-    "processed_ok": 1984036.0,
-    "detector_lag_max_s": 168.0
+    "t": 169,
+    "published": 442000,
+    "inflight": 1955.0,
+    "processed_ok": 439400.0,
+    "detector_lag_max_s": 61.0
    },
    {
-    "t": 855,
-    "published": 2223000,
-    "inflight": 1996.0,
-    "processed_ok": 2007652.0,
-    "detector_lag_max_s": 168.0
+    "t": 180,
+    "published": 468000,
+    "inflight": 1447.0,
+    "processed_ok": 466578.0,
+    "detector_lag_max_s": 61.0
    },
    {
-    "t": 865,
-    "published": 2251600,
-    "inflight": 1926.0,
-    "processed_ok": 2034532.0,
-    "detector_lag_max_s": 168.0
+    "t": 190,
+    "published": 494000,
+    "inflight": 1365.0,
+    "processed_ok": 492635.0,
+    "detector_lag_max_s": 56.0
    },
    {
-    "t": 876,
-    "published": 2277600,
-    "inflight": 1871.0,
-    "processed_ok": 2057777.0,
-    "detector_lag_max_s": 168.0
+    "t": 200,
+    "published": 522600,
+    "inflight": 1858.0,
+    "processed_ok": 519904.0,
+    "detector_lag_max_s": 56.0
    },
    {
-    "t": 886,
-    "published": 2303600,
-    "inflight": 1360.0,
-    "processed_ok": 2082482.0,
-    "detector_lag_max_s": 168.0
+    "t": 211,
+    "published": 548600,
+    "inflight": 1751.0,
+    "processed_ok": 546784.0,
+    "detector_lag_max_s": 56.0
    },
    {
-    "t": 896,
-    "published": 2332200,
-    "inflight": 2000.0,
-    "processed_ok": 2106234.0,
-    "detector_lag_max_s": 168.0
+    "t": 221,
+    "published": 574600,
+    "inflight": 1035.0,
+    "processed_ok": 573565.0,
+    "detector_lag_max_s": 64.0
    },
    {
-    "t": 907,
-    "published": 2358200,
-    "inflight": 1488.0,
-    "processed_ok": 2125717.0,
-    "detector_lag_max_s": 168.0
+    "t": 231,
+    "published": 600600,
+    "inflight": 0.0,
+    "processed_ok": 600600.0,
+    "detector_lag_max_s": 64.0
    },
    {
-    "t": 917,
-    "published": 2384200,
-    "inflight": 2000.0,
-    "processed_ok": 2132692.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 927,
-    "published": 2412800,
-    "inflight": 2000.0,
-    "processed_ok": 2152091.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 938,
-    "published": 2438800,
-    "inflight": 1995.0,
-    "processed_ok": 2177099.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 948,
-    "published": 2464800,
-    "inflight": 1488.0,
-    "processed_ok": 2195576.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 958,
-    "published": 2493400,
-    "inflight": 2000.0,
-    "processed_ok": 2220014.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 969,
-    "published": 2519400,
-    "inflight": 1956.0,
-    "processed_ok": 2246394.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 979,
-    "published": 2545400,
-    "inflight": 1483.0,
-    "processed_ok": 2270725.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 989,
-    "published": 2571400,
-    "inflight": 2000.0,
-    "processed_ok": 2294958.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 999,
-    "published": 2600000,
-    "inflight": 1916.0,
-    "processed_ok": 2316382.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1009,
-    "published": 2626000,
-    "inflight": 2000.0,
-    "processed_ok": 2342063.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1020,
-    "published": 2652000,
-    "inflight": 1999.0,
-    "processed_ok": 2363225.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1030,
-    "published": 2678650,
-    "inflight": 857.0,
-    "processed_ok": 2387429.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1040,
-    "published": 2706600,
-    "inflight": 896.0,
-    "processed_ok": 2414096.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1051,
-    "published": 2732600,
-    "inflight": 1384.0,
-    "processed_ok": 2435898.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1061,
-    "published": 2761200,
-    "inflight": 1500.0,
-    "processed_ok": 2457423.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1071,
-    "published": 2787200,
-    "inflight": 1558.0,
-    "processed_ok": 2481906.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1082,
-    "published": 2813200,
-    "inflight": 2000.0,
-    "processed_ok": 2500965.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1092,
-    "published": 2839200,
-    "inflight": 1857.0,
-    "processed_ok": 2524855.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1102,
-    "published": 2867800,
-    "inflight": 1999.0,
-    "processed_ok": 2553735.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1113,
-    "published": 2893800,
-    "inflight": 1992.0,
-    "processed_ok": 2578532.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1138,
-    "published": 2961400,
-    "inflight": 2000.0,
-    "processed_ok": 2591560.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1149,
-    "published": 2987400,
-    "inflight": 2000.0,
-    "processed_ok": 2591780.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1159,
-    "published": 3013400,
-    "inflight": 1886.0,
-    "processed_ok": 2598529.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1169,
-    "published": 3042000,
-    "inflight": 1992.0,
-    "processed_ok": 2629474.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1180,
-    "published": 3068000,
-    "inflight": 2000.0,
-    "processed_ok": 2655373.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1190,
-    "published": 3094000,
-    "inflight": 1456.0,
-    "processed_ok": 2684082.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1200,
-    "published": 3120000,
-    "inflight": 922.0,
-    "processed_ok": 2714008.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1210,
-    "published": 3148600,
-    "inflight": 2000.0,
-    "processed_ok": 2736329.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1220,
-    "published": 3174600,
-    "inflight": 2000.0,
-    "processed_ok": 2750346.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1231,
-    "published": 3200600,
-    "inflight": 1022.0,
-    "processed_ok": 2775367.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1241,
-    "published": 3226600,
-    "inflight": 1841.0,
-    "processed_ok": 2801367.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1251,
-    "published": 3252600,
-    "inflight": 2000.0,
-    "processed_ok": 2823421.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1261,
-    "published": 3281200,
-    "inflight": 2000.0,
-    "processed_ok": 2852251.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1272,
-    "published": 3307200,
-    "inflight": 2000.0,
-    "processed_ok": 2873724.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1282,
-    "published": 3333200,
-    "inflight": 2000.0,
-    "processed_ok": 2900804.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1292,
-    "published": 3361800,
+    "t": 241,
+    "published": 629200,
     "inflight": 1853.0,
-    "processed_ok": 2920753.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 625835.0,
+    "detector_lag_max_s": 64.0
+   },
+   {
+    "t": 252,
+    "published": 655200,
+    "inflight": 1987.0,
+    "processed_ok": 652614.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 262,
+    "published": 681200,
+    "inflight": 1320.0,
+    "processed_ok": 679880.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 272,
+    "published": 709800,
+    "inflight": 0.0,
+    "processed_ok": 707200.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 283,
+    "published": 735800,
+    "inflight": 1848.0,
+    "processed_ok": 733979.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 293,
+    "published": 761800,
+    "inflight": 1234.0,
+    "processed_ok": 760566.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 303,
+    "published": 790400,
+    "inflight": 1917.0,
+    "processed_ok": 783947.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 314,
+    "published": 816400,
+    "inflight": 1828.0,
+    "processed_ok": 795575.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 324,
+    "published": 845000,
+    "inflight": 1801.0,
+    "processed_ok": 826489.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 334,
+    "published": 871000,
+    "inflight": 1993.0,
+    "processed_ok": 857966.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 345,
+    "published": 897000,
+    "inflight": 1642.0,
+    "processed_ok": 889078.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 355,
+    "published": 923000,
+    "inflight": 879.0,
+    "processed_ok": 922121.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 365,
+    "published": 951600,
+    "inflight": 1035.0,
+    "processed_ok": 948166.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 376,
+    "published": 977600,
+    "inflight": 1687.0,
+    "processed_ok": 973752.0,
+    "detector_lag_max_s": 65.0
+   },
+   {
+    "t": 386,
+    "published": 1003600,
+    "inflight": 1256.0,
+    "processed_ok": 1002343.0,
+    "detector_lag_max_s": 65.0
+   },
+   {
+    "t": 396,
+    "published": 1029600,
+    "inflight": 571.0,
+    "processed_ok": 1029050.0,
+    "detector_lag_max_s": 65.0
+   },
+   {
+    "t": 406,
+    "published": 1058200,
+    "inflight": 1888.0,
+    "processed_ok": 1055354.0,
+    "detector_lag_max_s": 34.0
+   },
+   {
+    "t": 417,
+    "published": 1084200,
+    "inflight": 1619.0,
+    "processed_ok": 1081981.0,
+    "detector_lag_max_s": 34.0
+   },
+   {
+    "t": 427,
+    "published": 1110200,
+    "inflight": 1157.0,
+    "processed_ok": 1109043.0,
+    "detector_lag_max_s": 34.0
+   },
+   {
+    "t": 437,
+    "published": 1138150,
+    "inflight": 1740.0,
+    "processed_ok": 1133493.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 447,
+    "published": 1164800,
+    "inflight": 1993.0,
+    "processed_ok": 1162227.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 458,
+    "published": 1190800,
+    "inflight": 663.0,
+    "processed_ok": 1190137.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 468,
+    "published": 1218100,
+    "inflight": 529.0,
+    "processed_ok": 1216405.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 478,
+    "published": 1245400,
+    "inflight": 2000.0,
+    "processed_ok": 1242641.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 489,
+    "published": 1271400,
+    "inflight": 1864.0,
+    "processed_ok": 1268963.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 499,
+    "published": 1297400,
+    "inflight": 0.0,
+    "processed_ok": 1297400.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 509,
+    "published": 1326000,
+    "inflight": 2000.0,
+    "processed_ok": 1323400.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 519,
+    "published": 1352000,
+    "inflight": 1872.0,
+    "processed_ok": 1349407.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 530,
+    "published": 1378000,
+    "inflight": 1763.0,
+    "processed_ok": 1376189.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 540,
+    "published": 1404000,
+    "inflight": 0.0,
+    "processed_ok": 1404000.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 550,
+    "published": 1432600,
+    "inflight": 2000.0,
+    "processed_ok": 1430000.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 561,
+    "published": 1458600,
+    "inflight": 2000.0,
+    "processed_ok": 1456000.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 571,
+    "published": 1484600,
+    "inflight": 967.0,
+    "processed_ok": 1483633.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 581,
+    "published": 1510600,
+    "inflight": 64.0,
+    "processed_ok": 1510536.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 591,
+    "published": 1539200,
+    "inflight": 1825.0,
+    "processed_ok": 1536389.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 602,
+    "published": 1565200,
+    "inflight": 1428.0,
+    "processed_ok": 1563455.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 612,
+    "published": 1593150,
+    "inflight": 1898.0,
+    "processed_ok": 1574967.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 622,
+    "published": 1619800,
+    "inflight": 1672.0,
+    "processed_ok": 1602062.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 633,
+    "published": 1645800,
+    "inflight": 1995.0,
+    "processed_ok": 1633332.0,
+    "detector_lag_max_s": 68.0
+   },
+   {
+    "t": 643,
+    "published": 1671800,
+    "inflight": 920.0,
+    "processed_ok": 1671002.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 653,
+    "published": 1700400,
+    "inflight": 125.0,
+    "processed_ok": 1697800.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 663,
+    "published": 1726400,
+    "inflight": 1991.0,
+    "processed_ok": 1723809.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 674,
+    "published": 1752400,
+    "inflight": 1999.0,
+    "processed_ok": 1749801.0,
+    "detector_lag_max_s": 67.0
+   },
+   {
+    "t": 684,
+    "published": 1781000,
+    "inflight": 1071.0,
+    "processed_ok": 1777329.0,
+    "detector_lag_max_s": 67.0
+   },
+   {
+    "t": 695,
+    "published": 1807000,
+    "inflight": 2000.0,
+    "processed_ok": 1804403.0,
+    "detector_lag_max_s": 67.0
+   },
+   {
+    "t": 705,
+    "published": 1833000,
+    "inflight": 1794.0,
+    "processed_ok": 1831206.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 715,
+    "published": 1859000,
+    "inflight": 0.0,
+    "processed_ok": 1859000.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 725,
+    "published": 1887600,
+    "inflight": 1994.0,
+    "processed_ok": 1885000.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 735,
+    "published": 1913600,
+    "inflight": 1708.0,
+    "processed_ok": 1911604.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 746,
+    "published": 1939600,
+    "inflight": 1040.0,
+    "processed_ok": 1938560.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 756,
+    "published": 1968200,
+    "inflight": 0.0,
+    "processed_ok": 1965600.0,
+    "detector_lag_max_s": 56.0
+   },
+   {
+    "t": 766,
+    "published": 1994200,
+    "inflight": 1561.0,
+    "processed_ok": 1992256.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 777,
+    "published": 2020200,
+    "inflight": 0.0,
+    "processed_ok": 2020200.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 787,
+    "published": 2046200,
+    "inflight": 974.0,
+    "processed_ok": 2045226.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 798,
+    "published": 2074800,
+    "inflight": 1510.0,
+    "processed_ok": 2070722.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 808,
+    "published": 2100800,
+    "inflight": 1361.0,
+    "processed_ok": 2099443.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 818,
+    "published": 2129400,
+    "inflight": 1981.0,
+    "processed_ok": 2126337.0,
+    "detector_lag_max_s": 58.0
+   },
+   {
+    "t": 828,
+    "published": 2155400,
+    "inflight": 2000.0,
+    "processed_ok": 2152800.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 839,
+    "published": 2181400,
+    "inflight": 1772.0,
+    "processed_ok": 2179294.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 849,
+    "published": 2207400,
+    "inflight": 1807.0,
+    "processed_ok": 2205121.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 859,
+    "published": 2236000,
+    "inflight": 2000.0,
+    "processed_ok": 2233400.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 869,
+    "published": 2262000,
+    "inflight": 2000.0,
+    "processed_ok": 2259401.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 880,
+    "published": 2288000,
+    "inflight": 1724.0,
+    "processed_ok": 2286276.0,
+    "detector_lag_max_s": 26.0
+   },
+   {
+    "t": 890,
+    "published": 2314000,
+    "inflight": 968.0,
+    "processed_ok": 2313032.0,
+    "detector_lag_max_s": 26.0
+   },
+   {
+    "t": 900,
+    "published": 2342600,
+    "inflight": 1125.0,
+    "processed_ok": 2338875.0,
+    "detector_lag_max_s": 26.0
+   },
+   {
+    "t": 911,
+    "published": 2368600,
+    "inflight": 2000.0,
+    "processed_ok": 2355853.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 921,
+    "published": 2394600,
+    "inflight": 1649.0,
+    "processed_ok": 2378761.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 931,
+    "published": 2420600,
+    "inflight": 1842.0,
+    "processed_ok": 2416376.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 941,
+    "published": 2449200,
+    "inflight": 1978.0,
+    "processed_ok": 2446600.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 952,
+    "published": 2475200,
+    "inflight": 1298.0,
+    "processed_ok": 2473902.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 962,
+    "published": 2501200,
+    "inflight": 1064.0,
+    "processed_ok": 2499785.0,
+    "detector_lag_max_s": 25.0
+   },
+   {
+    "t": 972,
+    "published": 2529800,
+    "inflight": 663.0,
+    "processed_ok": 2526537.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 982,
+    "published": 2555800,
+    "inflight": 1647.0,
+    "processed_ok": 2554113.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 993,
+    "published": 2581800,
+    "inflight": 128.0,
+    "processed_ok": 2581672.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1003,
+    "published": 2610400,
+    "inflight": 1993.0,
+    "processed_ok": 2607801.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1013,
+    "published": 2636400,
+    "inflight": 1984.0,
+    "processed_ok": 2633747.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1024,
+    "published": 2662400,
+    "inflight": 1770.0,
+    "processed_ok": 2660660.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1034,
+    "published": 2691000,
+    "inflight": 1659.0,
+    "processed_ok": 2687463.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1045,
+    "published": 2717000,
+    "inflight": 1515.0,
+    "processed_ok": 2715485.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1055,
+    "published": 2743000,
+    "inflight": 0.0,
+    "processed_ok": 2743000.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1065,
+    "published": 2769000,
+    "inflight": 0.0,
+    "processed_ok": 2769000.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1075,
+    "published": 2797600,
+    "inflight": 2000.0,
+    "processed_ok": 2795000.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1086,
+    "published": 2823600,
+    "inflight": 1689.0,
+    "processed_ok": 2821911.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1096,
+    "published": 2849600,
+    "inflight": 869.0,
+    "processed_ok": 2848758.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1106,
+    "published": 2876900,
+    "inflight": 0.0,
+    "processed_ok": 2875600.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1116,
+    "published": 2904200,
+    "inflight": 1994.0,
+    "processed_ok": 2901601.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1127,
+    "published": 2930200,
+    "inflight": 1446.0,
+    "processed_ok": 2928909.0,
+    "detector_lag_max_s": 29.0
+   },
+   {
+    "t": 1137,
+    "published": 2956200,
+    "inflight": 1055.0,
+    "processed_ok": 2955145.0,
+    "detector_lag_max_s": 29.0
+   },
+   {
+    "t": 1147,
+    "published": 2984800,
+    "inflight": 671.0,
+    "processed_ok": 2981979.0,
+    "detector_lag_max_s": 29.0
+   },
+   {
+    "t": 1158,
+    "published": 3010800,
+    "inflight": 1871.0,
+    "processed_ok": 3008360.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1168,
+    "published": 3036800,
+    "inflight": 1229.0,
+    "processed_ok": 3035710.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1178,
+    "published": 3065400,
+    "inflight": 257.0,
+    "processed_ok": 3062800.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1188,
+    "published": 3091400,
+    "inflight": 2000.0,
+    "processed_ok": 3088800.0,
+    "detector_lag_max_s": 31.0
+   },
+   {
+    "t": 1199,
+    "published": 3117400,
+    "inflight": 1155.0,
+    "processed_ok": 3116275.0,
+    "detector_lag_max_s": 31.0
+   },
+   {
+    "t": 1209,
+    "published": 3143400,
+    "inflight": 1999.0,
+    "processed_ok": 3136009.0,
+    "detector_lag_max_s": 31.0
+   },
+   {
+    "t": 1219,
+    "published": 3172000,
+    "inflight": 1839.0,
+    "processed_ok": 3152580.0,
+    "detector_lag_max_s": 64.0
+   },
+   {
+    "t": 1229,
+    "published": 3198000,
+    "inflight": 1900.0,
+    "processed_ok": 3182939.0,
+    "detector_lag_max_s": 64.0
+   },
+   {
+    "t": 1240,
+    "published": 3224000,
+    "inflight": 1769.0,
+    "processed_ok": 3214846.0,
+    "detector_lag_max_s": 64.0
+   },
+   {
+    "t": 1250,
+    "published": 3250000,
+    "inflight": 125.0,
+    "processed_ok": 3249875.0,
+    "detector_lag_max_s": 30.0
+   },
+   {
+    "t": 1260,
+    "published": 3278600,
+    "inflight": 1996.0,
+    "processed_ok": 3276001.0,
+    "detector_lag_max_s": 30.0
+   },
+   {
+    "t": 1271,
+    "published": 3304600,
+    "inflight": 1632.0,
+    "processed_ok": 3301868.0,
+    "detector_lag_max_s": 30.0
+   },
+   {
+    "t": 1281,
+    "published": 3330600,
+    "inflight": 1854.0,
+    "processed_ok": 3327664.0,
+    "detector_lag_max_s": 62.0
+   },
+   {
+    "t": 1291,
+    "published": 3359200,
+    "inflight": 1866.0,
+    "processed_ok": 3356224.0,
+    "detector_lag_max_s": 62.0
    },
    {
     "t": 1302,
-    "published": 3387800,
+    "published": 3385200,
     "inflight": 2000.0,
-    "processed_ok": 2945106.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 3382625.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 1313,
-    "published": 3413800,
+    "t": 1312,
+    "published": 3411200,
+    "inflight": 0.0,
+    "processed_ok": 3411200.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 1322,
+    "published": 3437200,
+    "inflight": 0.0,
+    "processed_ok": 3437200.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 1332,
+    "published": 3465800,
     "inflight": 2000.0,
-    "processed_ok": 2963816.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 3463200.0,
+    "detector_lag_max_s": 66.0
    },
    {
-    "t": 1323,
-    "published": 3441750,
-    "inflight": 2000.0,
-    "processed_ok": 2992159.0,
-    "detector_lag_max_s": 168.0
+    "t": 1343,
+    "published": 3491800,
+    "inflight": 1443.0,
+    "processed_ok": 3490354.0,
+    "detector_lag_max_s": 66.0
    },
    {
-    "t": 1333,
-    "published": 3468400,
-    "inflight": 1954.0,
-    "processed_ok": 3016558.0,
-    "detector_lag_max_s": 168.0
+    "t": 1353,
+    "published": 3517800,
+    "inflight": 1540.0,
+    "processed_ok": 3516260.0,
+    "detector_lag_max_s": 66.0
    },
    {
-    "t": 1344,
-    "published": 3494400,
-    "inflight": 2000.0,
-    "processed_ok": 3045090.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1354,
-    "published": 3520400,
-    "inflight": 1995.0,
-    "processed_ok": 3063064.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1364,
-    "published": 3549000,
-    "inflight": 1852.0,
-    "processed_ok": 3090189.0,
-    "detector_lag_max_s": 168.0
+    "t": 1363,
+    "published": 3546400,
+    "inflight": 1881.0,
+    "processed_ok": 3542822.0,
+    "detector_lag_max_s": 26.0
    },
    {
     "t": 1374,
-    "published": 3575000,
-    "inflight": 1379.0,
-    "processed_ok": 3119564.0,
-    "detector_lag_max_s": 168.0
+    "published": 3572400,
+    "inflight": 1356.0,
+    "processed_ok": 3570949.0,
+    "detector_lag_max_s": 26.0
    },
    {
-    "t": 1411,
-    "published": 3669250,
+    "t": 1384,
+    "published": 3598400,
+    "inflight": 1468.0,
+    "processed_ok": 3596431.0,
+    "detector_lag_max_s": 26.0
+   },
+   {
+    "t": 1394,
+    "published": 3627000,
+    "inflight": 0.0,
+    "processed_ok": 3624400.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1404,
+    "published": 3653000,
+    "inflight": 1999.0,
+    "processed_ok": 3650401.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1415,
+    "published": 3679000,
+    "inflight": 1992.0,
+    "processed_ok": 3676685.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1425,
+    "published": 3705000,
+    "inflight": 0.0,
+    "processed_ok": 3705000.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 1435,
+    "published": 3733600,
+    "inflight": 1491.0,
+    "processed_ok": 3729509.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 1445,
+    "published": 3759600,
+    "inflight": 1311.0,
+    "processed_ok": 3757000.0,
+    "detector_lag_max_s": 57.0
+   },
+   {
+    "t": 1456,
+    "published": 3785600,
+    "inflight": 1942.0,
+    "processed_ok": 3783173.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 1466,
+    "published": 3811600,
+    "inflight": 1435.0,
+    "processed_ok": 3810229.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 1476,
+    "published": 3839550,
+    "inflight": 1425.0,
+    "processed_ok": 3835950.0,
+    "detector_lag_max_s": 59.0
+   },
+   {
+    "t": 1486,
+    "published": 3866200,
     "inflight": 2000.0,
-    "processed_ok": 3142074.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 3863600.0,
+    "detector_lag_max_s": 51.0
    },
    {
-    "t": 1422,
-    "published": 3697200,
+    "t": 1497,
+    "published": 3892200,
     "inflight": 2000.0,
-    "processed_ok": 3142074.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 3889090.0,
+    "detector_lag_max_s": 51.0
    },
    {
-    "t": 1432,
-    "published": 3725150,
-    "inflight": 1998.0,
-    "processed_ok": 3154842.0,
-    "detector_lag_max_s": 168.0
+    "t": 1507,
+    "published": 3918200,
+    "inflight": 1836.0,
+    "processed_ok": 3914626.0,
+    "detector_lag_max_s": 51.0
    },
    {
-    "t": 1442,
-    "published": 3751800,
+    "t": 1517,
+    "published": 3946800,
+    "inflight": 1983.0,
+    "processed_ok": 3929495.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1528,
+    "published": 3972800,
+    "inflight": 1914.0,
+    "processed_ok": 3958468.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1538,
+    "published": 3998800,
+    "inflight": 1489.0,
+    "processed_ok": 3994089.0,
+    "detector_lag_max_s": 61.0
+   },
+   {
+    "t": 1548,
+    "published": 4024800,
+    "inflight": 0.0,
+    "processed_ok": 4024800.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1558,
+    "published": 4053400,
+    "inflight": 0.0,
+    "processed_ok": 4050800.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1568,
+    "published": 4079400,
+    "inflight": 1769.0,
+    "processed_ok": 4076908.0,
+    "detector_lag_max_s": 54.0
+   },
+   {
+    "t": 1579,
+    "published": 4105400,
+    "inflight": 917.0,
+    "processed_ok": 4104483.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1589,
+    "published": 4134000,
+    "inflight": 0.0,
+    "processed_ok": 4131400.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1599,
+    "published": 4160000,
     "inflight": 2000.0,
-    "processed_ok": 3183977.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 4157400.0,
+    "detector_lag_max_s": 60.0
    },
    {
-    "t": 1453,
-    "published": 3777800,
-    "inflight": 951.0,
-    "processed_ok": 3205948.0,
-    "detector_lag_max_s": 168.0
+    "t": 1609,
+    "published": 4186000,
+    "inflight": 1864.0,
+    "processed_ok": 4184264.0,
+    "detector_lag_max_s": 60.0
    },
    {
-    "t": 1463,
-    "published": 3803800,
+    "t": 1620,
+    "published": 4212000,
+    "inflight": 1435.0,
+    "processed_ok": 4210311.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1630,
+    "published": 4238000,
+    "inflight": 614.0,
+    "processed_ok": 4237386.0,
+    "detector_lag_max_s": 60.0
+   },
+   {
+    "t": 1640,
+    "published": 4266600,
+    "inflight": 20.0,
+    "processed_ok": 4264000.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1650,
+    "published": 4292600,
+    "inflight": 1999.0,
+    "processed_ok": 4290510.0,
+    "detector_lag_max_s": 63.0
+   },
+   {
+    "t": 1661,
+    "published": 4318600,
     "inflight": 2000.0,
-    "processed_ok": 3234696.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 4316353.0,
+    "detector_lag_max_s": 63.0
    },
    {
-    "t": 1473,
-    "published": 3832400,
+    "t": 1671,
+    "published": 4344600,
+    "inflight": 1764.0,
+    "processed_ok": 4342830.0,
+    "detector_lag_max_s": 31.0
+   },
+   {
+    "t": 1681,
+    "published": 4373200,
+    "inflight": 1.0,
+    "processed_ok": 4370600.0,
+    "detector_lag_max_s": 31.0
+   },
+   {
+    "t": 1691,
+    "published": 4399200,
     "inflight": 2000.0,
-    "processed_ok": 3262382.0,
-    "detector_lag_max_s": 168.0
+    "processed_ok": 4396600.0,
+    "detector_lag_max_s": 31.0
    },
    {
-    "t": 1484,
-    "published": 3858400,
-    "inflight": 2000.0,
-    "processed_ok": 3287985.0,
-    "detector_lag_max_s": 168.0
+    "t": 1702,
+    "published": 4425200,
+    "inflight": 1733.0,
+    "processed_ok": 4423229.0,
+    "detector_lag_max_s": 64.0
    },
    {
-    "t": 1494,
-    "published": 3884400,
-    "inflight": 1702.0,
-    "processed_ok": 3312211.0,
-    "detector_lag_max_s": 168.0
+    "t": 1712,
+    "published": 4451200,
+    "inflight": 0.0,
+    "processed_ok": 4451200.0,
+    "detector_lag_max_s": 64.0
    },
    {
-    "t": 1504,
-    "published": 3913000,
-    "inflight": 1281.0,
-    "processed_ok": 3340067.0,
-    "detector_lag_max_s": 168.0
+    "t": 1722,
+    "published": 4479800,
+    "inflight": 1211.0,
+    "processed_ok": 4477200.0,
+    "detector_lag_max_s": 64.0
    },
    {
-    "t": 1514,
-    "published": 3939000,
-    "inflight": 2000.0,
-    "processed_ok": 3353204.0,
-    "detector_lag_max_s": 168.0
+    "t": 1733,
+    "published": 4505800,
+    "inflight": 1507.0,
+    "processed_ok": 4504526.0,
+    "detector_lag_max_s": 24.0
    },
    {
-    "t": 1525,
-    "published": 3965000,
-    "inflight": 1998.0,
-    "processed_ok": 3365140.0,
-    "detector_lag_max_s": 168.0
+    "t": 1743,
+    "published": 4531800,
+    "inflight": 1583.0,
+    "processed_ok": 4529746.0,
+    "detector_lag_max_s": 24.0
    },
    {
-    "t": 1535,
-    "published": 3991000,
-    "inflight": 2000.0,
-    "processed_ok": 3386283.0,
-    "detector_lag_max_s": 168.0
+    "t": 1753,
+    "published": 4557800,
+    "inflight": 1018.0,
+    "processed_ok": 4556782.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 1545,
-    "published": 4019600,
-    "inflight": 2000.0,
-    "processed_ok": 3412436.0,
-    "detector_lag_max_s": 168.0
+    "t": 1763,
+    "published": 4586400,
+    "inflight": 1830.0,
+    "processed_ok": 4583547.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 1555,
-    "published": 4045600,
-    "inflight": 2000.0,
-    "processed_ok": 3415987.0,
-    "detector_lag_max_s": 168.0
+    "t": 1774,
+    "published": 4612400,
+    "inflight": 1832.0,
+    "processed_ok": 4609971.0,
+    "detector_lag_max_s": 57.0
    },
    {
-    "t": 1566,
-    "published": 4071600,
-    "inflight": 2000.0,
-    "processed_ok": 3444791.0,
-    "detector_lag_max_s": 168.0
+    "t": 1784,
+    "published": 4638400,
+    "inflight": 964.0,
+    "processed_ok": 4637436.0,
+    "detector_lag_max_s": 34.0
    },
    {
-    "t": 1576,
-    "published": 4097600,
-    "inflight": 2000.0,
-    "processed_ok": 3464018.0,
-    "detector_lag_max_s": 168.0
+    "t": 1794,
+    "published": 4667000,
+    "inflight": 0.0,
+    "processed_ok": 4664400.0,
+    "detector_lag_max_s": 34.0
    },
    {
-    "t": 1586,
-    "published": 4126200,
-    "inflight": 1933.0,
-    "processed_ok": 3486382.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1596,
-    "published": 4152200,
-    "inflight": 2000.0,
-    "processed_ok": 3511779.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1607,
-    "published": 4178200,
-    "inflight": 2000.0,
-    "processed_ok": 3532765.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1617,
-    "published": 4206800,
-    "inflight": 1533.0,
-    "processed_ok": 3560016.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 1627,
-    "published": 4232800,
-    "inflight": 687.0,
-    "processed_ok": 3581399.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 2112,
-    "published": 4360200,
-    "inflight": 2000.0,
-    "processed_ok": 3593399.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 2123,
-    "published": 4637750,
-    "inflight": 2000.0,
-    "processed_ok": 3593399.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 2134,
+    "t": 1804,
     "published": 4680000,
-    "inflight": 2000.0,
-    "processed_ok": 3593494.0,
-    "detector_lag_max_s": 168.0
-   },
-   {
-    "t": 2144,
-    "published": 4680000,
-    "inflight": 638.0,
-    "processed_ok": 3603707.0,
-    "detector_lag_max_s": 168.0
+    "inflight": 0.0,
+    "processed_ok": 4680000.0,
+    "detector_lag_max_s": 34.0
    }
   ]
  },
  "ingestion_lag": {
-  "ws_n": 287974,
-  "ws_p50_s": 39.928069,
-  "ws_p95_s": 86.767066,
-  "ws_p99_s": 90.619533,
-  "ws_max_s": 92.871432,
-  "server_p95_s_bucket": 120.0,
-  "server_p50_s_bucket": 60.0,
-  "ingest_latency_p95_s_bucket": 2.0
+  "ws_n": 902535,
+  "ws_p50_s": 0.722406,
+  "ws_p95_s": 8.447538,
+  "ws_p99_s": 18.416722,
+  "ws_max_s": 22.671701,
+  "server_p95_s_bucket": 10.0,
+  "server_p50_s_bucket": 1.0,
+  "ingest_latency_p95_s_bucket": 1.0
  },
  "api_load": {
   "oee_30d": {
-   "n": 54821,
-   "p50_ms": 13,
-   "p95_ms": 108,
-   "max_ms": 28048,
-   "mean_ms": 30
+   "n": 21164,
+   "p50_ms": 48,
+   "p95_ms": 277,
+   "max_ms": 904,
+   "mean_ms": 83
   },
-  "oee_30d_errors": [
-   401,
-   401,
-   401,
-   401,
-   401,
-   "\u2026 48183 total"
-  ],
   "overview": {
-   "n": 54822,
-   "p50_ms": 12,
-   "p95_ms": 89,
-   "max_ms": 477289,
-   "mean_ms": 54
+   "n": 21164,
+   "p50_ms": 46,
+   "p95_ms": 292,
+   "max_ms": 1863,
+   "mean_ms": 78
   },
-  "overview_errors": [
-   401,
-   401,
-   401,
-   401,
-   401,
-   "\u2026 48181 total"
-  ],
   "pareto_30d": {
-   "n": 54821,
-   "p50_ms": 13,
-   "p95_ms": 105,
-   "max_ms": 28148,
-   "mean_ms": 31
+   "n": 21163,
+   "p50_ms": 50,
+   "p95_ms": 258,
+   "max_ms": 846,
+   "mean_ms": 81
   },
-  "pareto_30d_errors": [
-   401,
-   401,
-   401,
-   401,
-   401,
-   "\u2026 48183 total"
-  ],
   "plans_status": {
-   "n": 54819,
-   "p50_ms": 13,
-   "p95_ms": 117,
-   "max_ms": 475919,
-   "mean_ms": 39
+   "n": 21163,
+   "p50_ms": 72,
+   "p95_ms": 248,
+   "max_ms": 1020,
+   "mean_ms": 96
   },
-  "plans_status_errors": [
-   401,
-   401,
-   401,
-   401,
-   401,
-   "\u2026 48181 total"
-  ],
   "report_daily_production": {
-   "n": 40,
-   "p50_ms": 31,
-   "p95_ms": 4901,
-   "max_ms": 5781,
-   "mean_ms": 1736
+   "n": 37,
+   "p50_ms": 3204,
+   "p95_ms": 4083,
+   "max_ms": 4427,
+   "mean_ms": 3235
   },
-  "report_daily_production_errors": [
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "\u2026 24 total"
-  ],
   "report_monthly_maintenance": {
-   "n": 40,
-   "p50_ms": 34,
-   "p95_ms": 12279,
-   "max_ms": 13803,
-   "mean_ms": 4764
+   "n": 37,
+   "p50_ms": 8360,
+   "p95_ms": 10339,
+   "max_ms": 11484,
+   "mean_ms": 8381
   },
-  "report_monthly_maintenance_errors": [
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "\u2026 23 total"
-  ],
   "report_weekly_oee": {
-   "n": 40,
-   "p50_ms": 51,
-   "p95_ms": 9889,
-   "max_ms": 11588,
-   "mean_ms": 3771
-  },
-  "report_weekly_oee_errors": [
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "401 {\"detail\":\"Token inv\u00e1lido ou expirado.\"}",
-   "\u2026 23 total"
-  ]
+   "n": 37,
+   "p50_ms": 6345,
+   "p95_ms": 7989,
+   "max_ms": 8926,
+   "mean_ms": 6386
+  }
  },
  "detectors": {
-  "downtime_lag_max_s": 168.0,
+  "downtime_lag_max_s": 28.0,
   "downtime_lagging": 0.0
  },
  "targets": {
   "ingestion_lag_p95_lt_2s": false,
-  "no_loss": false,
+  "no_loss": true,
   "overview_p95_lt_500ms": true,
   "oee_30d_p95_lt_500ms": true,
   "pareto_30d_p95_lt_500ms": true,
-  "plans_status_p95_lt_500ms": true
+  "plans_status_p95_lt_500ms": true,
+  "api_errors_lt_0_1pct": true
  }
 }

@@ -1,6 +1,7 @@
 """Contagem de borda no edge (cycle_pulse): sem perda de pulso na taxa configurada e persistente."""
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -57,7 +58,38 @@ async def _drive(plc: ModbusPlc, train: PulseTrain, target: int, unit=1, address
         await asyncio.sleep(0.001)
 
 
-async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.db", start_offset=0):
+class HostLag:
+    """Reference timer in a separate THREAD: the largest gap between two `sleep(interval)` wake-ups. A starved host
+    (CPU taken by other jobs) delays every thread alike; a poller that blocks the event loop does NOT delay this
+    thread, so that regression is still caught. Only the poller's gap above this reference is the poller's fault."""
+
+    def __init__(self, interval_s: float):
+        self.interval_s = interval_s
+        self.max_gap_s = 0.0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        last = time.monotonic()
+        while not self._stop.wait(self.interval_s):
+            now = time.monotonic()
+            self.max_gap_s = max(self.max_gap_s, now - last)
+            last = now
+
+    def start(self):
+        self._thread.start()
+
+    async def stop(self):
+        self._stop.set()
+        await asyncio.to_thread(self._thread.join, 1.0)
+
+    @property
+    def host_delay_s(self) -> float:
+        """How much the host itself delayed a timer of this interval (≈ 0 on a quiet host)."""
+        return max(0.0, self.max_gap_s - self.interval_s)
+
+
+async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.db", start_offset=0, lag=None):
     port = free_port()
     plc = ModbusPlc("127.0.0.1", port, [1])
     await plc.start()
@@ -65,6 +97,8 @@ async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.d
     rec = Recorder()
     poller = PulsePoller("127.0.0.1", port, [_pulse_tag()], store, rec, interval_ms=poll_ms)
     task = asyncio.create_task(poller.run())
+    if lag is not None:
+        lag.start()
     try:
         for _ in range(200):
             if poller.connected and poller.polls > 2:
@@ -82,6 +116,8 @@ async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.d
         assert train.emitted == n_pulses
         return store.get("cell.a1.eos"), rec, poller
     finally:
+        if lag is not None:
+            await lag.stop()
         await poller.stop()
         task.cancel()
         try:
@@ -93,14 +129,21 @@ async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.d
 
 
 async def test_no_pulse_lost_at_configured_rate(tmp_path):
-    """Pulsos de 50 ms alto / 50 ms baixo (10 Hz) com polling de 20 ms: contagem exata."""
-    total, rec, poller = await _run_pulses(tmp_path, 60, 50, 50, 20)
+    """Pulsos de 50 ms alto / 50 ms baixo (10 Hz) com polling de 20 ms: contagem exata.
+
+    The polling gap bound (< 45 ms, under half a pulse) is checked against the poller's own delay: a timer of the
+    same interval in another thread measures how much the host delayed everything (heavy parallel job, QA run of
+    Sprint 7b), and only the excess over that is the poller's fault. The exact count is always required."""
+    lag = HostLag(0.02)
+    total, rec, poller = await _run_pulses(tmp_path, 60, 50, 50, 20, lag=lag)
     assert total == 60
     assert rec.last("tag-a1") == 60.0
     # publicou acumulado (valores crescentes), nunca delta
     vals = [v for t, v, _ in rec.items if t == "tag-a1"]
     assert vals == sorted(vals) and max(vals) == 60.0
-    assert poller.max_gap_s < 0.045, f"polling atrasou {poller.max_gap_s * 1000:.0f} ms (> metade do pulso)"
+    assert poller.max_gap_s < 0.045 + lag.host_delay_s, (
+        f"polling atrasou {poller.max_gap_s * 1000:.0f} ms (> metade do pulso; "
+        f"atraso do próprio host {lag.host_delay_s * 1000:.0f} ms)")
 
 
 async def test_counter_survives_gateway_restart(tmp_path):

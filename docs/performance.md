@@ -18,6 +18,34 @@ engenheiros** (testes, Vite, Chromium do Playwright, a stack de dev com o própr
 já consumia ~1 vCPU contínua antes de qualquer teste; a carga média do host ficou entre 5 e 15 durante as medições.
 Os números absolutos abaixo valem para esse host; o §1.2 dá o dimensionamento.
 
+### 1.0 Rodada completa do Sprint 7b (2026-10-16) — resultado vigente
+
+Carga nominal completa: 5 × 4 × 10 = 200 máquinas, **2 594 leituras/s** por 30 min (4,68 M leituras), com sondas da API
+(4 clientes) e relatórios ao mesmo tempo, sobre 30 dias de histórico. Mesmo host de 4 vCPU compartilhado (carga média
+≈ 10 durante a rodada; 0,5 no início e 4,2 no fim). Já com a correção do §5.1; o InfluxDB não reiniciou nenhuma vez
+(antes da correção: OOM em loop e nenhum resultado). Tokens válidos durante toda a rodada (0 erros de API).
+Resultado bruto: [`e2e/scale/result.json`](../e2e/scale/result.json).
+
+| Meta | Medido | |
+|---|---|---|
+| Nenhuma leitura perdida | 4 680 000 publicadas = processadas = pontos no InfluxDB; 0 descartes, 0 dead letters; drena em 0,2 s | ✅ |
+| Atraso de ingestão p95 < 2 s (leitura → WebSocket) | p50 0,72 s · **p95 8,4 s** · p99 18,4 s · máx 22,7 s | ❌ **não atingida** |
+| `/api/overview` p95 < 500 ms | 292 ms (p50 46 ms) | ✅ |
+| `/api/oee` 30 d p95 < 500 ms | 277 ms | ✅ |
+| `/api/losses/pareto` 30 d p95 < 500 ms | 258 ms | ✅ |
+| `/api/maintenance-plans/status` p95 < 500 ms | 248 ms | ✅ |
+| Erros de API < 0,1 % | 0 | ✅ |
+| Detectores acompanham | atraso máximo da detecção de paradas 28 s; 0 máquinas atrasadas | ✅ |
+
+Relatórios sob carga (p95): diário de produção 4,1 s, semanal de OEE 8,0 s, mensal de manutenção 10,3 s.
+
+**Leitura honesta**: 6 de 7 metas atingidas na carga nominal. O atraso de ingestão p95 ficou em 8,4 s, contra a meta
+de 2 s. A ingestão acompanha a taxa (processou 2 594/s durante a carga, sem fila no fim), mas em rajadas a janela de
+2 000 mensagens em voo enche (`inflight` 2 000 nas amostras) e as leituras esperam no broker. Isso acontece quando
+o host fica sem CPU: o gerador de carga, o broker, os bancos, a API e o worker dividem as mesmas 4 vCPU. O p50 de
+0,7 s mostra que o caminho normal está dentro da meta. A meta continua **aberta**: confirmar no hardware de produção
+(§1.2, 8 vCPU) antes do go-live. As tabelas abaixo são as medições anteriores do Sprint 7.
+
 ### 1.1 Antes × depois (mesmo harness, mesmo host)
 
 | Medida | Antes (código do checkpoint e8442e5) | Depois — 1 300 leituras/s (5 × 2 × 10) | Depois — 2 600 leituras/s (5 × 4 × 10) |
@@ -51,10 +79,11 @@ um único processo de ingestão, medida isolada (`e2e/scale` + processo real, se
 | ~2 600 leituras/s (200 máquinas) | **8** | 1 processo de ingestão (≈ 1 vCPU), InfluxDB ≈ 1–1,5, Postgres ≈ 0,5, API ≈ 1, worker ≈ 0,5; folga para picos de descarga de buffer |
 | > 3 000 leituras/s | 8+ e `MQTT_INGEST_SHARDS=2` | cada shard recebe todas as mensagens e processa a sua parte das tags (crc32), então só compensa com CPU sobrando (com 4 vCPU 2 shards foram **piores**: 1 230/s contra 1 585/s) |
 
-O broker de produção (`infra/mosquitto/prod/mosquitto.conf`) usa `max_inflight_messages 100`; a ingestão confirma
-cada leitura só quando ela está gravada, então a janela limita a vazão a ≈ 100 / latência de processamento (100 /
-0,05 s = 2 000/s no melhor caso). Para ≥ 2 000 leituras/s use 1 000–2 000 (o harness usa 2 000,
-`e2e/scale/mosquitto.conf`) — item para o devops (não alterado aqui).
+O broker (`infra/mosquitto/prod/mosquitto.conf` e o de dev) usa `max_inflight_messages 2000`, igual a
+`MQTT_MAX_INFLIGHT` do servidor e ao harness (`e2e/scale/mosquitto.conf`). A ingestão confirma cada leitura só quando
+ela está gravada, então a janela limita a vazão a ≈ janela / latência de processamento. Com o valor antigo (100) o
+teto era 100 / 0,05 s = 2 000/s, abaixo da meta (corrigido no Sprint 7b; teste:
+`infra/tests/test_mosquitto_prod.py::test_inflight_window_matches_server`).
 
 ## 2. Detectores depois de longas quedas (achado do QA)
 
@@ -165,6 +194,30 @@ agregados (kpis.md S7-18). Com retenção, `/api/usage/recompute?apply=true` é 
 quando o uso do tenant é mais antigo que o bruto guardado — recalcular apagaria esse uso.
 
 `INFLUX_DOWNSAMPLING=false` desliga tudo; `INFLUX_MANAGE_RETENTION=false` não mexe na retenção do bucket bruto.
+
+### 5.1 Memória do InfluxDB (achado da rodada de escala do Sprint 7b)
+
+Na carga nominal (2 600 leituras/s) o `influxd` chegou a ~14 GB e o **OOM killer do kernel** o matou em loop (29
+reinícios em uma rodada; `dmesg`: `Out of memory: Killed process … (influxd)`). Os SIGSEGV vistos antes
+(`readTags`, compactação do tsm1) eram o processo morrendo no meio disso, não um TSM corrompido: o diretório de dados
+tinha ~142 MB e, com as tasks pausadas e um reinício, o processo volta a ~350 MB.
+
+Causa: a task de 1 minuto lia os 15 min de bruto com **um fluxo compartilhado** (`data = from(...)`) entre os cinco
+agregados. Assim o InfluxDB não empurra o `aggregateWindow` para o motor de armazenamento e materializa os pontos
+brutos na consulta. Medido no bucket da rodada (2,3 M pontos em 15 min): **60 s e ~3 GB por execução**. Como a task
+roda a cada minuto, as execuções se sobrepunham, e depois de cada reinício a recuperação das execuções perdidas as
+empilhava. Correção (`services/influx_downsampling.py`): uma cadeia `from → range → filter → aggregateWindow` por
+agregado. Mesmos valores (conferidos campo a campo), **6 s** por execução. Teste:
+`test_influx_downsampling.py::test_rollup_flux_is_pushdown_friendly`. As tasks já criadas são atualizadas na
+partida do worker (`ensure_task`).
+
+Proteção em produção e staging (`infra/docker-compose.{prod,staging}.yml`): `mem_limit` do contêiner
+(`INFLUX_MEM_LIMIT`, padrão 4g) e limites de consulta (`INFLUXD_QUERY_CONCURRENCY` 16, fila 64, 1 GiB por consulta,
+2 GiB no total, cache de escrita 512 MiB, 1 compactação por vez). Sem eles o padrão do InfluxDB é 1 024 consultas
+simultâneas e memória **ilimitada** por consulta: consultas que o cliente já abandonou (timeout) continuam rodando e
+se acumulam. Com os limites, a consulta que estoura falha sozinha e o contêiner nunca derruba o Postgres ou a API do
+mesmo host. Teste: `infra/tests/test_compose_files.py::test_influxdb_memory_is_bounded`. O compose de dev recebe só
+os limites de consulta. O contêiner `fm_influxdb` de dev que já está rodando só os pega quando for recriado.
 
 ## 6. Cache das telas de painel
 

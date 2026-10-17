@@ -96,7 +96,8 @@ console.log("B-1 timeline no-data");
 
 // ── B-2 reliability window reaches now ───────────────────────────────────────
 console.log("B-2 reliability default window");
-const target = machines.find((m) => m.state !== "failure") ?? machines[0];
+// a RUNNING machine: S7-23 flags an old open record as stale only when the data contradicts it (machine runs again)
+const target = machines.find((m) => m.state === "running") ?? machines.find((m) => m.state !== "failure") ?? machines[0];
 const today = await api("POST", "/api/failures/", { machine_id: target.machine_id, failed_at: iso(NOW - 40 * 60e3),
   restored_at: iso(NOW - 25 * 60e3), severity: "critical", note: "QA gate: falha de hoje (qa-7b)" });
 {

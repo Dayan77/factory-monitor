@@ -51,7 +51,11 @@ if (process.env.STATE) {
 let PERIOD = PERIOD_ARG;
 if (PERIOD_ARG === "today") {
   const t = (await api("GET", `/api/oee?scope=plant&id=${numPlant.id}&period=today`, numTok)).data;
-  const stop = new Date(Math.floor(Date.now() / 60000) * 60000 - 60000).toISOString();
+  // stop on the last WHOLE HOUR: a window that ends inside the running hour gets that hour's pieces pro rata
+  // (counts_prorated, kpis.md C9 emenda S6) and the share keeps growing until the hour closes, so the plant and the
+  // line requests, made seconds apart, saw different counts (QA 7b: ideal_produced_s off by 0,06–1,5 s)
+  const hourStop = Math.floor(Date.now() / 3600000) * 3600000;
+  const stop = new Date(hourStop > Date.parse(t.period_start) ? hourStop : Math.floor(Date.now() / 60000) * 60000 - 60000).toISOString();
   PERIOD = `custom&start=${encodeURIComponent(t.period_start)}&stop=${encodeURIComponent(stop)}`;
 }
 console.log(`  numbers on plant "${numPlant.name}", period=${decodeURIComponent(PERIOD)}`);
@@ -151,8 +155,19 @@ const calls = dj.data?.api_calls ?? [];
 const oeeCall = calls.find((x) => /\/api\/oee/.test(x.path ?? x.url ?? "") && /scope=plant/.test(x.path ?? x.url ?? ""));
 console.log(`  daily_production ${pday}: headline ${JSON.stringify(dj.data?.headline ?? dj.data?.summary)?.slice(0, 300)}`);
 const flat = JSON.stringify(dj.data).replace(/[\u00a0\u202f]/g, " ");
-const pct = (v) => (v * 100).toFixed(1).replace(".", ",") + " %";
-check(dj.status === 200 && yday.oee != null && (flat.includes(pct(yday.oee)) || flat.includes(pct(yday2.oee))), `daily_production shows the plant OEE of /api/oee (${pct(yday.oee ?? NaN)} / ${pct(yday2.oee ?? NaN)})`, { status: dj.status, oeeCall });
+// pt-BR, as the report formats it (thousands separator: an accelerated virtual plant gives P > 1 → OEE ≥ 1.000 %)
+const pct = (v) => (v * 100).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
+// closed day (default "yesterday"): the report shows exactly the API number. Running day (DRILL_PERIOD=today): the
+// number keeps moving between the reads (and not monotonically: P and Q both move), so accept the report's headline
+// within 0,5 % (relative) of the range of the two reads
+const headOee = (() => {
+  const row = (dj.data?.headline ?? []).find((r) => Array.isArray(r) && /^OEE da planta/.test(r[0]));
+  return row ? Number(String(row[1]).replace(/[^\d,]/g, "").replace(",", ".")) / 100 : null;
+})();
+const lo = Math.min(yday.oee ?? NaN, yday2.oee ?? NaN), hi = Math.max(yday.oee ?? NaN, yday2.oee ?? NaN);
+const closeEnough = PERIOD_ARG === "today" && headOee != null && headOee >= lo * 0.995 - 0.0005 && headOee <= hi * 1.005 + 0.0005;
+check(dj.status === 200 && yday.oee != null && (flat.includes(pct(yday.oee)) || flat.includes(pct(yday2.oee)) || closeEnough),
+  `daily_production shows the plant OEE of /api/oee (${pct(yday.oee ?? NaN)} / ${pct(yday2.oee ?? NaN)}; report ${headOee == null ? "—" : pct(headOee)})`, { status: dj.status, oeeCall });
 
 // UI exports + scheduled reports
 {

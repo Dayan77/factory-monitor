@@ -32,6 +32,12 @@ manutenção, o painel da sua área.
   últimas 3 paradas) e **abrir a máquina**.
 - Uma falha que começou durante a pausa aparece em **vermelho** mesmo na pausa: a máquina quebrou e o técnico precisa
   ver, ainda que o OEE não seja afetado.
+- **"falha aberta há muito tempo — verificar"**: uma falha aberta há mais de 72 h sem restabelecimento, mas a máquina
+  já voltou a rodar (ou a parada ligada a ela já foi encerrada). Provavelmente esqueceram de apontar o
+  restabelecimento: abra a falha em **Falhas** e registre o horário. Uma quebra real longa (esperando peça, com a
+  parada ainda aberta) continua em vermelho como **falha**.
+- **Linha do tempo de estados**: os trechos em que o gateway não mandou dados aparecem como **sem dados**, nunca
+  como "sem parada registrada".
 - **Ao vivo pausado**: se a faixa "ao vivo pausado — última atualização HH:MM:SS" aparecer, os marcadores ficam
   esmaecidos — o que você vê pode estar velho. Recarregue a página ou verifique a rede.
 - Sem planta baixa enviada, o mapa usa o **layout automático** (uma faixa por linha); isso está escrito no topo.

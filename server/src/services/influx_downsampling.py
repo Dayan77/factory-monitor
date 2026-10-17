@@ -61,13 +61,18 @@ def floor(t: datetime, step: timedelta) -> datetime:
 # ── Flux ──────────────────────────────────────────────────────────────────────
 
 def flux_1m(raw: str, dest: str, org: str, start: str, stop: str, tenant_id: Optional[str] = None) -> str:
-    """Raw → 1-minute aggregates over [start, stop) (both minute-aligned Flux time expressions)."""
+    """Raw → 1-minute aggregates over [start, stop) (both minute-aligned Flux time expressions).
+
+    Each aggregate is its OWN from → range → filter → aggregateWindow chain, so InfluxDB pushes the window
+    aggregate down to the storage engine (ReadWindowAggregate). Sharing one `data = from(...)` stream between the
+    five branches disables that: the raw points are materialized in the query, and at 2 600 readings/s one run of
+    the 1-minute task (15-min look-back = 2.3 M points) took 60 s and ~3 GB, so runs overlapped and InfluxDB was
+    OOM-killed in a loop (Sprint 7b scale run). Pushed down: ~6 s, same values (docs/performance.md §5.1)."""
     flt = f' and r["tenant_id"] == "{tenant_id}"' if tenant_id else ""
     return f'''
-data = from(bucket: "{raw}")
+agg = (fn, field) => from(bucket: "{raw}")
   |> range(start: {start}, stop: {stop})
   |> filter(fn: (r) => r["_measurement"] == "sensors" and r["_field"] == "value"{flt})
-agg = (fn, field) => data
   |> aggregateWindow(every: 1m, fn: fn, timeSrc: "_start", createEmpty: false)
   |> toFloat()
   |> set(key: "_field", value: field)
@@ -78,14 +83,13 @@ union(tables: [agg(fn: sum, field: "sum"), agg(fn: count, field: "count"), agg(f
 
 
 def flux_1h(src: str, dest: str, org: str, start: str, stop: str, tenant_id: Optional[str] = None) -> str:
-    """1-minute → hourly aggregates over [start, stop) (hour-aligned)."""
+    """1-minute → hourly aggregates over [start, stop) (hour-aligned); one pushed-down chain per field (see
+    flux_1m)."""
     flt = f' and r["tenant_id"] == "{tenant_id}"' if tenant_id else ""
     return f'''
-data = from(bucket: "{src}")
+agg = (field, fn) => from(bucket: "{src}")
   |> range(start: {start}, stop: {stop})
-  |> filter(fn: (r) => r["_measurement"] == "sensors"{flt})
-agg = (field, fn) => data
-  |> filter(fn: (r) => r["_field"] == field)
+  |> filter(fn: (r) => r["_measurement"] == "sensors" and r["_field"] == field{flt})
   |> aggregateWindow(every: 1h, fn: fn, timeSrc: "_start", createEmpty: false)
 union(tables: [agg(field: "sum", fn: sum), agg(field: "count", fn: sum), agg(field: "min", fn: min),
                agg(field: "max", fn: max), agg(field: "last", fn: last)])

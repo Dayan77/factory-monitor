@@ -169,3 +169,22 @@ async def test_recompute_apply_refused_when_usage_is_older_than_the_raw_retentio
     # tenant B (no old history) may still apply — the guard is per tenant
     r = await client.post("/api/usage/recompute?apply=true", headers=tenants.b.headers("admin"))
     assert r.status_code == 200, r.text
+
+
+def test_rollup_flux_is_pushdown_friendly():
+    """Sprint 7b scale run: with one shared `data = from(...)` stream for the five aggregates, InfluxDB could not
+    push the window aggregate down to storage; at 2 600 readings/s one 1-minute task run (15-min look-back,
+    2.3 M points) took 60 s and ~3 GB, the runs overlapped and influxd was OOM-killed in a loop. Each aggregate must
+    be its own from → range → filter → aggregateWindow chain (same values: checked against the raw readings by
+    test_long_range_chart_from_aggregates_equals_raw and on the 2.3 M-point scale bucket, docs/performance.md §5.1)."""
+    import re
+
+    from src.services import influx_downsampling as ds
+    for flux in (ds.flux_1m("raw", "raw_1m", "org", "-15m", "now()"),
+                 ds.flux_1h("raw_1m", "raw_1h", "org", "-3h", "now()"),
+                 ds.flux_1m("raw", "raw_1m", "org", "-15m", "now()", tenant_id="t-1"),
+                 ds.task_flux("1m", "raw"), ds.task_flux("1h", "raw")):
+        assert not re.search(r"^\s*\w+\s*=\s*from\(", flux, re.M), "shared stream: no storage pushdown"
+        chain = re.search(r"agg = \([^)]*\) => from\(bucket: \"[^\"]+\"\)\s*\|> range\([^\n]*\)\s*"
+                          r"\|> filter\([^\n]*\)\s*\|> aggregateWindow\(", flux)
+        assert chain, flux

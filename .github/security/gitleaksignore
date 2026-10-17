@@ -33,6 +33,7 @@ e8442e5af4ecfe9b46629cb42523ae427478010e:e2e/scenario_c_replay.py:fm-secret-env-
 9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/virtual_plant_downtime_live.py:fm-secret-env-default:88
 8151363eca1ff37f8e583afda3c227c19b24440f:e2e/virtual_plant_real_path.py:fm-secret-env-default:83
 8151363eca1ff37f8e583afda3c227c19b24440f:e2e/virtual_plant_real_path.py:fm-secret-env-default:189
+16fb2fc80fdde725e754cb7f339b131cd7fb7082:e2e/sprint7b/security_api_real.py:fm-secret-env-default:30
 
 # ── Testes automatizados: segredos FICTÍCIOS de fixtures (webhook HMAC, .env de teste do deploy) ──────────────
 9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/tests/test_remote_deploy.py:generic-api-key:31

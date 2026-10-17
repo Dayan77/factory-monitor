@@ -360,3 +360,15 @@ def test_dev_broker_config_is_still_anonymous():
     assert "allow_anonymous true" in conf
     prod = (ROOT / "infra/mosquitto/prod/mosquitto.conf").read_text()
     assert "allow_anonymous false" in prod and "per_listener_settings false" in prod
+
+
+def test_inflight_window_matches_server():
+    """Sprint 7b (docs/performance.md §1.2): the broker's QoS 1 window per subscriber caps ingestion at about
+    window / processing latency. With 100 the ceiling was about 2 000 readings/s, below the 2 600/s target; the window
+    must match the server's MQTT_MAX_INFLIGHT default (2000) in prod and dev."""
+    from_cfg = re.search(r"mqtt_max_inflight:\s*int\s*=\s*(\d+)", (ROOT / "server/src/config.py").read_text())
+    server_window = int(from_cfg.group(1))
+    for conf in ("infra/mosquitto/prod/mosquitto.conf", "infra/mosquitto/mosquitto.conf"):
+        m = re.search(r"^max_inflight_messages\s+(\d+)\s*$", (ROOT / conf).read_text(), re.M)
+        assert m, conf
+        assert int(m.group(1)) >= server_window >= 2000, conf

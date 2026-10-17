@@ -998,13 +998,19 @@ Os casos de §6 e os cenários de ouro A–F continuam exatos.
   "sem parada registrada" só onde havia dados. Se a consulta das lacunas falhar, a tela avisa (nunca verde em
   silêncio). Testes: `test_sprint7b_bugs.py::test_no_data_*`, `web/src/utils/efficiency.test.ts` ("paints the gaps
   without data…"), `TimelinePage.test.tsx`.
-- **S7-23 — Falha aberta há muito tempo (bug da rodada de capturas).** Uma `FailureRecord` sem `restored_at` aberta há
-  mais de `FAILURE_STALE_OPEN_H` (padrão **72 h**, configurável) **não** é mostrada como falha ao vivo no mapa, no
+- **S7-23 — Falha aberta há muito tempo (bug da rodada de capturas).** Uma `FailureRecord` sem `restored_at`, não
+  `incipient`, aberta há mais de `FAILURE_STALE_OPEN_H` (padrão **72 h**, configurável) **e contradita pelos dados**
+  (a parada ligada, `downtime_event_id`, já foi encerrada; ou a máquina reporta `running` agora, com leitura posterior
+  a `failed_at`) **não** é mostrada como falha ao vivo no mapa, no
   tablet do operador e no Raio-X: o marcador mantém o estado pelas demais regras de sprint6.md §1.2 (uma máquina que
   reporta falha agora continua "falha" pelo `status = error`) e ganha o selo `stale_failure` e o texto
   "falha aberta há muito tempo — verificar" (provável restabelecimento não apontado). `GET /api/failures/` traz
   `open_stale = true` nesses registros. Falha `incipient` aberta também não põe a máquina em "falha" (ISO 14224: a
   função não foi perdida). Os KPIs não mudam (MTBF conta a falha por `failed_at`; MTTR só com restabelecimento,
   S4-10). O seed de desenvolvimento passou a restabelecer as falhas históricas que cria e corrige bancos já semeados
-  (`scripts/seed_dev.py:restore_seed_failures`). Testes: `test_sprint7b_bugs.py::test_stale_open_failure_is_flagged_not_live`,
+  (`scripts/seed_dev.py:restore_seed_failures`). **A idade sozinha não basta** (revisão do Sprint 7b): uma quebra
+  real longa (máquina esperando peça no fim de semana) cuja parada ligada continua aberta segue "falha" — a parada
+  aberta confirma a falha. Mapa, tablet, Raio-X e `open_stale` usam o mesmo predicado
+  (`server/src/services/maintenance/stale.py`). Testes: `test_sprint7b_bugs.py::test_stale_open_failure_is_flagged_not_live`,
+  `::test_long_real_failure_with_open_linked_stop_stays_failure`, `::test_old_incipient_record_is_never_open_stale`,
   `test_seed_demo_plant.py::test_seed_demo_maintenance`.

@@ -136,7 +136,7 @@ Exemplo: PMP 84,4 % (âmbar, abaixo de 85 %), cumprimento 85,0 % (âmbar), backl
 
 ## Como achar os maus atores (mensal)
 
-**Confiabilidade**, janela de 12 meses: [MTBF](indicadores.md#mtbf), [MCBF](indicadores.md#mcbf) e
+**Confiabilidade**, janela dos últimos 12 meses até agora (a falha de hoje já entra): [MTBF](indicadores.md#mtbf), [MCBF](indicadores.md#mcbf) e
 [MTTR](indicadores.md#mttr) por posição, máquina, tipo de componente e fabricante, com o **n** de falhas ao lado, e
 [MTTF](indicadores.md#mttf) por modelo com falhas e suspensões. Daqui saem OS de **melhoria** (eliminar a causa raiz).
 

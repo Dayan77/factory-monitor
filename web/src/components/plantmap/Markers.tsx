@@ -105,8 +105,8 @@ export const MachineMarker = memo(function MachineMarker({ marker, machine, now,
       {extra.length > 0 && <span className="sr-only">{extra.map((b) => ` — ${badgeText(b)}`).join("")}</span>}
       {size !== "s" && (
         <>
-          <span className="mt-0.5 block truncate text-[11px] leading-4 opacity-95">{text}</span>
-          <span className="mt-0.5 flex items-center justify-between gap-2 text-[11px] font-medium leading-4 tabular opacity-90">
+          <span className="mt-0.5 block truncate text-[11px] leading-4">{text}</span>
+          <span className="mt-0.5 flex items-center justify-between gap-2 text-[11px] font-medium leading-4 tabular">
             <span>{oee.text}{oee.suspect && <SuspectMark />}</span>
             {size === "l" || machine.kpis?.cadence_per_hour != null ? (
               <span title="Cadência ao vivo: peças dos últimos 15 min × 4">{machine.kpis?.cadence_per_hour == null ? "— pç/h" : `${formatDec1(machine.kpis.cadence_per_hour)} pç/h`}</span>

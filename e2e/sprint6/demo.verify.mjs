@@ -50,9 +50,13 @@ async function newPage(vp, scheme) {
   const t0 = Date.now();
   await page.goto(`${BASE}/demo`);
   const reached = await page.waitForURL((u) => u.pathname.startsWith("/dashboard"), { timeout: 5000 }).then(() => true).catch(() => false);
+  // the URL switches to /dashboard while "Abrindo demonstração…" is still on screen: wait for the banner within the
+  // same 5 s budget instead of sampling isVisible() at the instant of navigation (race, not a product failure)
+  const bannerIn5s = await page.getByTestId("demo-banner").waitFor({ timeout: Math.max(0, 5000 - (Date.now() - t0)) })
+    .then(() => true).catch(() => false);
   const body = (await page.locator("body").innerText()).trim();
   await page.screenshot({ path: path.join(OUT, "site_target_demo_route.png") });
-  check(reached && await page.getByTestId("demo-banner").isVisible(), `site button target ${BASE}/demo opens the dashboard in ≤ 5 s`, { url: page.url(), ms: Date.now() - t0, body: body.slice(0, 120) || "(blank page)" });
+  check(reached && bannerIn5s, `site button target ${BASE}/demo opens the dashboard in ≤ 5 s`, { url: page.url(), ms: Date.now() - t0, body: body.slice(0, 120) || "(blank page)" });
   await ctx.close();
 }
 

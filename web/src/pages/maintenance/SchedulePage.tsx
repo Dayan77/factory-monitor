@@ -204,7 +204,8 @@ export default function SchedulePage() {
         </Card>
 
         <Card padded={false} className="min-w-0 p-3">
-          <div className="-mx-3 overflow-x-auto px-3">
+          {/* scrollable on phones: focusable so keyboard users can scroll it (WCAG 2.1.1; axe scrollable-region-focusable) */}
+          <div className="-mx-3 overflow-x-auto px-3" tabIndex={0} role="region" aria-label="Quadro da semana (role para os lados)">
             <table className="w-full min-w-[50rem] table-fixed border-separate border-spacing-1" aria-label="Quadro da semana por técnico e dia">
               <thead>
                 <tr>

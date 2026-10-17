@@ -432,7 +432,7 @@ async function runReal(browser) {
       await page.waitForTimeout(1500);
       await shot(page, "real-oee-desktop");
       await page.goto(`${BASE}/reports/shift`);
-      await page.getByRole("button", { name: "Imprimir / PDF" }).waitFor();
+      await page.getByRole("button", { name: /^Imprimir/ }).waitFor();
       await page.waitForTimeout(1500);
       await shot(page, "real-report-desktop");
       await page.goto(`${BASE}/settings/production`);
