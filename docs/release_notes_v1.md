@@ -106,8 +106,10 @@ Preferimos dizer antes:
   ainda não estão disponíveis.
 - **Parada planejada para manutenção por máquina**: ao programar uma OS que para a máquina, o supervisor recebe o
   pedido, mas a parada ainda é lançada à mão no calendário de produção.
-- **Cadência ao vivo do mapa**: uma leitura corrompida do contador pode exibir, por até 15 minutos, uma cadência ao
-  vivo irreal no marcador da máquina. Os indicadores calculados (OEE, peças do turno, uso) não são afetados.
+- **Atraso da leitura ao vivo com 200 máquinas**: na carga nominal completa (200 máquinas, ~2 600 leituras/s) o
+  atraso entre a leitura e a tela ficou em p95 8,4 s no nosso ambiente de teste de 4 vCPU (meta: 2 s; mediana
+  0,7 s). Nenhuma leitura se perde e os indicadores calculados não são afetados. A confirmação no servidor de
+  produção (8 vCPU) é um item do go-live ([performance.md §1.0](performance.md)).
 - **Integração CMMS/ERP** pela API genérica; não há conector pronto para SAP PM, TOTVS ou Engeman.
 - **Idioma**: português. Inglês está planejado.
 - **Primeiros 14 dias** depois de conectar uma máquina: as previsões de troca usam menos histórico e aparecem

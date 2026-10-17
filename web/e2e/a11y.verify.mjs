@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 const AXE = fs.readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 const BASE = process.env.BASE_URL ?? "http://localhost:5250";
 const API = process.env.API ?? "http://localhost:8150";
+const ONLY_RAW = process.env.ONLY ?? "";
 const EMAIL = process.env.E2E_EMAIL ?? "admin@factory-monitor.com";
 const PASSWORD = process.env.E2E_PASSWORD ?? "Admin@1234";
 const OUT = process.env.OUT ?? path.join(path.dirname(new URL(import.meta.url).pathname), "screenshots/a11y");
@@ -40,6 +41,28 @@ const plant = tree[0];
 const line = plant?.lines.find((l) => l.machines.length) ?? plant?.lines[0];
 const machine = line?.machines[0];
 const wos = await apiJson("/api/work-orders/", auth).catch(() => []);
+const woList = (r) => (Array.isArray(r) ? r : r?.data ?? []);
+// /m/work-orders renders the emergency card (badge + "Assumir chamado") only while an emergency call is open:
+// make sure one exists so that state is always audited, and cancel it at the end if this run opened it.
+let seededEmergency = null;
+if (machine && (!ONLY_RAW || ONLY_RAW.split(",").some((r) => r.startsWith("/m/")))) {
+  const open = woList(await apiJson("/api/work-orders/?type=corrective&state=open", auth).catch(() => []))
+    .filter((w) => w.urgency === "emergency");
+  if (!open.length) {
+    const wo = await apiJson("/api/work-orders/emergency-call", {
+      method: "POST", ...auth,
+      body: JSON.stringify({ machine_id: machine.id, title: `Chamado emergencial (auditoria a11y) — ${machine.name}`, note: "a11y.verify" }),
+    });
+    seededEmergency = wo.id;
+    console.log(`seeded emergency call ${wo.id} on ${machine.name}`);
+  }
+}
+async function cleanupEmergency() {
+  if (!seededEmergency) return;
+  await apiJson(`/api/work-orders/${seededEmergency}/transition`, {
+    method: "POST", ...auth, body: JSON.stringify({ to: "cancelled", cancel_reason: "not_needed", note: "a11y.verify cleanup" }),
+  }).catch((e) => console.log(`could not cancel the seeded emergency call: ${e.message}`));
+}
 
 const PUBLIC = ["/", "/login", "/register", "/esqueci-senha", "/redefinir-senha", "/convite", "/op/login", "/rota-que-nao-existe"];
 const APP = [
@@ -50,7 +73,7 @@ const APP = [
   "/maintenance/upcoming", "/maintenance/components", "/maintenance/work-orders", "/maintenance/schedule",
   "/maintenance/failures", "/maintenance/kpis", "/maintenance/reliability", "/maintenance/predictive",
   "/settings/production", "/settings/maintenance-plans", "/settings/gateways", "/settings/users", "/onboarding",
-  "/account", "/op", "/m/work-orders", ...(wos[0] ? [`/m/work-orders/${wos[0].id}`] : []), "/m/log",
+  "/account", "/op", "/m/work-orders", ...(woList(wos)[0] ? [`/m/work-orders/${woList(wos)[0].id}`] : []), ...(seededEmergency ? [`/m/work-orders/${seededEmergency}`] : []), "/m/log",
   ...(line ? [`/tv/lines/${line.id}`] : []),
 ];
 const ONLY = process.env.ONLY ? new Set(process.env.ONLY.split(",")) : null;
@@ -237,6 +260,7 @@ if (!ONLY) {
 }
 
 await browser.close();
+await cleanupEmergency();
 fs.writeFileSync(path.join(OUT, "report.json"), JSON.stringify(report, null, 2));
 const total = report.reduce((n, r) => n + r.violations.filter((v) => v.impact === "serious" || v.impact === "critical").length, 0);
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"} — ${failures} failed check(s); ${total} serious/critical violation group(s); report: ${path.join(OUT, "report.json")}`);

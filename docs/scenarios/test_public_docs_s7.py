@@ -90,8 +90,10 @@ def test_release_notes_known_limitations():
     lim = text.split("## Limitações conhecidas", 1)
     assert len(lim) == 2
     body = lim[1].split("\n## ", 1)[0]
-    for gap in ["Basic256Sha256", "PIN", "Cadência ao vivo", "SAP PM", "Inglês", "14 dias"]:
+    for gap in ["Basic256Sha256", "PIN", "Atraso da leitura ao vivo", "SAP PM", "Inglês", "14 dias"]:
         assert gap in body, f"release notes: limitation '{gap}' missing"
+    # A-19b (live map cadence glitch) was fixed in Sprint 7b: it must no longer be sold as a limitation
+    assert "Cadência ao vivo do mapa" not in body, "release notes: stale A-19b limitation still listed"
 
 
 def test_roadmap_delivered_items_carry_their_sprint_and_pilot_is_open():
@@ -104,8 +106,15 @@ def test_roadmap_delivered_items_carry_their_sprint_and_pilot_is_open():
     pilot = [ln for ln in text.splitlines() if "**Piloto real**" in ln]
     assert pilot and all(ln.lstrip().startswith("- [ ]") for ln in pilot)
     assert "## Pendências honestas" in text
-    for gap in ["Piloto em fábrica real", "Cases de cliente", "Go-live", "OPC UA com certificados", "Inglês", "A-19b"]:
+    for gap in ["Piloto em fábrica real", "Cases de cliente", "Go-live", "OPC UA com certificados", "Inglês"]:
         assert gap in text
+    # consistency with docs/audit_kpis.md: once A-19b is marked fixed there, the roadmap must not list it as open
+    audit = read(DOCS / "audit_kpis.md")
+    if re.search(r"### A-19b .*corrigido", audit):
+        pend = text.split("## Pendências honestas", 1)[1]
+        assert not re.search(r"^\s*\d+\. \*\*A-19b\*\*", pend, re.M), "roadmap: A-19b still listed as pending"
+        assert "ressalva aberta A-19b" not in text and "exceto **A-19b**" not in text, \
+            "roadmap: A-19b still described as open"
 
 
 @pytest.mark.parametrize("name", NEW)

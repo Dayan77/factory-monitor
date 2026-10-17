@@ -48,7 +48,7 @@ function EmergencyCard({ wo }: { wo: WorkOrder }) {
   const navigate = useNavigate();
   const [err, setErr] = useState<string | null>(null);
   return (
-    <div className="rounded-2xl border-2 border-danger-solid bg-danger-solid/10 p-4" data-testid="emergency-call">
+    <div className="rounded-2xl border-2 border-danger-solid bg-surface p-4 shadow-card" data-testid="emergency-call">
       <div className="flex items-center gap-2"><Badge tone="danger" dot pulse>Chamado emergencial</Badge><span className="text-caption text-fg-subtle">{formatDateTime(wo.requested_at ?? wo.created_at)}</span></div>
       <p className="mt-2 text-heading text-fg">{wo.title}</p>
       <p className="text-body text-fg-muted">{names.machine(wo)}{wo.position_name ? ` · ${wo.position_name}` : ""}</p>

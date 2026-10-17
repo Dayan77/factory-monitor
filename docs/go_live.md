@@ -96,6 +96,17 @@ Guarde uma cópia no seu cofre de senhas (não no VPS só).
 - [ ] **5.3** Actions → **Deploy** → `version=v0.7.0`, `target=production` → **aprove** no environment. O script
       faz backup pré-deploy, migrations com timeout e healthcheck; falhou → volta sozinho.
 - [ ] **5.4** `cat /opt/factory-monitor/.deploy/production.current` → `0.7.0 <sha>`; `dc ps` tudo healthy.
+- [ ] **5.5** **Meta de escala aberta — confirmar antes de abrir para clientes com mais de ~100 máquinas.** O
+      atraso de ingestão p95 (leitura → WebSocket) ficou em 8,4 s contra a meta de 2 s no host de teste de 4 vCPU
+      compartilhado ([performance.md §1.0](performance.md)); as outras 6 metas fecharam. No VPS de produção
+      (8 vCPU, [performance.md §1.2](performance.md)) refaça a medição **antes** de liberar o tráfego real. O harness
+      precisa da infraestrutura de dev (`make infra`: containers `fm_postgres`, `fm_influxdb`; ele cria banco,
+      bucket, broker, API e worker próprios e apaga tudo no fim), então rode-o numa VM do mesmo tamanho do VPS ou
+      no próprio VPS enquanto a produção ainda não tem clientes, num checkout com `make venv`:
+      `DURATION_S=1800 API_PORT=8190 BROKER_PORT=8192 DB=fm_scale_golive .venv/bin/python e2e/scale/load.py` →
+      sai 0 e `targets.ingestion_lag_p95_lt_2s=true` em `e2e/scale/result.json`. Registre o resultado em
+      performance.md §1.0. Se falhar, limite o piloto a ≤ 100 máquinas (≈ 1 300 leituras/s, onde todas as metas
+      foram medidas) até resolver.
 
 ## 6. Primeiro acesso: superadmin sem senha padrão
 
