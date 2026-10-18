@@ -1,5 +1,8 @@
 # FactoryConnect
 
+[![CI](https://github.com/Dayan77/factory-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/Dayan77/factory-monitor/actions/workflows/ci.yml)
+[![Security](https://github.com/Dayan77/factory-monitor/actions/workflows/security.yml/badge.svg)](https://github.com/Dayan77/factory-monitor/actions/workflows/security.yml)
+
 Plataforma SaaS multi-tenant de Indústria 4.0: conecta CLPs e linhas de produção, coleta os dados fundamentais e
 entrega o **raio-x da fábrica** para produção e manutenção — OEE (ISO 22400), paradas e perdas, confiabilidade
 (MTBF/MCBF/MTTR, ISO 14224), uso de cada componente, planos e ordens de manutenção, preditiva e um assistente de IA
