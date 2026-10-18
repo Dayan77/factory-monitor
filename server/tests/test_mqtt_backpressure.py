@@ -123,6 +123,17 @@ async def test_influx_write_failure_is_resent(client, tenants, fast_retry, monke
     assert [v for _, v in pts[a.tag["id"]]] == [7.0]
 
 
+def _broker_inflight_window() -> int:
+    """max_inflight_messages of the broker config the dev stack and CI run (infra/mosquitto/mosquitto.conf)."""
+    from pathlib import Path
+    conf = Path(__file__).resolve().parents[2] / "infra/mosquitto/mosquitto.conf"
+    for line in conf.read_text().splitlines():
+        parts = line.split("#", 1)[0].split()
+        if len(parts) == 2 and parts[0] == "max_inflight_messages":
+            return int(parts[1])
+    return 20                               # mosquitto default
+
+
 def _broker_up() -> bool:
     import socket
     try:
@@ -144,7 +155,10 @@ async def test_subscriber_is_bounded_and_loses_nothing_through_the_real_broker(m
 
     tenant = str(uuid.uuid4())
     tags = [str(uuid.uuid4()) for _ in range(3)]
-    bound, per_tag = 8, 200
+    # the backlog must exceed the broker's in-flight window, or "held at the window" and "everything pushed"
+    # look the same (Sprint 7 raised the window from 100 to 2000)
+    window = _broker_inflight_window()
+    bound, per_tag = 8, (window + 1200) // 3 + 1
     got: dict[str, list[int]] = {t: [] for t in tags}
     active = {"n": 0, "max": 0}
 
@@ -205,6 +219,6 @@ async def test_subscriber_is_bounded_and_loses_nothing_through_the_real_broker(m
     assert all(v == list(range(per_tag)) for v in got.values()), {t: v[:5] for t, v in got.items()}
     assert active["max"] <= 4                                  # fixed worker pool
     assert queued["inflight"] <= bound
-    # acknowledged only when finished → the broker stops at its in-flight window (100) instead of pushing the
+    # acknowledged only when finished → the broker stops at its in-flight window instead of pushing the
     # whole backlog into the client's unbounded receive queue
-    assert queued["max"] <= 110, queued
+    assert queued["max"] <= window + 10, (queued, window)
