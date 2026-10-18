@@ -89,11 +89,12 @@ class HostLag:
         return max(0.0, self.max_gap_s - self.interval_s)
 
 
-async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.db", start_offset=0, lag=None):
+async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.db", start_offset=0, lag=None,
+                      store=None):
     port = free_port()
     plc = ModbusPlc("127.0.0.1", port, [1])
     await plc.start()
-    store = EdgeCounterStore(str(tmp_path / db_name))
+    store = store or EdgeCounterStore(str(tmp_path / db_name))
     rec = Recorder()
     poller = PulsePoller("127.0.0.1", port, [_pulse_tag()], store, rec, interval_ms=poll_ms)
     task = asyncio.create_task(poller.run())
@@ -113,6 +114,7 @@ async def _run_pulses(tmp_path, n_pulses, high_ms, low_ms, poll_ms, db_name="c.d
         await asyncio.sleep(0.1)       # último pulso amostrado
         stop.set()
         await driver
+        await poller.flush()           # e gravado
         assert train.emitted == n_pulses
         return store.get("cell.a1.eos"), rec, poller
     finally:
@@ -156,6 +158,43 @@ async def test_counter_survives_gateway_restart(tmp_path):
     assert first_report == 15.0      # ao reconectar publica o acumulado persistido, não zero
 
 
+class SlowStore(EdgeCounterStore):
+    """Disco lento (cartão SD, disco disputado no CI): cada commit leva `delay_s`; as primeiras `fail` falham."""
+
+    def __init__(self, path, delay_s=0.0, fail=0):
+        super().__init__(path)
+        self.delay_s, self.fail, self.commits = delay_s, fail, 0
+
+    def add_many(self, increments):
+        time.sleep(self.delay_s)                  # bloqueia a thread que grava (fsync), não o loop
+        if self.fail:
+            self.fail -= 1
+            raise OSError("disk I/O error")
+        self.commits += 1
+        return super().add_many(increments)
+
+
+async def test_slow_disk_does_not_delay_sampling(tmp_path):
+    """Commit de 120 ms (> 1 pulso inteiro) por gravação: a amostragem segue a cada 20 ms, nenhum pulso se perde
+    e os incrementos que acumularam durante um commit lento vão juntos numa transação só."""
+    lag = HostLag(0.02)
+    store = SlowStore(str(tmp_path / "slow.db"), delay_s=0.12)
+    total, rec, poller = await _run_pulses(tmp_path, 30, 50, 50, 20, lag=lag, store=store)
+    assert total == 30
+    assert rec.last("tag-a1") == 30.0
+    vals = [v for t, v, _ in rec.items if t == "tag-a1"]
+    assert vals == sorted(vals)
+    assert store.commits < 30                     # agrupou
+    assert poller.max_gap_s < 0.045 + lag.host_delay_s, f"polling atrasou {poller.max_gap_s * 1000:.0f} ms"
+
+
+async def test_failed_write_is_retried_not_dropped(tmp_path):
+    store = SlowStore(str(tmp_path / "fail.db"), fail=2)
+    total, rec, _ = await _run_pulses(tmp_path, 10, 50, 50, 20, store=store)
+    assert total == 10
+    assert rec.last("tag-a1") == 10.0
+
+
 async def test_end_to_end_virtual_plant_pulses(tmp_path):
     """Bit de fim de curso do A1 na planta virtual acelerada (200×): contagem do edge = pulsos emitidos."""
     rt = VirtualPlantRuntime(PlantModel(seed=42, faults=False), speed=200, opcua_port=free_port(),
@@ -178,6 +217,7 @@ async def test_end_to_end_virtual_plant_pulses(tmp_path):
             p = poller.polls
             while poller.polls < p + 2:
                 await asyncio.sleep(0.002)
+            await poller.flush()
 
         while True:  # linha de base estável: bit em 0, sem pulso novo enquanto os polls assentam
             while train.level:

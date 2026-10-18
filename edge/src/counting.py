@@ -8,7 +8,9 @@ Contagem de borda no edge para tags `cycle_pulse` (docs/domain.md §3.2).
 - `PulsePoller`: lê os bits Modbus em polling rápido (padrão 20 ms, agendamento sem deriva), persiste a
   contagem **antes** de publicar e publica sempre o **acumulado** (nunca delta): mensagem perdida ou
   repetida não altera o total. Também republica o acumulado a cada `report_every_s` (o deadband com
-  heartbeat decide se vai para o broker).
+  heartbeat decide se vai para o broker). A amostragem só detecta bordas: gravar (fsync do SQLite, lento em
+  cartão SD ou disco disputado) e publicar ficam numa tarefa escritora única, em ordem, para um commit lento
+  não atrasar a próxima amostra e perder pulso.
 
 Limite físico: o polling DEVE amostrar ≥ 2× por pulso (pulso de 50 ms → ≤ 25 ms). Pulsos durante a queda
 do próprio edge são perdidos (a queda só da nuvem é coberta pelo buffer SQLite) — por isso, quando o CLP
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
@@ -36,6 +39,7 @@ OnCount = Callable[[str, float, Optional[datetime]], Awaitable[None]]
 class EdgeCounterStore:
     def __init__(self, path: str) -> None:
         self._path = path
+        self._lock = threading.Lock()   # a escritora do PulsePoller grava numa thread; leituras vêm do loop
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")   # contagem confirmada = contagem em disco
@@ -48,29 +52,36 @@ class EdgeCounterStore:
         """)
 
     def get(self, key: str) -> int:
+        with self._lock:
+            return self._get(key)
+
+    def _get(self, key: str) -> int:
         row = self._db.execute("SELECT value FROM edge_counters WHERE key = ?", (key,)).fetchone()
         return int(row[0]) if row else 0
 
     def add_many(self, increments: dict[str, int]) -> dict[str, int]:
         """Soma incrementos (≥ 0) numa transação; retorna os novos totais."""
         now = datetime.now(timezone.utc).isoformat()
-        with self._db:
-            self._db.execute("BEGIN")
-            for key, n in increments.items():
-                if n < 0:
-                    raise ValueError("contador do edge é monotônico (incremento negativo)")
-                self._db.execute(
-                    "INSERT INTO edge_counters (key, value, updated_at) VALUES (?, ?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value, updated_at = excluded.updated_at",
-                    (key, n, now),
-                )
-        return {k: self.get(k) for k in increments}
+        if any(n < 0 for n in increments.values()):
+            raise ValueError("contador do edge é monotônico (incremento negativo)")
+        with self._lock:
+            with self._db:
+                self._db.execute("BEGIN")
+                for key, n in increments.items():
+                    self._db.execute(
+                        "INSERT INTO edge_counters (key, value, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value, "
+                        "updated_at = excluded.updated_at",
+                        (key, n, now),
+                    )
+            return {k: self._get(k) for k in increments}
 
     def add(self, key: str, n: int = 1) -> int:
         return self.add_many({key: n})[key]
 
     def close(self) -> None:
-        self._db.close()
+        with self._lock:
+            self._db.close()
 
 
 class PulseEdgeCounter:
@@ -114,6 +125,9 @@ class PulsePoller:
         self._client = client or AsyncModbusTcpClient(host=host, port=port, timeout=1, retries=0)
         self._edges = {t.key: PulseEdgeCounter() for t in tags}
         self._running = False
+        # bordas detectadas → escritora (persiste e publica em ordem); None = republicar o acumulado
+        self._writes: asyncio.Queue[Optional[tuple[dict[str, int], datetime]]] = asyncio.Queue()
+        self._writer: Optional[asyncio.Task] = None
         # diagnóstico
         self.polls = 0
         self.max_gap_s = 0.0
@@ -144,22 +158,68 @@ class PulsePoller:
         return levels
 
     async def poll_once(self, ts: Optional[datetime] = None) -> dict[str, int]:
-        """Lê os bits, conta bordas, persiste e publica. Retorna {key: incremento}."""
+        """Lê os bits e conta bordas; a escritora persiste e publica (ver `flush`). Retorna {key: incremento}."""
         ts = ts or datetime.now(timezone.utc)
         levels = await self._read_levels()
         self.polls += 1
         inc = {key: 1 for key, lvl in levels.items() if self._edges[key].sample(lvl)}
         if inc:
-            totals = self.store.add_many(inc)            # persiste antes de publicar
-            for t in self.tags:
-                if t.key in totals:
-                    await self.on_count(t.tag_id, float(totals[t.key]), ts)
+            self._ensure_writer()
+            self._writes.put_nowait((inc, ts))
         return inc
 
     async def report_totals(self) -> None:
-        now = datetime.now(timezone.utc)
-        for t in self.tags:
-            await self.on_count(t.tag_id, float(self.store.get(t.key)), now)
+        """Republica o acumulado — pela escritora, para nunca sair um total menor depois de um maior."""
+        self._ensure_writer()
+        self._writes.put_nowait(None)
+
+    async def flush(self) -> None:
+        """Espera tudo o que já foi amostrado estar gravado e publicado."""
+        if self._writer is not None and not self._writer.done():
+            await self._writes.join()
+
+    def _ensure_writer(self) -> None:
+        if self._writer is None or self._writer.done():
+            self._writer = asyncio.create_task(self._write_loop())
+
+    async def _write_loop(self) -> None:
+        carry: dict[str, int] = {}                   # incrementos de uma gravação que falhou: vão na próxima
+        carry_ts: Optional[datetime] = None
+        while True:
+            items = [await self._writes.get()]
+            while not self._writes.empty():          # disco lento: junta o que acumulou numa transação só
+                items.append(self._writes.get_nowait())
+            inc, ts, report = dict(carry), carry_ts, False
+            for it in items:
+                if it is None:
+                    report = True
+                    continue
+                for k, n in it[0].items():
+                    inc[k] = inc.get(k, 0) + n
+                ts = it[1]
+            persisted = not inc
+            try:
+                if inc:
+                    totals = await asyncio.to_thread(self.store.add_many, inc)   # persiste antes de publicar
+                    persisted = True
+                    carry, carry_ts = {}, None
+                    for t in self.tags:
+                        if t.key in totals:
+                            await self.on_count(t.tag_id, float(totals[t.key]), ts)
+                if report:
+                    now = datetime.now(timezone.utc)
+                    for t in self.tags:
+                        await self.on_count(t.tag_id, float(self.store.get(t.key)), now)
+            except Exception as e:  # noqa: BLE001
+                log.error("pulse_poller.write_failed", error=str(e), persisted=persisted,
+                          pending=0 if persisted else sum(inc.values()))
+                if not persisted:                    # não gravou: nenhum pulso descartado, tenta de novo
+                    carry, carry_ts = inc, ts
+                    await asyncio.sleep(0.5)
+                    self._writes.put_nowait(None)
+            finally:
+                for _ in items:
+                    self._writes.task_done()
 
     async def run(self) -> None:
         self._running = True
@@ -206,3 +266,11 @@ class PulsePoller:
     async def stop(self) -> None:
         self._running = False
         self._client.close()
+        try:
+            await asyncio.wait_for(self.flush(), timeout=10.0)   # o que já foi contado vai para o disco
+        except asyncio.TimeoutError:
+            log.error("pulse_poller.flush_timeout", pending=self._writes.qsize())
+        if self._writer is not None:
+            self._writer.cancel()
+            await asyncio.gather(self._writer, return_exceptions=True)
+            self._writer = None
