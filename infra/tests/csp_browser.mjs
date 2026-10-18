@@ -12,7 +12,9 @@ import { pathToFileURL } from "node:url";
 const OPT_PW = "/opt/node-tools/node_modules/playwright/index.mjs";
 let mod = process.env.PLAYWRIGHT_MODULE || (existsSync(OPT_PW) ? OPT_PW : null);
 if (!mod) mod = pathToFileURL(createRequire(`${process.cwd()}/`).resolve("playwright")).href;
-const { chromium } = await import(mod);
+// O "playwright" resolvido via require é CommonJS: no import() dinâmico os exports podem vir em `default`.
+const pw = await import(mod);
+const chromium = pw.chromium ?? pw.default?.chromium;
 const OPT_CHROMIUM = "/opt/pw-browsers/chromium";
 const executablePath = process.env.CHROMIUM_PATH || (existsSync(OPT_CHROMIUM) ? OPT_CHROMIUM : undefined);
 
