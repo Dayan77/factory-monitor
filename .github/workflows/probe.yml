@@ -1,0 +1,11 @@
+# Temporary diagnostic workflow: confirms whether GitHub Actions can start any job in this repository.
+# Remove once CI startup is confirmed.
+name: Probe
+on:
+  push:
+    paths: [".github/workflows/probe.yml"]
+jobs:
+  hello:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Actions is able to start jobs in this repository."
