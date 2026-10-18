@@ -171,16 +171,28 @@ async def test_end_to_end_virtual_plant_pulses(tmp_path):
         while not (poller.connected and poller.polls > 0):
             await asyncio.sleep(0.01)
         train = rt.pulses["montagem.fixacao.a1.eos"]
-        while train.level:
-            await asyncio.sleep(0.005)
-        base_emitted = train.emitted
+
+        async def settled_polls() -> None:
+            # Uma leitura em voo pode ter visto o bit em 1 e ainda não ter persistido a contagem:
+            # espera 2 polls completos (o 2º começa depois desta chamada).
+            p = poller.polls
+            while poller.polls < p + 2:
+                await asyncio.sleep(0.002)
+
+        while True:  # linha de base estável: bit em 0, sem pulso novo enquanto os polls assentam
+            while train.level:
+                await asyncio.sleep(0.005)
+            base_emitted = train.emitted
+            await settled_polls()
+            if not train.level and train.emitted == base_emitted:
+                break
         base_count = store.get("cell.a1.eos")
         await asyncio.sleep(4.0)
         await rt.freeze()              # congela o modelo; o trem de pulsos esvazia a fila já devida
         while train.backlog or train.level:
             await asyncio.sleep(0.01)
         emitted = train.emitted
-        await asyncio.sleep(0.1)       # último pulso amostrado
+        await settled_polls()          # último pulso amostrado e persistido
         counted = store.get("cell.a1.eos") - base_count
         await poller.stop()
         task.cancel()
