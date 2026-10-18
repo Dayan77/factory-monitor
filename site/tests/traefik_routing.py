@@ -29,7 +29,10 @@ NET = "fmroutingtest_net"
 
 
 def sh(*args, **kw):
-    return subprocess.run(args, check=True, capture_output=True, text=True, **kw)
+    r = subprocess.run(args, capture_output=True, text=True, **kw)
+    if r.returncode:
+        raise SystemExit(f"falhou ({r.returncode}): {' '.join(map(str, args))}\n{r.stderr.strip()}")
+    return r
 
 
 def prod_config(tmp: Path) -> dict:
@@ -42,8 +45,18 @@ def prod_config(tmp: Path) -> dict:
             k, v = line.split("=", 1)
             lines.append(f"{k.strip()}={v.strip() or 'dummy'}")
     env.write_text("\n".join(lines) + "\n")
-    out = sh("docker", "compose", "--env-file", str(env), "-f", str(ROOT / "infra/docker-compose.prod.yml"),
-             "config", "--format", "json").stdout
+    # O compose de produção também lê ../.env (env_file). No CI e em clones novos ele não existe:
+    # usa o mesmo .env fictício só durante o `config` e remove em seguida (nunca sobrescreve um .env real).
+    root_env = ROOT / ".env"
+    created = not root_env.exists()
+    if created:
+        root_env.write_text(env.read_text())
+    try:
+        out = sh("docker", "compose", "--env-file", str(env), "-f", str(ROOT / "infra/docker-compose.prod.yml"),
+                 "config", "--format", "json").stdout
+    finally:
+        if created:
+            root_env.unlink(missing_ok=True)
     return json.loads(out)
 
 
