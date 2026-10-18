@@ -15,9 +15,9 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.30.5-alpine AS prod
-# Correções de segurança do Alpine ainda não incluídas na imagem base (Trivy, Sprint 7: libexpat CVE-2026-93990,
-# pcre2 CVE-2026-103111). Remova quando a tag base nova já trouxer as versões corrigidas.
-RUN apk add --no-cache --upgrade libexpat pcre2
+# Aplica todas as correções de segurança do Alpine já publicadas que a tag base ainda não traz
+# (o Trivy no CI reprova HIGH/CRITICAL com correção disponível: libexpat, pcre2, libx11, tiff…).
+RUN apk upgrade --no-cache
 ARG FM_VERSION=dev
 LABEL org.opencontainers.image.title="factoryconnect-web" \
       org.opencontainers.image.description="App web do FactoryConnect (React, servido por nginx)" \
