@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from edge.src import gateway as gw_mod
+from edge.src.counting import PulsePoller
 from edge.src.plant_map import parse_plant_map
 from edge.tests.conftest import free_port
 from edge.tests.test_plant_map import provisioned_doc
@@ -64,6 +65,23 @@ async def test_full_path_virtual_plant_to_mqtt(gateway):
                 d._reconnect_delay = 0.2
         gateway._running = True
         tasks = [asyncio.create_task(d.run()) for d in gateway.drivers]
+        # linha de base do bit de fim de curso: só conta o que for emitido depois da 1ª amostra do poller
+        # (num runner lento a planta já emitiu pulsos enquanto os drivers conectavam)
+        poller = next(d for d in gateway.drivers if isinstance(d, PulsePoller))
+        train = rt.pulses["montagem.fixacao.a1.eos"]
+        while not (poller.connected and poller.polls > 0):
+            await asyncio.sleep(0.01)
+        while True:
+            while train.level:
+                await asyncio.sleep(0.005)
+            base_emitted = train.emitted
+            p = poller.polls
+            while poller.polls < p + 2:   # leitura em voo assentada
+                await asyncio.sleep(0.002)
+            await poller.flush()
+            if not train.level and train.emitted == base_emitted:
+                break
+        base_count = gateway.counter_store.get("montagem.fixacao.a1.eos")
         await asyncio.sleep(5.0)
         await rt.freeze()
         await asyncio.sleep(1.5)    # última rodada de leitura com o modelo parado
@@ -102,7 +120,7 @@ async def test_full_path_virtual_plant_to_mqtt(gateway):
     pulse_vals = [p["value"] for k, p in readings if k == "montagem.fixacao.a1.eos"]
     assert pulse_vals == sorted(pulse_vals)
     assert pulse_vals[-1] == gateway.counter_store.get("montagem.fixacao.a1.eos")
-    assert abs(pulse_vals[-1] - emitted.emitted) <= 1   # o 1º pulso pode estar alto ao conectar
+    assert pulse_vals[-1] - base_count == emitted.emitted - base_emitted
     assert pulse_vals[-1] >= 5
 
     # OPC UA: timestamp de origem (SourceTimestamp do servidor), recente e em UTC
