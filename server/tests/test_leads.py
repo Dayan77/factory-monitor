@@ -1,4 +1,5 @@
 """POST /api/public/leads: store, honeypot, consent, per-IP rate limit, e-mail notification, CORS."""
+import ipaddress
 import uuid
 
 import httpx
@@ -11,6 +12,13 @@ def lead(**kw):
             "phone": "+55 92 99999-0000", "message": "Quero uma demo", "consent": True, "website": ""}
     body.update(kw)
     return body
+
+
+def unique_ip() -> str:
+    """An address no other test (or earlier run on the same database) uses: the per-IP limit is counted in the
+    leads table, so a shared address would start the count above zero. IPv6 documentation range, not a trusted
+    proxy."""
+    return str(ipaddress.IPv6Address((0x20010DB8 << 96) | (uuid.uuid4().int >> 32)))
 
 
 def client_from(app, ip: str) -> httpx.AsyncClient:
@@ -80,7 +88,7 @@ async def test_missing_consent_is_422(app):
 
 async def test_rate_limit_per_ip(app, db, sent):
     from src.config import settings
-    ip = f"198.51.100.{uuid.uuid4().int % 250}"
+    ip = unique_ip()
     async with client_from(app, ip) as c:
         for _ in range(settings.leads_rate_limit_per_hour):
             assert (await c.post("/api/public/leads", json=lead())).status_code == 202
@@ -96,7 +104,7 @@ async def test_spoofed_left_most_x_forwarded_for_does_not_change_rate_limit_key(
     """Behind a proxy that appends to X-Forwarded-For (nginx $proxy_add_x_forwarded_for, Traefik),
     the client controls the left-most entries. The key must be the right-most untrusted entry."""
     from src.config import settings
-    real = f"203.0.113.{uuid.uuid4().int % 250}"
+    real = unique_ip()
     proxy = "172.18.0.5"                                   # docker network → trusted proxy
     async with client_from(app, proxy) as c:
         for i in range(settings.leads_rate_limit_per_hour):
@@ -109,7 +117,7 @@ async def test_spoofed_left_most_x_forwarded_for_does_not_change_rate_limit_key(
 async def test_x_forwarded_for_from_an_untrusted_peer_is_ignored(app, db, sent):
     """A client talking to the API directly cannot pick its IP via X-Forwarded-For."""
     from src.config import settings
-    ip = f"198.51.100.{uuid.uuid4().int % 250}"
+    ip = unique_ip()
     async with client_from(app, ip) as c:
         for i in range(settings.leads_rate_limit_per_hour):
             r = await c.post("/api/public/leads", json=lead(), headers={"X-Forwarded-For": f"192.0.2.{i}"})
