@@ -124,8 +124,14 @@ async def test_full_path_virtual_plant_to_mqtt(gateway):
     pulse_vals = [p["value"] for k, p in readings if k == "montagem.fixacao.a1.eos"]
     assert pulse_vals == sorted(pulse_vals)
     assert pulse_vals[-1] == gateway.counter_store.get("montagem.fixacao.a1.eos")
-    assert emitted.emitted - base_emitted >= 5
-    assert pulse_vals[-1] - base_count == emitted.emitted - base_emitted
+    expected, counted = emitted.emitted - base_emitted, pulse_vals[-1] - base_count
+    assert expected >= 5
+    # Exato, a menos que o próprio runner tenha travado o loop por mais que um pulso inteiro (aqui a planta, os
+    # drivers e o publicador dividem um event loop; um CLP real não). Sem esse travamento, faltar pulso é bug.
+    starved = poller.max_gap_s >= emitted.high_s
+    assert counted == expected or (starved and 0 < expected - counted <= 2), (
+        f"contou {counted:.0f} de {expected} pulsos; maior intervalo entre leituras "
+        f"{poller.max_gap_s * 1000:.0f} ms (pulso {emitted.high_s * 1000:.0f} ms), overruns {poller.overruns}")
     assert pulse_vals[-1] >= 5
 
     # OPC UA: timestamp de origem (SourceTimestamp do servidor), recente e em UTC
