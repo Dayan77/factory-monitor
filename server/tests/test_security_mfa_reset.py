@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from sqlalchemy import update
 
-from sec_helpers import STRONG, STRONG2, audit_actions, bearer, login, make_sec_tenant, new_ip
+from sec_helpers import STRONG, STRONG2, audit_actions, bearer, login, make_sec_tenant, new_ip, pin_throttle_clock
 
 
 @pytest.fixture
@@ -263,6 +263,7 @@ async def test_password_reset_rate_limits(client, st, mails, monkeypatch):
         assert r.status_code == 202
     assert len([m for m in mails if m[1] == st.email("admin")]) == settings.password_reset_per_email_per_hour
     monkeypatch.setattr(settings, "password_reset_per_ip_per_hour", 2)
+    pin_throttle_clock(monkeypatch)
     ip2 = new_ip()
     codes = [(await client.post("/api/auth/password-reset/request", json={"email": f"n{i}@example.com"},
                                 headers={"X-Forwarded-For": ip2})).status_code for i in range(3)]

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from jose import jwt
 
-from sec_helpers import STRONG, STRONG2, STRONG3, audit_actions, bearer, login, make_sec_tenant, new_ip
+from sec_helpers import STRONG, STRONG2, STRONG3, audit_actions, bearer, login, make_sec_tenant, new_ip, pin_throttle_clock
 
 
 @pytest.fixture
@@ -226,6 +226,7 @@ async def test_success_resets_account_counter(client, st):
 async def test_login_rate_limit_per_ip(client, st, monkeypatch):
     from src.config import settings
     monkeypatch.setattr(settings, "login_rate_per_ip_per_min", 3)
+    pin_throttle_clock(monkeypatch)
     ip = new_ip()
     for _ in range(3):
         await login(client, st.email("manager"), STRONG, ip=ip, expect=200)

@@ -14,6 +14,17 @@ STRONG3 = "Cascata_Bussola*5172"
 _ip_counter = itertools.count(1)
 
 
+def pin_throttle_clock(monkeypatch) -> None:
+    """Rate limits count in fixed windows (a minute, an hour). A test that sends N requests and expects the N+1-th
+    to be refused fails if a window boundary falls between them (slow CI: every login hashes a password). Pin the
+    throttle clock to the middle of the current hour, so every request of the test lands in the same window."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.services.security import throttle
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(minutes=30)
+    monkeypatch.setattr(throttle, "_now", lambda: now)
+
+
 def new_ip() -> str:
     n = next(_ip_counter) + uuid.uuid4().int % 50_000
     return f"198.18.{(n // 250) % 250}.{n % 250 + 1}"
