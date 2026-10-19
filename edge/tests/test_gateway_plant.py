@@ -50,8 +50,12 @@ async def gateway(tmp_path, monkeypatch):
 
 
 async def test_full_path_virtual_plant_to_mqtt(gateway):
+    # Pulsos de 100 ms (5 amostras por pulso a 20 ms): aqui a planta, os dois drivers e o publicador dividem um
+    # só event loop, e um soluço de ~50 ms do runner engoliria um pulso de 50 ms. O limite de tempo da amostragem
+    # é verificado em test_counting.py (descontando o atraso do host); este teste confere a contagem ponta a ponta.
     rt = VirtualPlantRuntime(PlantModel(seed=42, faults=False), speed=100, opcua_port=free_port(),
-                             modbus_port=free_port(), status_port=None, update_ms=20)
+                             modbus_port=free_port(), status_port=None, update_ms=20,
+                             pulse_high_ms=100, pulse_low_ms=100)
     doc = provisioned_doc()
     pm = parse_plant_map(doc, env={"VIRTUAL_PLANT_HOST": "127.0.0.1",
                                    "VIRTUAL_PLANT_OPCUA_PORT": str(rt.opcua_port),
@@ -120,6 +124,7 @@ async def test_full_path_virtual_plant_to_mqtt(gateway):
     pulse_vals = [p["value"] for k, p in readings if k == "montagem.fixacao.a1.eos"]
     assert pulse_vals == sorted(pulse_vals)
     assert pulse_vals[-1] == gateway.counter_store.get("montagem.fixacao.a1.eos")
+    assert emitted.emitted - base_emitted >= 5
     assert pulse_vals[-1] - base_count == emitted.emitted - base_emitted
     assert pulse_vals[-1] >= 5
 
