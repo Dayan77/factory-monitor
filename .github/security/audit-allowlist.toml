@@ -102,3 +102,14 @@ projects = ["web"]
 scope = "dev"
 reason = """Mesmo caso do GHSA-5gmw-xhrv-c9v3 (tinypool via vitest, só testes)."""
 expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-587h-7wmj-h5pm"
+ecosystem = "npm"
+package = "vite"
+projects = ["web"]
+scope = "dev"
+reason = """launch-editor embutido no servidor de DESENVOLVIMENTO do vite (abrir arquivo no editor): o bypass de
+fs.existsSync() só existe no Windows e só com `vite dev` rodando. Produção serve o build estático pelo nginx (sem
+vite). Correção = vite 6.4.4+/8.3.5 (major a partir do 5.x do web) — migrar junto com vitest 3+."""
+expires = 2027-01-31

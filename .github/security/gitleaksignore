@@ -47,3 +47,11 @@ de19833aa1d749cea8e5b4c6020dfad40b36e7f7:server/tests/test_sprint4_review_fixes.
 9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/backup_restore_test.sh:fm-shell-secret-assignment:58
 9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/backup_restore_test.sh:fm-shell-secret-assignment:83
 0b96d282a0af580a102bf2f787dd3f98544866f9:scripts/push_deploy.sh:fm-shell-secret-assignment:95
+# edge/config/ueapd.example.json: "key" das tags do mapa da planta (ex.: ledd.m1.parts_scrap) — identificador, não segredo (generic-api-key falso positivo)
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:197
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:245
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:261
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:277
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:341
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:373
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:389
