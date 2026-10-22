@@ -19,6 +19,11 @@ processo de release; não há tag nem imagem publicada delas).
 Sprint 7b — Fase 6 (conclusão): auditoria de KPIs, detectores, escala e gate completo do Sprint 7.
 
 ### Adicionado
+- Gateway: fonte `ueapd` para os boxes ueaPowerDriver (linha de LED driver, M1 hipot + M2 ATS2) pela API HTTP
+  do próprio box, sem mudar o box — peças boas/refugo por passe fechado, ciclos por estação, `run_state` e
+  `fault_state` com códigos por tag de falha do CLP; contagem idempotente (offset + dedupe por passe na mesma
+  transação SQLite). Mapa de exemplo `edge/config/ueapd.example.json` e box simulado com o código real do box
+  (`edge/tools/ueapd_box_sim.py`) — edge/README.md, seção "Boxes ueaPowerDriver".
 - `GET /api/downtime/no-data?start&stop&line_id|machine_id`: intervalos explícitos **sem dados** por máquina
   (S7-22). A linha do tempo de estados pinta "sem dados" em vez de verde "sem parada registrada".
 - Campo `open_stale` em `GET /api/failures/` e `GET /api/failures/{id}`, e selo `stale_failure` ("falha aberta há

@@ -250,6 +250,88 @@ fica `offline` na frota) — apague o arquivo de credencial e cadastre com um c�
 Verificação manual (rede de testes): `python -m edge.src.enrollment --server https://... --code ...` cadastra sem subir
 o gateway e mostra a credencial mascarada.
 
+## Boxes ueaPowerDriver (linha de LED driver: M1 hipot + M2 ATS2) — fonte `ueapd`
+
+Os dois boxes da linha (M1 "hipot" e M2 "ats2", serviço FastAPI `:8003` em cada um) já gravam tudo o que o
+FactoryConnect precisa: um **passe fechado por pallet** (`passes-AAAAMMDD.jsonl`) e os **eventos de manutenção**
+(`manut-AAAAMMDD.jsonl`, com as bordas de falha do CLP). O gateway lê isso pela API HTTP do próprio box — **nada
+muda no box** (é o "coletor central" previsto em `ueapowerdriver/docs/RASTREABILIDADE.md §5`, com a mesma primitiva
+de pull do espelho cruzado entre os boxes). Driver: `edge/src/protocols/ueapd.py`; mapa de exemplo:
+`edge/config/ueapd.example.json` (planta "Inventus Power", linha "Linha LED Driver", máquinas "M1 Hipot" e "M2 ATS2").
+
+**Endpoints usados (só GET):** `/auto/trace/files` (índice dos arquivos com o tamanho), `/auto/trace/pull?file=&offset=`
+(bytes novos a partir do offset, até 1 MB, cortado na última linha completa) e `/auto/state` (estado vivo). O cabeçalho
+`Date` das respostas mede o relógio do box.
+
+| tag (`address`) | papel | regra |
+|---|---|---|
+| `state:run` | `run_state` | 1 ⇔ armado ∧ `gate.ok` (MODO_AUTO ∧ SAFETY_OK ∧ EMERG_OK ∧ reset) ∧ sem reconciliação pendente ∧ nenhuma falha do CLP ativa; senão 0. Armado e ocioso (sem pallet) conta como rodando — a perda aparece como desempenho/micro-parada. |
+| `state:fault` | `fault_state` | código da falha do CLP ativa há mais tempo; 0 = nenhuma. Bordas `falha_clp`/`falha_clp_fim` do manut (instante exato, pega falha mais curta que o polling); `faults` do `/auto/state` reconcilia |
+| `passes:good` / `passes:scrap` / `passes:total` | `part_counter_*` | passe fechado com `verdict.ok` true → boa, false → refugo; acumulado no edge, instante = `finished_at` |
+| `cycles:<estágio>[:P<n>]` | `cycle_counter` | eventos do estágio com `ok` true/false, sem `skip` (pulado / passagem) e sem `auto`; retestes contam; `:P1`/`:P2` = posto do estágio (ATS2/funcional têm 2) — liga à posição (MCBF/uso do testador ou do laser) |
+| `state:cadence` | `analog` | `cadencia.ph` do box (peças/h); sem valor quando o box não sabe |
+| `measure:<estágio>:<chave>[.<sub>]` | `analog` | número no `detail` do evento, uma leitura por evento. **Hoje o box não grava medições numéricas** (o ATS guarda Pass/Fail + referência do `.xlsx`; o hipot entra quando a fonte real existir) — próximo passo: ler EFF/PF do relatório ATS |
+
+Estágios: M1 `laser_1`, `laser_2`, `hipot_1`, `hipot_2` (hipot 2 + câmera co-locados; os `transito_*` são buffers);
+M2 `leitura`, `ats2_1`, `ats2_2`, `funcional`.
+
+**Códigos de falha** (`sources[].fault_codes` sobre os padrões; tag desconhecida → componente → `default_fault_code`):
+
+| tag do CLP | componente | código | categoria |
+|---|---|---|---|
+| `ERRO_TRANSFERENCIA` (M500) | transferência | 101 | mecânica `EQP-01` |
+| `ERRO_STOP` (M501) | stopper | 102 | mecânica `EQP-01` |
+| `SAFETY_CONVEYOR` (M505) | esteira | 103 | mecânica `EQP-01` |
+| `ERRO_CLAMP` (M502) | clamp | 401 | pneumática `EQP-03` |
+| `GRAVADORA_ERRO` (M8, só M1) | laser MD-X | 501 | ferramental `EQP-05` |
+| outra tag | `clp` / leitor / segurança | 301 / 303 / 302 | automação `EQP-04` |
+
+O `fault_code_map` das máquinas no mapa de exemplo já traz essas centenas → motivo.
+
+**Nunca contar duas vezes, nunca perder:** offset por arquivo, passes já contados (hash de line + pass_id + serial +
+início + fim — o `pass_id` do box recomeça a cada reinício do serviço), totais e falhas ativas são gravados numa só
+transação no SQLite dos contadores do edge (`COUNTER_DB_PATH`) antes de publicar; os totais saem como acumulado.
+Gateway reiniciado retoma do offset; arquivo recriado/truncado no box ou offset perdido → relê do início e o dedupe
+segura. Virada do dia: arquivo novo aparece no índice e é lido do início; passe fechado às 23:59 que cai no arquivo
+velho também é lido. Box fora do ar: o gateway não publica nada (nem re-envio) e tenta de novo (2 s → até 30 s); na
+volta puxa o atraso em ordem. 1º contato (`backfill`): `none` (padrão — o histórico anterior não tem `run_state` e
+distorceria o OEE), `latest_day` ou `all` (até 35 dias).
+
+**Timestamps:** `timestamps: gateway` (padrão do exemplo) carimba na leitura (≤ `poll_interval_s` de atraso);
+`source` usa o instante gravado pelo box (`finished_at`, `t`, `ts`) e confere o relógio do box pelo `Date` HTTP
+(resolução 1 s; `max_clock_skew_s` ≥ 2) — box adiantado/atrasado é rebaixado para `gateway` (edge/src/clock.py). Use
+`source` só com NTP nos boxes. Borda de falha mais velha que a última publicada não é reescrita no passado.
+
+**Rede:** a rede da máquina é isolada (switch próprio dos módulos, `ueapowerdriver/docs/integracao_site.html` §1). O
+gateway roda on-prem **dentro** dessa rede (ou com uma perna nela) e é o **único** que fala para fora (MQTT/TLS 8883 e
+HTTPS 443, tabela acima); nenhuma porta de entrada. Do gateway para cada box: **8003/TCP (HTTP)**. O serviço do box
+precisa escutar na LAN: `PLC_HTTP_HOST=0.0.0.0` (o espelho cruzado entre os boxes já exige isso). Atenção: o documento
+de integração do box promete ao cliente que "nada sai da planta" — ligar o FactoryConnect precisa do aceite da TI do
+cliente.
+
+```bash
+python -m edge.src.provision --map edge/config/ueapd.example.json --out edge/config/ueapd.local.json
+UEAPD_M1_URL=http://192.168.1.15:8003 UEAPD_M2_URL=http://192.168.1.16:8003 \
+  PLANT_MAP_PATH=edge/config/ueapd.local.json python -m edge.src.gateway
+```
+
+**Demonstração sem os equipamentos** (`edge/tools/ueapd_box_sim.py`): roda o código REAL do box (orquestrador,
+TraceLog, API `/auto/*`) com a planta simulada do próprio repositório do box (M1: `M1Plant` em laço fechado; M2: fluxo
+de pares modelado no script — o laço fechado `plc/sim/sim.py` do ATS2 trava com o orquestrador atual), testadores com
+NG, falhas do CLP e pausas. Escuta só em 127.0.0.1; o repositório do box é só lido (`python -B`).
+
+```bash
+python3.13 -m venv /tmp/ueapd-venv && /tmp/ueapd-venv/bin/pip install -r <ueapowerdriver>/plc/requirements.txt
+UEAPD_REPO=<ueapowerdriver> /tmp/ueapd-venv/bin/python -B edge/tools/ueapd_box_sim.py --box m1 --port 18003 --trace-dir /tmp/ueapd/m1/trace
+UEAPD_REPO=<ueapowerdriver> /tmp/ueapd-venv/bin/python -B edge/tools/ueapd_box_sim.py --box m2 --port 18004 --trace-dir /tmp/ueapd/m2/trace
+UEAPD_M1_URL=http://127.0.0.1:18003 UEAPD_M2_URL=http://127.0.0.1:18004 UEAPD_TIMESTAMPS=source \
+  PLANT_MAP_PATH=edge/config/ueapd.local.json python -m edge.src.gateway
+```
+
+Limites conhecidos: a configuração remota do servidor (`/api/gateways/{id}/config`, docs/gateways.md) ainda só
+conhece fontes OPC UA/Modbus — o mapa `ueapd` vai por arquivo (`PLANT_MAP_PATH`); eventos de manutenção que não são
+falha do CLP (leitor, pontes, transporte preso) ainda não viram tag.
+
 ## Preditiva — o que o edge entrega (docs/predictive.md P-1)
 
 As características por janela (mediana do bloco de ciclos, médias ponderadas só rodando) são calculadas **no

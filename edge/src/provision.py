@@ -39,6 +39,9 @@ Sprint 3 (OEE) — calendário, produtos e tempo de ciclo ideal por (máquina, p
     devolver "HH:MM:SS"; a comparação normaliza).
     Servidor sem esses endpoints (404/405) → aviso e segue (ativos/tags continuam sendo provisionados).
     Máquina: `fault_code_map` {código → motivo} é aplicado com PATCH só se o servidor expõe o campo.
+    Fonte `ueapd` (box ueaPowerDriver, edge/config/ueapd.example.json): tag com protocol `http` e o seletor
+    (`passes:good`, `cycles:hipot_1`, ...) como `address`; `positions[].counter_tag` liga o contador de ciclos da
+    estação à posição (MCBF / uso do testador).
     Tags de produto atual / starved / blocked vão com o `semantic_role` do mapa (hoje `analog`; o papel de
     borda fica em `signal_role`, ver edge/virtual_plant/layout.py SERVER_ROLE).
 """
@@ -62,7 +65,7 @@ DEFAULT_MAP = EDGE_DIR / "config" / "plant.json"
 DEFAULT_OUT = EDGE_DIR / "config" / "plant.local.json"
 DEFAULT_SERVER_URL = "http://localhost:8000"
 
-PROTOCOL = {"opcua": "opc_ua", "modbus": "modbus_tcp"}
+PROTOCOL = {"opcua": "opc_ua", "modbus": "modbus_tcp", "ueapd": "http"}   # ueapd: API HTTP do box ueaPowerDriver
 _MISSING = (404, 405)
 
 

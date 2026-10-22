@@ -22,6 +22,10 @@ Configuration (first match wins):
   `virtual plant + provision + gateway` (also the last-resort fallback of the remote config);
 - otherwise the legacy MODBUS_HOST + MODBUS_TAGS settings.
 
+Sources: OPC UA (subscription), Modbus TCP (polling + fast pulse poller) and `ueapd` — the HTTP API of a
+ueaPowerDriver test box (edge/src/protocols/ueapd.py: incremental trace pull, part/cycle counters kept in the
+edge counter SQLite, run/fault state from /auto/state).
+
 Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
   payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.6.0",
@@ -71,6 +75,7 @@ from .plant_map import COUNTER_ROLES, MapTag, PlantMap, load_plant_map
 from .protocols.modbus import ModbusDriver, ModbusTagConfig
 from .protocols.mqtt_publisher import MqttPublisher, effective_port, format_ts, parse_tls_settings
 from .protocols.opcua import OpcTagConfig, OpcUaDriver
+from .protocols.ueapd import UeapdDriver
 from .remote_config import LoadedConfig, load_gateway_config, local_gateway_id
 from .version import __version__
 
@@ -162,6 +167,7 @@ class EdgeGateway:
         self._stroke: dict[str, Optional[str]] = {}
         self._stroke_seen: dict[str, float] = {}           # counter value at the last published stroke
         self._aggregates: dict[str, WindowAggregator] = {}
+        self._event_tags: set[str] = set()                 # one reading per device event (ueapd measure:)
         self._driver_tasks: list[asyncio.Task] = []
         # fleet (enrollment / remote config / HTTP heartbeat)
         self.credentials: Optional[Credentials] = None
@@ -229,6 +235,7 @@ class EdgeGateway:
         self._refresh_tags.clear()
         self._sources.clear()
         self._stroke.clear()
+        self._event_tags.clear()
 
     @staticmethod
     def _stroke_pairs(pm: PlantMap) -> dict[str, Optional[str]]:
@@ -298,6 +305,17 @@ class EdgeGateway:
                 for t in tags:
                     if t.tag_id not in self._stroke and t.tag_id not in self._aggregates:
                         self._refresh_tags[t.tag_id] = drv
+            elif src.protocol == "ueapd":
+                # box ueaPowerDriver (HTTP): contadores acumulados no edge (mesmo SQLite do cycle_pulse)
+                tags = pm.tags_for(src.id)
+                if not tags:
+                    continue
+                if self.counter_store is None:
+                    self.counter_store = EdgeCounterStore(settings.counter_db_path)
+                for t in tags:
+                    if str(t.address).startswith("measure:"):
+                        self._event_tags.add(t.tag_id)
+                drv = UeapdDriver(src, tags, self.counter_store, on_reading=self._handle_reading, clock=clock)
             else:
                 regular = [
                     ModbusTagConfig(
@@ -554,7 +572,7 @@ class EdgeGateway:
             for end, v in agg.add(clock.stamp(ts, tag_id=tag_id, initial=initial), value):
                 await self._publish(tag_id, v, self._stamp(tag_id, end, initial=True))
             return
-        force = False
+        force = tag_id in self._event_tags and not refresh   # a device event: published even if equal
         if tag_id in self._stroke:
             if refresh:
                 return                       # a stroke is a cycle event: never re-offered

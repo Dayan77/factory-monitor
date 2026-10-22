@@ -79,6 +79,78 @@ class EdgeCounterStore:
     def add(self, key: str, n: int = 1) -> int:
         return self.add_many({key: n})[key]
 
+    # ── estado de coletores incrementais (ueapd: offset por arquivo, passes já contados) ──
+    # Mesma base e mesma transação dos contadores: "contou" e "avançou o offset / marcou o passe" são
+    # gravados juntos — reinício no meio nunca conta duas vezes nem perde contagem.
+    def _ensure_aux(self) -> None:
+        if getattr(self, "_aux_ready", False):
+            return
+        self._db.execute("CREATE TABLE IF NOT EXISTS edge_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, "
+                         "updated_at TEXT NOT NULL)")
+        self._db.execute("CREATE TABLE IF NOT EXISTS edge_seen (key TEXT PRIMARY KEY, at REAL NOT NULL)")
+        self._db.execute("CREATE INDEX IF NOT EXISTS ix_edge_seen_at ON edge_seen (at)")
+        self._aux_ready = True
+
+    def get_kv(self, key: str) -> Optional[str]:
+        with self._lock:
+            self._ensure_aux()
+            row = self._db.execute("SELECT value FROM edge_kv WHERE key = ?", (key,)).fetchone()
+            return row[0] if row else None
+
+    def kv_prefix(self, prefix: str) -> dict[str, str]:
+        with self._lock:
+            self._ensure_aux()
+            rows = self._db.execute("SELECT key, value FROM edge_kv WHERE key >= ? AND key < ?",
+                                    (prefix, prefix + "￿")).fetchall()
+            return {k: v for k, v in rows}
+
+    def seen(self, keys: list[str]) -> set[str]:
+        """Quais destas chaves já foram registradas (dedupe)."""
+        if not keys:
+            return set()
+        with self._lock:
+            self._ensure_aux()
+            out: set[str] = set()
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                q = "SELECT key FROM edge_seen WHERE key IN (%s)" % ",".join("?" * len(chunk))
+                out.update(r[0] for r in self._db.execute(q, chunk).fetchall())
+            return out
+
+    def commit(self, increments: dict[str, int], kv: Optional[dict[str, str]] = None,
+               seen: Optional[dict[str, float]] = None) -> dict[str, int]:
+        """Numa transação: soma os incrementos (≥ 0), grava o estado `kv` e registra as chaves `seen`
+        ({chave: instante epoch}). Retorna os novos totais dos contadores incrementados."""
+        if any(n < 0 for n in increments.values()):
+            raise ValueError("contador do edge é monotônico (incremento negativo)")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            self._ensure_aux()
+            with self._db:
+                self._db.execute("BEGIN")
+                for key, n in increments.items():
+                    self._db.execute(
+                        "INSERT INTO edge_counters (key, value, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value, "
+                        "updated_at = excluded.updated_at", (key, n, now))
+                for key, value in (kv or {}).items():
+                    self._db.execute(
+                        "INSERT INTO edge_kv (key, value, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                        (key, value, now))
+                for key, at in (seen or {}).items():
+                    self._db.execute("INSERT OR IGNORE INTO edge_seen (key, at) VALUES (?, ?)", (key, float(at)))
+            return {k: self._get(k) for k in increments}
+
+    def prune_seen(self, prefix: str, older_than: float) -> int:
+        """Esquece chaves de dedupe mais velhas que `older_than` (epoch). Retorna quantas saíram."""
+        with self._lock:
+            self._ensure_aux()
+            with self._db:
+                cur = self._db.execute("DELETE FROM edge_seen WHERE key >= ? AND key < ? AND at < ?",
+                                       (prefix, prefix + "￿", float(older_than)))
+            return cur.rowcount or 0
+
     def close(self) -> None:
         with self._lock:
             self._db.close()

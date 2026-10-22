@@ -124,7 +124,7 @@ class FakeApi:
                 if any(p["code"] == body["code"] for p in self.db["products"].values()):
                     return web.json_response({"detail": "code duplicado"}, status=409)
             if c == "tags":
-                assert body["semantic_role"] and body["protocol"] in ("opc_ua", "modbus_tcp")
+                assert body["semantic_role"] and body["protocol"] in ("opc_ua", "modbus_tcp", "http")
                 if body["position_id"]:
                     assert body["position_id"] in self.db["positions"]
             for parent in ("plant_id", "line_id", "machine_id"):

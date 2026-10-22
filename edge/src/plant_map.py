@@ -9,7 +9,10 @@ Formato (version 1):
       "sources": [
         {"id": "opcua-plc",  "protocol": "opcua",  "endpoint": "opc.tcp://host:4840/path/", "publishing_interval_ms": 250,
          "timestamps": "source", "max_clock_skew_s": 2},   # política de timestamp (edge/src/clock.py)
-        {"id": "modbus-plc", "protocol": "modbus", "host": "host", "port": 502}
+        {"id": "modbus-plc", "protocol": "modbus", "host": "host", "port": 502},
+        {"id": "m1-hipot", "protocol": "ueapd", "base_url": "http://192.168.1.15:8003",   # box ueaPowerDriver
+         "poll_interval_s": 2, "timeout_s": 5, "timestamps": "source", "max_clock_skew_s": 2,
+         "backfill": "none", "fault_codes": {"ERRO_CLAMP": 401}, "default_fault_code": 301}
       ],
       "tags": [
         {"key": "linha.maquina.sinal", "tag_id": "<uuid do servidor>|null", "source": "modbus-plc",
@@ -31,10 +34,14 @@ Regras (docs/domain.md §3):
 - `cycle_pulse` é contado por borda no edge (polling rápido, `pulse_poll_ms`) e publicado como contador
   acumulado persistido em SQLite; só é aceito em bit Modbus (coil/discrete).
 - Tag sem `tag_id` (ainda não provisionada) é ignorada com aviso — o servidor recusaria o tópico.
-- `sources[].timestamps`: `gateway` (padrão) ou `source` (relógio do CLP confiável; só OPC UA);
+- `sources[].timestamps`: `gateway` (padrão) ou `source` (relógio do dispositivo confiável; OPC UA e ueapd);
   `sources[].device_heartbeat` (OPC UA): o dispositivo re-carimba valores parados → assinatura notifica também
   mudança só de timestamp (DataChangeTrigger StatusValueTimestamp);
   `sources[].max_clock_skew_s`: número > 0 (padrão 2) ou `off`. Ver edge/src/clock.py.
+- `protocol: "ueapd"` (box ueaPowerDriver, API HTTP do serviço :8003 — edge/src/protocols/ueapd.py): `address` é um
+  seletor (`state:run`, `state:fault`, `state:cadence`, `passes:good|scrap|total`, `cycles:<estágio>[:P<n>]`,
+  `measure:<estágio>:<caminho.no.detail>`) e o papel precisa casar com ele (UEAPD_SELECTOR_ROLES).
+  `timestamps: source` usa o instante gravado pelo box (finished_at / t / ts).
 - `signal_role` (opcional): papel de borda quando o servidor ainda não tem o papel (Sprint 3: `product_code`
   = código do produto no CLP, `starved`, `blocked`); esses sinais discretos também não passam por deadband.
 
@@ -73,6 +80,21 @@ COUNTER_ROLES = {"cycle_counter", "cycle_pulse", "part_counter_good", "part_coun
 MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
 MODBUS_BIT_TYPES = {"coil", "discrete"}
 AGGREGATE_STATS = {"rms", "peak", "mean", "max", "min"}
+PROTOCOLS = {"opcua", "modbus", "ueapd"}
+UEAPD_BACKFILL = {"none", "latest_day", "all"}
+# seletor do box ueaPowerDriver → papéis aceitos (edge/src/protocols/ueapd.py)
+UEAPD_SELECTOR_ROLES = {
+    "state:run": {"run_state"},
+    "state:fault": {"fault_state"},
+    "state:cadence": {"analog", "speed"},
+    "passes:good": {"part_counter_good"},
+    "passes:scrap": {"part_counter_scrap"},
+    "passes:total": {"part_counter_total"},
+    "cycles": {"cycle_counter"},
+    "measure": {"analog", "current", "speed"},
+}
+_UEAPD_STAGE = re.compile(r"^[A-Za-z0-9_]+$")
+_UEAPD_POSTO = re.compile(r"^[Pp]([1-9][0-9]?)$")
 
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 # Endereço Modbus no formato do servidor (Tag.address gravado pelo provisionamento): "unit=2;hr=10:uint16"
@@ -114,10 +136,39 @@ def expand_env(value, env: Mapping[str, str]):
     return value
 
 
+def parse_ueapd_selector(address) -> tuple[str, Optional[str], Optional[object]]:
+    """Seletor de tag ueapd → (tipo, estágio, extra). tipo ∈ UEAPD_SELECTOR_ROLES;
+    `cycles:<estágio>[:P<n>]` → extra = índice 0-based do posto (None = estágio inteiro);
+    `measure:<estágio>:<caminho>` → extra = lista com as chaves do caminho no `detail` do evento."""
+    if not isinstance(address, str) or not address.strip():
+        raise ValueError(f"seletor ueapd deve ser texto ({address!r})")
+    a = address.strip()
+    if a in UEAPD_SELECTOR_ROLES:
+        return a, None, None
+    head, _, rest = a.partition(":")
+    if head == "cycles":
+        stage, _, posto = rest.partition(":")
+        if not _UEAPD_STAGE.match(stage or ""):
+            raise ValueError(f"seletor {a!r}: estágio inválido")
+        if not posto:
+            return "cycles", stage, None
+        m = _UEAPD_POSTO.match(posto)
+        if not m:
+            raise ValueError(f"seletor {a!r}: posto deve ser P1, P2, ...")
+        return "cycles", stage, int(m.group(1)) - 1
+    if head == "measure":
+        stage, _, path = rest.partition(":")
+        keys = [k for k in path.split(".") if k]
+        if not _UEAPD_STAGE.match(stage or "") or not keys:
+            raise ValueError(f"seletor {a!r}: use measure:<estágio>:<chave>[.<subchave>]")
+        return "measure", stage, keys
+    raise ValueError(f"seletor ueapd desconhecido {a!r} (use {', '.join(sorted(UEAPD_SELECTOR_ROLES))})")
+
+
 @dataclass
 class SourceConfig:
     id: str
-    protocol: str                   # "opcua" | "modbus"
+    protocol: str                   # "opcua" | "modbus" | "ueapd"
     endpoint: str = ""
     host: str = ""
     port: int = 502
@@ -125,6 +176,14 @@ class SourceConfig:
     timestamps: str = "gateway"     # "gateway" | "source" (edge/src/clock.py)
     device_heartbeat: bool = False  # OPC UA: o dispositivo re-carimba valores parados (notificar por timestamp)
     max_clock_skew_s: Optional[float] = 2.0
+    # ueapd (box ueaPowerDriver): API HTTP
+    base_url: str = ""
+    poll_interval_s: float = 2.0
+    timeout_s: float = 5.0
+    backfill: str = "none"          # 1º contato: "none" (só o que vier depois) | "latest_day" | "all"
+    fault_codes: dict = field(default_factory=dict)   # tag de falha do CLP → código (sobre os padrões)
+    default_fault_code: int = 301   # falha de tag sem código no mapa (3xx automação, EQP-04)
+    line: str = ""                  # linha esperada do box ("hipot" | "ats2"); vazio = não confere
 
 
 @dataclass
@@ -215,8 +274,34 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
                 raise PlantMapError(f"source {sid}: Modbus não traz timestamp do CLP (use timestamps=gateway)")
             sources[sid] = SourceConfig(sid, proto, host=raw["host"], port=int(raw.get("port", 502)),
                                         max_clock_skew_s=max_skew)
+        elif proto == "ueapd":
+            url = str(raw.get("base_url") or "").strip().rstrip("/")
+            if not url.startswith(("http://", "https://")):
+                raise PlantMapError(f"source {sid}: base_url http(s):// obrigatório ({url!r})")
+            try:
+                poll = float(raw.get("poll_interval_s", 2.0))
+                timeout = float(raw.get("timeout_s", 5.0))
+                dflt = int(raw.get("default_fault_code", 301))
+            except (TypeError, ValueError):
+                raise PlantMapError(f"source {sid}: poll_interval_s/timeout_s/default_fault_code inválidos") from None
+            if not 0.2 <= poll <= 300 or not 0.5 <= timeout <= 120:
+                raise PlantMapError(f"source {sid}: poll_interval_s em [0,2; 300] e timeout_s em [0,5; 120]")
+            backfill = raw.get("backfill") or "none"
+            if backfill not in UEAPD_BACKFILL:
+                raise PlantMapError(f"source {sid}: backfill inválido {backfill!r} (use {sorted(UEAPD_BACKFILL)})")
+            codes = raw.get("fault_codes") or {}
+            if not isinstance(codes, dict) or not all(
+                    isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v > 0
+                    for k, v in codes.items()):
+                raise PlantMapError(f"source {sid}: fault_codes deve ser {{tag: código inteiro > 0}}")
+            if dflt <= 0:
+                raise PlantMapError(f"source {sid}: default_fault_code deve ser > 0")
+            sources[sid] = SourceConfig(sid, proto, endpoint=url, base_url=url, poll_interval_s=poll,
+                                        timeout_s=timeout, timestamps=policy, max_clock_skew_s=max_skew,
+                                        backfill=backfill, fault_codes=dict(codes), default_fault_code=dflt,
+                                        line=str(raw.get("line") or ""))
         else:
-            raise PlantMapError(f"source {sid}: protocolo inválido {proto!r}")
+            raise PlantMapError(f"source {sid}: protocolo inválido {proto!r} (use {sorted(PROTOCOLS)})")
 
     tags: list[MapTag] = []
     skipped: list[str] = []
@@ -234,7 +319,16 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
         if src is None:
             raise PlantMapError(f"tag {key}: source desconhecida {raw.get('source')!r}")
         address = raw.get("address")
-        if src.protocol == "opcua":
+        if src.protocol == "ueapd":
+            try:
+                kind, _, _ = parse_ueapd_selector(address)
+            except ValueError as e:
+                raise PlantMapError(f"tag {key}: {e}") from None
+            if role not in UEAPD_SELECTOR_ROLES[kind]:
+                raise PlantMapError(f"tag {key}: seletor {address!r} exige semantic_role em "
+                                    f"{sorted(UEAPD_SELECTOR_ROLES[kind])} (não {role})")
+            address = address.strip()
+        elif src.protocol == "opcua":
             if not isinstance(address, str) or not address.startswith("ns="):
                 raise PlantMapError(f"tag {key}: endereço OPC UA deve ser um NodeId 'ns=..;s=..' ({address!r})")
             if role == "cycle_pulse":
