@@ -1,0 +1,46 @@
+# Alertmanager de PRODUÇÃO — modelo renderizado por entrypoint.sh a partir do .env (o Alertmanager não lê variável
+# de ambiente na config). Placeholders __X__ ← ALERT_* / SMTP_* (docs/operations.md §8.3, docs/go_live.md §8).
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: "__SMTP_SMARTHOST__"
+  smtp_from: "__ALERT_EMAIL_FROM__"
+  smtp_auth_username: "__SMTP_USER__"
+  smtp_auth_password_file: /alertmanager/runtime/smtp_password
+  smtp_require_tls: __SMTP_REQUIRE_TLS__
+
+route:
+  receiver: email
+  group_by: [alertname, env, tenant, gateway, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  routes:
+    # critical: repete a cada hora enquanto não resolver
+    - matchers: [severity="critical"]
+      receiver: email-critical
+      repeat_interval: 1h
+
+receivers:
+  - name: email
+    email_configs:
+      - to: "__ALERT_EMAIL_TO__"
+        send_resolved: true
+        headers:
+          Subject: '[FactoryConnect {{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+  - name: email-critical
+    email_configs:
+      - to: "__ALERT_EMAIL_CRITICAL_TO__"
+        send_resolved: true
+        headers:
+          Subject: '[FactoryConnect CRÍTICO {{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+
+inhibit_rules:
+  # backend fora do ar: os alertas que dependem das métricas dele são consequência
+  - source_matchers: [alertname="FmServerDown"]
+    target_matchers: [alertname=~"FmMqtt.*|FmIngest.*|FmDetector.*|FmHttp.*"]
+  # crítico suprime o aviso equivalente
+  - source_matchers: [alertname="FmDiskSpaceCritical"]
+    target_matchers: [alertname="FmDiskSpaceLow"]
+    equal: [mountpoint]
+  - source_matchers: [alertname="FmHttp5xxRateCritical"]
+    target_matchers: [alertname="FmHttp5xxRate"]

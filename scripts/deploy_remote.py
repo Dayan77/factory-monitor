@@ -1,31 +1,24 @@
 """
-Factory Monitor — Remote Deploy via SSH (password auth)
+Factory Monitor — Deploy remoto via SSH (fallback manual do workflow .github/workflows/deploy.yml).
+
+Host, usuário e credencial vêm do ambiente (nada hardcoded) — veja scripts/vps.py.
 
 Uso:
+    export VPS_HOST=<ip-ou-host> VPS_USER=deploy VPS_SSH_KEY=~/.ssh/factoryconnect_deploy
     python scripts/deploy_remote.py
-    VPS_PASS=suasenha python scripts/deploy_remote.py
+
+Deploy em produção só com confirmação explícita do dono do projeto.
 """
 
 import os
 import sys
 import time
-import getpass
-import paramiko
 
-HOST    = "187.77.144.79"
-USER    = "root"
-APP     = "/opt/factory-monitor"
-COMPOSE = f"docker compose -f {APP}/infra/docker-compose.prod.yml"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from vps import VpsConfigError, connect, load_config  # noqa: E402
 
 
-def connect(password: str) -> paramiko.SSHClient:
-    c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(HOST, username=USER, password=password, timeout=15)
-    return c
-
-
-def run(client: paramiko.SSHClient, cmd: str, timeout: int = 300, check: bool = True) -> str:
+def run(client, cmd: str, timeout: int = 300, check: bool = True) -> str:
     _, out, err = client.exec_command(cmd, timeout=timeout)
     exit_code = out.channel.recv_exit_status()
     output = out.read().decode().strip()
@@ -50,17 +43,20 @@ def step(label: str):
 
 
 def main():
-    password = os.environ.get("VPS_PASS", "")
-    if not password:
-        password = getpass.getpass(f"Senha SSH ({USER}@{HOST}): ")
+    try:
+        cfg = load_config()
+    except VpsConfigError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(2)
+    APP, COMPOSE = cfg.app_dir, cfg.compose
 
     print()
     print("╔══════════════════════════════════════════╗")
     print("║  Factory Monitor — Deploy                 ║")
     print("╚══════════════════════════════════════════╝")
 
-    step(f"Conectando a {USER}@{HOST}")
-    c = connect(password)
+    step(f"Conectando a {cfg.user}@{cfg.host} ({cfg.auth_method})")
+    c = connect(cfg)
     print("  ✓ Conectado")
 
     # 1. Git pull
@@ -93,13 +89,24 @@ def main():
 
     # 7. Health check
     step("Health check")
-    run(c, "curl -sk https://factoryconnect.tech/api/health || curl -sk http://localhost:8000/api/health", check=False)
+    healthy = False
+    for _ in range(12):
+        _, out, _ = c.exec_command(f"curl -fsS --max-time 5 {cfg.health_url}", timeout=15)
+        if out.channel.recv_exit_status() == 0:
+            print(f"  {out.read().decode().strip()}")
+            healthy = True
+            break
+        time.sleep(5)
+    if not healthy:
+        print(f"\n✗ Healthcheck falhou: {cfg.health_url}", file=sys.stderr)
+        run(c, "docker logs fm_server --tail 50 2>&1", check=False)
+        c.close()
+        sys.exit(1)
 
     c.close()
     print()
     print("╔══════════════════════════════════════════╗")
     print("║  ✓ Deploy concluído!                      ║")
-    print("║  https://factoryconnect.tech              ║")
     print("╚══════════════════════════════════════════╝")
     print()
 

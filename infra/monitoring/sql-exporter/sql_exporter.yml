@@ -1,0 +1,18 @@
+# sql_exporter (profile monitoring de produção): métricas de NEGÓCIO que só o Postgres conhece, para os alertas
+# FmGatewayOffline / FmDeadLettersPending / FmDemoPlantStale (prometheus/alerts.platform.yml).
+# DSN pela linha de comando (-config.data-source-name, montado no compose a partir do .env). Use um papel só de
+# leitura (docs/go_live.md §7: fm_monitor com pg_monitor + SELECT nas tabelas abaixo).
+# Agregado POR TENANT só para o operador da plataforma (Prometheus/Grafana internos, nunca expostos a clientes).
+global:
+  scrape_timeout_offset: 500ms
+  min_interval: 30s           # as consultas rodam no máximo a cada 30 s, por mais que o Prometheus colete
+  max_connections: 2
+  max_idle_connections: 1
+
+target:
+  name: fm-postgres
+  data_source_name: "postgres://set-by-command-line@postgres:5432/factory_monitor?sslmode=disable"
+  collectors: [fm_platform]
+
+collector_files:
+  - "/etc/sql_exporter/*.collector.yml"

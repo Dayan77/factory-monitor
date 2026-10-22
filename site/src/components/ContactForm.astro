@@ -1,0 +1,150 @@
+---
+import { LEADS_ENDPOINT, CONTACT_EMAIL, LIMITS } from "../lib/site-form";
+const field = "mt-1.5 block w-full rounded-lg border border-line bg-bg px-3.5 py-2.5 text-fg placeholder:text-muted/70 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 aria-[invalid=true]:border-red-500";
+const label = "block text-sm font-medium text-fg";
+const err = "mt-1 hidden text-sm text-red-600 dark:text-red-400";
+---
+<div class="card p-6 sm:p-8" id="contato-form-wrap">
+  <form id="lead-form" data-endpoint={LEADS_ENDPOINT} class="relative grid gap-5" aria-describedby="form-hint">
+    <p id="form-hint" class="text-sm text-muted">Campos com <span aria-hidden="true">*</span><span class="sr-only">asterisco</span> são obrigatórios.</p>
+    <div class="grid gap-5 sm:grid-cols-2">
+      <div>
+        <label for="f-name" class={label}>Nome <span aria-hidden="true">*</span></label>
+        <input id="f-name" name="name" type="text" autocomplete="name" required maxlength={LIMITS.name} class={field} aria-describedby="e-name" />
+        <p id="e-name" class={err} data-error-for="name"></p>
+      </div>
+      <div>
+        <label for="f-email" class={label}>E-mail corporativo <span aria-hidden="true">*</span></label>
+        <input id="f-email" name="email" type="email" autocomplete="email" required maxlength={LIMITS.email} class={field} aria-describedby="e-email" />
+        <p id="e-email" class={err} data-error-for="email"></p>
+      </div>
+      <div>
+        <label for="f-company" class={label}>Empresa</label>
+        <input id="f-company" name="company" type="text" autocomplete="organization" maxlength={LIMITS.company} class={field} aria-describedby="e-company" />
+        <p id="e-company" class={err} data-error-for="company"></p>
+      </div>
+      <div>
+        <label for="f-phone" class={label}>Telefone / WhatsApp</label>
+        <input id="f-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" maxlength={LIMITS.phone} placeholder="(11) 90000-0000" class={field} aria-describedby="e-phone" />
+        <p id="e-phone" class={err} data-error-for="phone"></p>
+      </div>
+    </div>
+    <div>
+      <label for="f-message" class={label}>Como podemos ajudar? <span aria-hidden="true">*</span></label>
+      <textarea id="f-message" name="message" rows="5" required maxlength={LIMITS.message} class={field} placeholder="Ex.: temos 6 injetoras com CLP Siemens e queremos medir paradas e ciclos de molde." aria-describedby="e-message"></textarea>
+      <p id="e-message" class={err} data-error-for="message"></p>
+    </div>
+
+    <!-- Honeypot anti-spam: invisível para pessoas, deve ficar vazio. -->
+    <div class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+      <label for="f-website">Website</label>
+      <input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+    </div>
+
+    <div>
+      <div class="flex items-start gap-3">
+        <input id="f-consent" name="consent" type="checkbox" required class="mt-1 size-5 shrink-0 rounded border-line accent-brand-600" aria-describedby="e-consent" />
+        <label for="f-consent" class="text-sm text-muted">
+          Concordo que a FactoryConnect use estes dados para responder ao meu contato, conforme a
+          <a href="/privacidade" class="text-accent underline underline-offset-2">Política de Privacidade</a> (LGPD). <span aria-hidden="true">*</span>
+        </label>
+      </div>
+      <p id="e-consent" class={err} data-error-for="consent"></p>
+    </div>
+
+    <div role="alert" id="form-error" class="hidden rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"></div>
+
+    <div class="flex flex-wrap items-center gap-4">
+      <button type="submit" class="btn-primary px-6" data-submit>
+        <svg data-spinner class="hidden size-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".3" stroke-width="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3"/></svg>
+        <span data-label>Enviar mensagem</span>
+      </button>
+      <p class="text-xs text-muted">Respondemos por e-mail. Sem spam, sem compartilhar seus dados.</p>
+    </div>
+    <noscript><p class="text-sm text-muted">O envio do formulário precisa de JavaScript ativo.{CONTACT_EMAIL && <> Se preferir, escreva para <a class="text-accent underline" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</>}</p></noscript>
+  </form>
+
+  <div id="form-success" hidden tabindex="-1" class="py-6 text-center outline-none">
+    <span class="mx-auto grid size-14 place-items-center rounded-full bg-brand-500/15 text-accent">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>
+    </span>
+    <h2 class="mt-4 text-xl font-bold text-fg">Mensagem enviada!</h2>
+    <p class="mt-2 text-muted">Obrigado pelo contato. Vamos responder no e-mail informado em breve.</p>
+    <a href="/" class="btn-ghost mt-6">Voltar ao início</a>
+  </div>
+</div>
+
+<script>
+  import { validateLead, toPayload, submitLead, type LeadInput, type FieldErrors } from "../lib/lead";
+
+  const form = document.getElementById("lead-form") as HTMLFormElement | null;
+  if (form) {
+    form.noValidate = true; // validação própria, com mensagens em português
+    const endpoint = form.dataset.endpoint ?? "";
+    const errorBox = document.getElementById("form-error") as HTMLElement;
+    const success = document.getElementById("form-success") as HTMLElement;
+    const btn = form.querySelector<HTMLButtonElement>("[data-submit]")!;
+    const spinner = form.querySelector<SVGElement>("[data-spinner]")!;
+    const btnLabel = form.querySelector<HTMLElement>("[data-label]")!;
+    const fields = ["name", "email", "company", "phone", "message", "consent"] as const;
+
+    const read = (): LeadInput => {
+      const fd = new FormData(form);
+      const s = (k: string) => String(fd.get(k) ?? "");
+      return { name: s("name"), email: s("email"), company: s("company"), phone: s("phone"), message: s("message"), consent: fd.get("consent") === "on", website: s("website") };
+    };
+
+    const show = (errors: FieldErrors) => {
+      for (const f of fields) {
+        const input = form.elements.namedItem(f) as HTMLInputElement | null;
+        const p = form.querySelector<HTMLElement>(`[data-error-for="${f}"]`);
+        const msg = errors[f];
+        if (input) input.setAttribute("aria-invalid", msg ? "true" : "false");
+        if (p) { p.textContent = msg ?? ""; p.classList.toggle("hidden", !msg); }
+      }
+    };
+
+    const setBusy = (busy: boolean) => {
+      btn.disabled = busy;
+      btn.setAttribute("aria-busy", String(busy));
+      spinner.classList.toggle("hidden", !busy);
+      btnLabel.textContent = busy ? "Enviando…" : "Enviar mensagem";
+    };
+
+    // Revalida o campo ao sair dele, se já estava com erro.
+    form.addEventListener("focusout", (e) => {
+      const t = e.target as HTMLInputElement;
+      if (t.getAttribute("aria-invalid") === "true") {
+        const errs = validateLead(read());
+        const key = t.name as keyof FieldErrors;
+        const p = form.querySelector<HTMLElement>(`[data-error-for="${key}"]`);
+        t.setAttribute("aria-invalid", errs[key] ? "true" : "false");
+        if (p) { p.textContent = errs[key] ?? ""; p.classList.toggle("hidden", !errs[key]); }
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorBox.classList.add("hidden");
+      const input = read();
+      const errors = validateLead(input);
+      show(errors);
+      const first = fields.find((f) => errors[f]);
+      if (first) {
+        (form.elements.namedItem(first) as HTMLElement | null)?.focus();
+        return;
+      }
+      setBusy(true);
+      const result = await submitLead(endpoint, toPayload(input, location.pathname));
+      setBusy(false);
+      if (result.ok) {
+        form.hidden = true;
+        success.hidden = false;
+        success.focus();
+      } else {
+        errorBox.textContent = result.message;
+        errorBox.classList.remove("hidden");
+      }
+    });
+  }
+</script>

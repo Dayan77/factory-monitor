@@ -1,0 +1,531 @@
+{
+ "id": "scenario_c_oee_shift",
+ "title": "Cenário C (prévia Sprint 3) - turno de 8 h: pausas, falhas com codigo, micro-paradas, OEE, MTBF, MTTR, Pareto",
+ "spec_refs": [
+  "domain.md §4.1",
+  "domain.md §4.3",
+  "domain.md §4.4",
+  "domain.md §5.5",
+  "kpis.md §1.2-1.10",
+  "kpis.md §2.1",
+  "kpis.md §2.3",
+  "kpis.md §2.6",
+  "kpis.md 'Esclarecimentos Sprint 2' C15-C24"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus"
+ },
+ "machine": {
+  "name": "Torno CNC",
+  "product": "EIXO-20",
+  "ideal_cycle_time_s": 45,
+  "micro_stop_threshold_s": 120,
+  "fault_code_map": {
+   "101": "EQP-01",
+   "204": "EQP-02",
+   "305": "EQP-04"
+  }
+ },
+ "shift": {
+  "name": "Turno A",
+  "date_local": "2026-10-06",
+  "start_local": "06:00",
+  "end_local": "14:00",
+  "start_utc": "2026-10-06T10:00:00Z",
+  "end_utc": "2026-10-06T18:00:00Z"
+ },
+ "events": [
+  {
+   "kind": "micro_stop",
+   "from_utc": "2026-10-06T10:40:00Z",
+   "to_utc": "2026-10-06T10:40:45Z",
+   "from_local": "06:40:00",
+   "to_local": "06:40:45",
+   "duration_s": 45.0,
+   "source": "run_state"
+  },
+  {
+   "kind": "fault",
+   "from_utc": "2026-10-06T11:12:00Z",
+   "to_utc": "2026-10-06T11:30:00Z",
+   "from_local": "07:12:00",
+   "to_local": "07:30:00",
+   "duration_s": 1080.0,
+   "fault_code": 101,
+   "reason_code": "EQP-01",
+   "severity": "critical",
+   "failure_mode": "BRD"
+  },
+  {
+   "kind": "fault_short",
+   "from_utc": "2026-10-06T11:50:00Z",
+   "to_utc": "2026-10-06T11:51:00Z",
+   "from_local": "07:50:00",
+   "to_local": "07:51:00",
+   "duration_s": 60.0,
+   "fault_code": 305,
+   "note": "falha de 60 s < 120 s -> micro-parada, sem FailureRecord"
+  },
+  {
+   "kind": "stop",
+   "from_utc": "2026-10-06T12:30:00Z",
+   "to_utc": "2026-10-06T12:36:00Z",
+   "from_local": "08:30:00",
+   "to_local": "08:36:00",
+   "duration_s": 360.0,
+   "reason_code": "MAT-01",
+   "source": "run_state"
+  },
+  {
+   "kind": "planned_break",
+   "from_utc": "2026-10-06T13:00:00Z",
+   "to_utc": "2026-10-06T13:10:00Z",
+   "from_local": "09:00:00",
+   "to_local": "09:10:00",
+   "duration_s": 600.0,
+   "reason_code": "PLN-01",
+   "label": "cafe"
+  },
+  {
+   "kind": "fault",
+   "from_utc": "2026-10-06T13:45:00Z",
+   "to_utc": "2026-10-06T13:52:30Z",
+   "from_local": "09:45:00",
+   "to_local": "09:52:30",
+   "duration_s": 450.0,
+   "fault_code": 204,
+   "reason_code": "EQP-02",
+   "severity": "degraded",
+   "failure_mode": "ERO"
+  },
+  {
+   "kind": "micro_stop",
+   "from_utc": "2026-10-06T14:15:00Z",
+   "to_utc": "2026-10-06T14:16:30Z",
+   "from_local": "10:15:00",
+   "to_local": "10:16:30",
+   "duration_s": 90.0,
+   "source": "run_state"
+  },
+  {
+   "kind": "micro_stop",
+   "from_utc": "2026-10-06T14:50:00Z",
+   "to_utc": "2026-10-06T14:51:59Z",
+   "from_local": "10:50:00",
+   "to_local": "10:51:59",
+   "duration_s": 119.0,
+   "source": "run_state",
+   "note": "119 s: ainda micro-parada"
+  },
+  {
+   "kind": "planned_break",
+   "from_utc": "2026-10-06T15:00:00Z",
+   "to_utc": "2026-10-06T15:30:00Z",
+   "from_local": "11:00:00",
+   "to_local": "11:30:00",
+   "duration_s": 1800.0,
+   "reason_code": "PLN-01",
+   "label": "almoco"
+  },
+  {
+   "kind": "stop",
+   "from_utc": "2026-10-06T15:50:00Z",
+   "to_utc": "2026-10-06T15:52:00Z",
+   "from_local": "11:50:00",
+   "to_local": "11:52:00",
+   "duration_s": 120.0,
+   "reason_code": null,
+   "source": "run_state",
+   "note": "120 s = limiar -> DowntimeEvent; sem motivo ao fim do turno -> UNK-01"
+  },
+  {
+   "kind": "micro_stop",
+   "from_utc": "2026-10-06T16:05:00Z",
+   "to_utc": "2026-10-06T16:06:16Z",
+   "from_local": "12:05:00",
+   "to_local": "12:06:16",
+   "duration_s": 76.0,
+   "source": "run_state"
+  },
+  {
+   "kind": "fault",
+   "from_utc": "2026-10-06T16:20:00Z",
+   "to_utc": "2026-10-06T16:44:00Z",
+   "from_local": "12:20:00",
+   "to_local": "12:44:00",
+   "duration_s": 1440.0,
+   "fault_code": 101,
+   "reason_code": "EQP-01",
+   "severity": "critical",
+   "failure_mode": "BRD"
+  },
+  {
+   "kind": "stop",
+   "from_utc": "2026-10-06T17:00:00Z",
+   "to_utc": "2026-10-06T17:15:00Z",
+   "from_local": "13:00:00",
+   "to_local": "13:15:00",
+   "duration_s": 900.0,
+   "reason_code": "SET-01",
+   "source": "run_state"
+  },
+  {
+   "kind": "planned_break",
+   "from_utc": "2026-10-06T17:30:00Z",
+   "to_utc": "2026-10-06T17:40:00Z",
+   "from_local": "13:30:00",
+   "to_local": "13:40:00",
+   "duration_s": 600.0,
+   "reason_code": "PLN-01",
+   "label": "cafe"
+  },
+  {
+   "kind": "micro_stop",
+   "from_utc": "2026-10-06T17:50:00Z",
+   "to_utc": "2026-10-06T17:51:30Z",
+   "from_local": "13:50:00",
+   "to_local": "13:51:30",
+   "duration_s": 90.0,
+   "source": "run_state"
+  }
+ ],
+ "signals": [
+  {
+   "ts": "2026-10-06T10:00:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T10:40:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T10:40:45Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T11:12:00Z",
+   "run_state": 0,
+   "fault_state": 101
+  },
+  {
+   "ts": "2026-10-06T11:30:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T11:50:00Z",
+   "run_state": 0,
+   "fault_state": 305
+  },
+  {
+   "ts": "2026-10-06T11:51:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T12:30:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T12:36:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T13:00:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T13:10:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T13:45:00Z",
+   "run_state": 0,
+   "fault_state": 204
+  },
+  {
+   "ts": "2026-10-06T13:52:30Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T14:15:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T14:16:30Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T14:50:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T14:51:59Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T15:00:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T15:30:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T15:50:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T15:52:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T16:05:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T16:06:16Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T16:20:00Z",
+   "run_state": 0,
+   "fault_state": 101
+  },
+  {
+   "ts": "2026-10-06T16:44:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:00:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:15:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:30:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:40:00Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:50:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T17:51:30Z",
+   "run_state": 1,
+   "fault_state": 0
+  },
+  {
+   "ts": "2026-10-06T18:00:00Z",
+   "run_state": 0,
+   "fault_state": 0
+  }
+ ],
+ "production": {
+  "produced": 450,
+  "good": 441,
+  "scrap": 9
+ },
+ "expected": {
+  "pot_min": 480,
+  "pdot_min": 50,
+  "pbt_min": 430,
+  "data_coverage": 1.0,
+  "adot_min": 72.5,
+  "apt_min": 357.5,
+  "downtime_events": [
+   {
+    "from_local": "07:12:00",
+    "reason_code": "EQP-01",
+    "duration_s": 1080
+   },
+   {
+    "from_local": "08:30:00",
+    "reason_code": "MAT-01",
+    "duration_s": 360
+   },
+   {
+    "from_local": "09:45:00",
+    "reason_code": "EQP-02",
+    "duration_s": 450
+   },
+   {
+    "from_local": "11:50:00",
+    "reason_code": "UNK-01",
+    "duration_s": 120
+   },
+   {
+    "from_local": "12:20:00",
+    "reason_code": "EQP-01",
+    "duration_s": 1440
+   },
+   {
+    "from_local": "13:00:00",
+    "reason_code": "SET-01",
+    "duration_s": 900
+   }
+  ],
+  "micro_stop_count": 6,
+  "micro_stop_s": 480,
+  "micro_stops_per_apt_hour": 1.006993006993007,
+  "ideal_time_produced_min": 337.5,
+  "net_productive_min": 330.75,
+  "availability": 0.8313953488372093,
+  "performance": 0.9440559440559441,
+  "quality": 0.98,
+  "oee": 0.7691860465116279,
+  "cadence": {
+   "parts_per_hour_planned": 62.7906976744186,
+   "parts_per_hour_running": 75.52447552447553,
+   "parts_per_hour_ideal": 80
+  },
+  "operating_min_run_state": 349.5,
+  "failures": {
+   "n": 3,
+   "incipient": 0,
+   "short_faults_not_failures": 1
+  },
+  "mtbf_h": 1.9416666666666667,
+  "mttr_min": 16.5,
+  "mttr_s": 990,
+  "availability_operational": {
+   "required_min": 430,
+   "d_eq_min": 49.5,
+   "ao": 0.8848837209302326
+  },
+  "loss_pareto": {
+   "total_loss_min": 99.25,
+   "speed_loss_min": 12,
+   "quality_loss_min": 6.75,
+   "items": [
+    [
+     "EQP-01",
+     42,
+     0.423174,
+     0.423174
+    ],
+    [
+     "SET-01",
+     15,
+     0.151134,
+     0.574307
+    ],
+    [
+     "speed_loss",
+     12,
+     0.120907,
+     0.695214
+    ],
+    [
+     "micro_stops",
+     8,
+     0.080605,
+     0.775819
+    ],
+    [
+     "EQP-02",
+     7.5,
+     0.075567,
+     0.851385
+    ],
+    [
+     "quality_loss",
+     6.75,
+     0.06801,
+     0.919395
+    ],
+    [
+     "MAT-01",
+     6,
+     0.060453,
+     0.979849
+    ],
+    [
+     "UNK-01",
+     2,
+     0.020151,
+     1.0
+    ]
+   ]
+  },
+  "loss_pareto_by_category": [
+   [
+    "EQP",
+    49.5
+   ],
+   [
+    "SET",
+    15
+   ],
+   [
+    "speed_loss",
+    12
+   ],
+   [
+    "micro_stops",
+    8
+   ],
+   [
+    "quality_loss",
+    6.75
+   ],
+   [
+    "MAT",
+    6
+   ],
+   [
+    "UNK",
+    2
+   ]
+  ],
+  "wrong_answers": {
+   "mtbf_with_apt": {
+    "mtbf_h": 1.986111111111111,
+    "why": "usou APT (inclui micro-paradas) em vez de horas com run_state = 1"
+   },
+   "short_fault_as_failure": {
+    "n": 4,
+    "mtbf_h": 1.45625
+   },
+   "threshold_exclusive": {
+    "why": "tratar 120 s como micro-parada",
+    "adot_min": 70.5,
+    "micro_stop_count": 7
+   },
+   "breaks_in_pbt": {
+    "availability": 0.7447916666666666
+   }
+  }
+ }
+}

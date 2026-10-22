@@ -1,0 +1,115 @@
+# Advisories de dependências ACEITOS — lido por scripts/security/audit_gate.py (CI: .github/workflows/security.yml).
+#
+# Política (docs/operations.md §13):
+#   - pip (server, edge, scripts): qualquer vulnerabilidade reprova o CI, salvo se estiver aqui.
+#   - npm (web, site): high/critical reprovam, salvo se estiverem aqui; moderate/low aparecem como aviso.
+#   - Tudo com correção disponível é CORRIGIDO (bump da versão fixada), não aceito. Entra aqui só o que não tem
+#     correção, ou cuja correção exige migração maior — com o motivo, o escopo (runtime/dev) e um prazo.
+#   - `expires` vencido reprova o CI: o aceite precisa ser revisto (renovar com novo motivo ou corrigir).
+#   - Entrada que não casa mais com nada gera aviso — apague-a.
+# Campos: id (GHSA/PYSEC/CVE — casa também com os aliases), ecosystem (pip|npm), package, projects (opcional),
+#         scope (runtime|dev), reason, expires (AAAA-MM-DD).
+
+# ── pip ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[[advisory]]
+id = "GHSA-3qf3-8w2g-rqmx"          # CVE-2026-85394
+ecosystem = "pip"
+package = "python-jose"
+projects = ["server"]
+scope = "runtime"
+reason = """Sem versão corrigida (3.5.0 é a última). Confusão de chave assimétrica na inicialização do HMAC: só explora \
+quem verifica com chave pública. O servidor assina e verifica apenas HS256 com APP_SECRET_KEY (jwt.decode com algorithms=[JWT_ALGORITHM] = HS256 em \
+auth/security.py), nunca chave pública. Plano: migrar para PyJWT (pendência do backend, docs/security.md)."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "PYSEC-2026-1325"              # CVE-2024-23342 (Minerva, timing em ECDSA P-256)
+ecosystem = "pip"
+package = "ecdsa"
+projects = ["server"]
+scope = "runtime"
+reason = """Sem correção (o projeto python-ecdsa não trata side-channel). Dependência transitiva do python-jose; o \
+servidor não assina nada com ECDSA (só HS256). Some junto com a migração para PyJWT."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "PYSEC-2026-2858"              # GHSA-r374-rxx8-8654 / CVE-2026-44405
+ecosystem = "pip"
+package = "paramiko"
+projects = ["scripts"]
+scope = "dev"
+reason = """Sem release corrigida (aceita SHA-1 em rsakey.py). Só no deploy MANUAL de emergência \
+(scripts/deploy_remote.py), rodado da máquina do operador contra o VPS com chave ed25519; não vai para imagem nenhuma."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "PYSEC-2026-1845"              # pytest /tmp/pytest-of-{user}
+ecosystem = "pip"
+package = "pytest"
+projects = ["server", "edge"]
+scope = "dev"
+reason = """Só em requirements-dev (fora das imagens). A correção (pytest 9) exige pytest-asyncio 1.x, que muda a \
+semântica dos fixtures async de ~1.300 testes — migração planejada à parte. Runners de CI são efêmeros e mono-usuário."""
+expires = 2027-01-31
+
+# ── npm: web (todas de build/teste — a imagem de produção do web é nginx + arquivos estáticos) ──────────────────
+
+[[advisory]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ecosystem = "npm"
+package = "braces"
+projects = ["web"]
+scope = "dev"
+reason = """DoS por padrão glob aninhado, via tailwindcss 3 → chokidar/micromatch/fast-glob (só no build). \
+A correção é o tailwindcss 4 (migração de config). Nenhum glob vem de entrada externa."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-fx2h-pf6j-xcff"
+ecosystem = "npm"
+package = "vite"
+projects = ["web"]
+scope = "dev"
+reason = """Bypass de server.fs.deny no servidor de DESENVOLVIMENTO do vite em Windows. Produção não roda vite \
+(build estático servido por nginx). Correção = vite >= 6.4.3 (major), pendência do frontend."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-5xrq-8626-4rwp"
+ecosystem = "npm"
+package = "vitest"
+projects = ["web"]
+scope = "dev"
+reason = """Só com a UI do vitest escutando (não usamos --ui; CI roda `vitest run`). Correção = vitest 3.2.6+ (major)."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-5gmw-xhrv-c9v3"
+ecosystem = "npm"
+package = "tinypool"
+projects = ["web"]
+scope = "dev"
+reason = """Poluição de protótipo nas opções do worker do tinypool (dependência do vitest 1.x, só testes). \
+Sem entrada externa nas opções. Corrigido com o vitest major (mesma pendência acima)."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-85c8-ppgw-ccpr"
+ecosystem = "npm"
+package = "tinypool"
+projects = ["web"]
+scope = "dev"
+reason = """Mesmo caso do GHSA-5gmw-xhrv-c9v3 (tinypool via vitest, só testes)."""
+expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-587h-7wmj-h5pm"
+ecosystem = "npm"
+package = "vite"
+projects = ["web"]
+scope = "dev"
+reason = """launch-editor embutido no servidor de DESENVOLVIMENTO do vite (abrir arquivo no editor): o bypass de
+fs.existsSync() só existe no Windows e só com `vite dev` rodando. Produção serve o build estático pelo nginx (sem
+vite). Correção = vite 6.4.4+/8.3.5 (major a partir do 5.x do web) — migrar junto com vitest 3+."""
+expires = 2027-01-31

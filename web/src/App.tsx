@@ -1,37 +1,140 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { BrowserRouter, Link, Navigate, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import Layout from "@/components/Layout";
+import RouteFallback from "@/components/RouteFallback";
+const Layout = lazy(() => import("@/components/Layout"));
 import ProtectedRoute from "@/components/ProtectedRoute";
-import LandingPage from "@/pages/LandingPage";
-import LoginPage from "@/pages/LoginPage";
-import RegisterPage from "@/pages/RegisterPage";
-import DashboardPage from "@/pages/DashboardPage";
-import LinesPage from "@/pages/LinesPage";
-import MachinesPage from "@/pages/MachinesPage";
-import AlertsPage from "@/pages/AlertsPage";
-import AiChatPage from "@/pages/AiChatPage";
-import SensorsPage from "@/pages/SensorsPage";
-import AdminPage from "@/pages/AdminPage";
-import CamerasPage from "@/pages/CamerasPage";
+import RequireCapability from "@/components/RequireCapability";
+// Every screen is its own chunk (route-level code splitting): the login does not download charts, the operator
+// tablet does not download the planner screens. Recharts / hls.js / qrcode only come with the screens that use them.
+const LandingPage = lazy(() => import("@/pages/LandingPage"));
+const LoginPage = lazy(() => import("@/pages/LoginPage"));
+const RegisterPage = lazy(() => import("@/pages/RegisterPage"));
+const DemoPage = lazy(() => import("@/pages/DemoPage"));
+const ForgotPasswordPage = lazy(() => import("@/pages/auth/ForgotPasswordPage"));
+const ResetPasswordPage = lazy(() => import("@/pages/auth/ResetPasswordPage"));
+const InvitePage = lazy(() => import("@/pages/auth/InvitePage"));
+const AccountPage = lazy(() => import("@/pages/account/AccountPage"));
+const UsersPage = lazy(() => import("@/pages/settings/UsersPage"));
+const RaioXPage = lazy(() => import("@/pages/efficiency/RaioXPage"));
+const StopsPage = lazy(() => import("@/pages/efficiency/StopsPage"));
+const LinesPage = lazy(() => import("@/pages/LinesPage"));
+const MachinesPage = lazy(() => import("@/pages/MachinesPage"));
+const AlertsPage = lazy(() => import("@/pages/AlertsPage"));
+const AiChatPage = lazy(() => import("@/pages/AiChatPage"));
+const SensorsPage = lazy(() => import("@/pages/SensorsPage"));
+const AdminPage = lazy(() => import("@/pages/AdminPage"));
+const CamerasPage = lazy(() => import("@/pages/CamerasPage"));
+const FactoryPage = lazy(() => import("@/pages/factory/FactoryPage"));
+const PlantMapPage = lazy(() => import("@/pages/factory/PlantMapPage"));
+const LayoutEditorPage = lazy(() => import("@/pages/factory/LayoutEditorPage"));
+const TvPlantPage = lazy(() => import("@/pages/factory/TvPlantPage"));
+const OnboardingPage = lazy(() => import("@/pages/onboarding/OnboardingPage"));
+const ScheduledReportsPage = lazy(() => import("@/pages/reports/ScheduledReportsPage"));
+const OperatorApp = lazy(() => import("@/pages/operator/OperatorApp"));
+const OperatorLoginPage = lazy(() => import("@/pages/operator/OperatorApp").then((m) => ({ default: m.OperatorLoginPage })));
+const LinePage = lazy(() => import("@/pages/factory/LinePage"));
+const MachinePage = lazy(() => import("@/pages/factory/MachinePage"));
+const OeePage = lazy(() => import("@/pages/efficiency/OeePage"));
+const TimelinePage = lazy(() => import("@/pages/efficiency/TimelinePage"));
+const ShiftReportPage = lazy(() => import("@/pages/efficiency/ShiftReportPage"));
+const TvPage = lazy(() => import("@/pages/efficiency/TvPage"));
+const ProductionSettingsPage = lazy(() => import("@/pages/settings/ProductionSettingsPage"));
+const UpcomingPage = lazy(() => import("@/pages/maintenance/UpcomingPage"));
+const ComponentsLifePage = lazy(() => import("@/pages/maintenance/ComponentsLifePage"));
+const WorkOrdersPage = lazy(() => import("@/pages/maintenance/WorkOrdersPage"));
+const SchedulePage = lazy(() => import("@/pages/maintenance/SchedulePage"));
+const FailuresPage = lazy(() => import("@/pages/maintenance/FailuresPage"));
+const PlansSettingsPage = lazy(() => import("@/pages/maintenance/PlansSettingsPage"));
+const KpisPage = lazy(() => import("@/pages/maintenance/KpisPage"));
+const ReliabilityPage = lazy(() => import("@/pages/maintenance/ReliabilityPage"));
+const PredictivePage = lazy(() => import("@/pages/maintenance/PredictivePage"));
+const GatewaysPage = lazy(() => import("@/pages/settings/GatewaysPage"));
+const MobileLayout = lazy(() => import("@/pages/mobile/MobileLayout"));
+const MyWorkOrdersPage = lazy(() => import("@/pages/mobile/MyWorkOrdersPage"));
+const WorkOrderExecPage = lazy(() => import("@/pages/mobile/WorkOrderExecPage"));
+const TodayLogPage = lazy(() => import("@/pages/mobile/TodayLogPage"));
+
+/** Deep links used by notifications (/maintenance/work-orders/:id) → the screen with its detail open. */
+function DetailRedirect({ to }: { to: (id: string) => string }) {
+  const { id = "" } = useParams();
+  return <Navigate to={to(id)} replace />;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
+
+function NotFoundPage() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-canvas px-4 text-center text-fg">
+      <h1 className="text-lg font-semibold">Página não encontrada</h1>
+      <Link to="/" className="text-sm font-medium text-ok underline">Ir para o início</Link>
+    </main>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           {/* Páginas públicas */}
           <Route path="/"         element={<LandingPage />} />
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/op/login" element={<OperatorLoginPage />} />
+          <Route path="/esqueci-senha" element={<ForgotPasswordPage />} />
+          <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
+          <Route path="/convite" element={<InvitePage />} />
+          {/* Destino do "Ver demonstração" do site público ({APP_URL}/demo) */}
+          <Route path="/demo"     element={<DemoPage />} />
 
           {/* App protegido */}
           <Route element={<ProtectedRoute />}>
+            {/* Andon / TV: full screen, no app chrome */}
+            <Route path="/tv/lines/:lineId" element={<TvPage />} />
+            <Route path="/tv/plants/:plantId" element={<TvPlantPage />} />
+            {/* Operador: tablet de chão de fábrica (PWA próprio, id /op/) */}
+            <Route path="/op/*" element={<OperatorApp />} />
+            {/* Técnico de manutenção: app de celular (PWA) */}
+            <Route path="/m" element={<MobileLayout />}>
+              <Route index element={<Navigate to="/m/work-orders" replace />} />
+              <Route path="work-orders" element={<MyWorkOrdersPage />} />
+              <Route path="work-orders/:id" element={<WorkOrderExecPage />} />
+              <Route path="log" element={<TodayLogPage />} />
+            </Route>
             <Route element={<Layout />}>
-              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<RaioXPage />} />
+              <Route path="/oee"       element={<OeePage />} />
+              <Route path="/timeline"  element={<TimelinePage />} />
+              <Route path="/stops"     element={<StopsPage />} />
+              <Route path="/reports/shift" element={<ShiftReportPage />} />
+              <Route path="/settings/production" element={<ProductionSettingsPage />} />
+              <Route path="/settings/maintenance-plans" element={<RequireCapability cap="maintenance.plan"><PlansSettingsPage /></RequireCapability>} />
+              <Route path="/maintenance" element={<Navigate to="/maintenance/work-orders" replace />} />
+              <Route path="/maintenance/upcoming" element={<RequireCapability cap="maintenance.plan"><UpcomingPage /></RequireCapability>} />
+              <Route path="/maintenance/components" element={<RequireCapability cap="maintenance.plan"><ComponentsLifePage /></RequireCapability>} />
+              <Route path="/maintenance/work-orders" element={<RequireCapability cap="maintenance.view"><WorkOrdersPage /></RequireCapability>} />
+              <Route path="/maintenance/schedule" element={<RequireCapability cap="maintenance.plan"><SchedulePage /></RequireCapability>} />
+              <Route path="/maintenance/work-orders/:id" element={<DetailRedirect to={(id) => `/maintenance/work-orders?wo=${encodeURIComponent(id)}`} />} />
+              <Route path="/maintenance/failures/:id" element={<DetailRedirect to={(id) => `/maintenance/failures?f=${encodeURIComponent(id)}`} />} />
+              <Route path="/maintenance/failures" element={<RequireCapability cap="maintenance.failures"><FailuresPage /></RequireCapability>} />
+              <Route path="/maintenance/kpis" element={<RequireCapability cap="maintenance.kpis"><KpisPage /></RequireCapability>} />
+              <Route path="/maintenance/reliability" element={<RequireCapability cap="maintenance.kpis"><ReliabilityPage /></RequireCapability>} />
+              <Route path="/maintenance/predictive" element={<RequireCapability cap="predictive.view"><PredictivePage /></RequireCapability>} />
+              <Route path="/maintenance/predictive/alerts/:id" element={<DetailRedirect to={(id) => `/maintenance/predictive?alert=${encodeURIComponent(id)}`} />} />
+              <Route path="/settings/gateways" element={<RequireCapability cap="gateways.view"><GatewaysPage /></RequireCapability>} />
+              <Route path="/factory"   element={<PlantMapPage />} />
+              <Route path="/factory/list" element={<FactoryPage />} />
+              <Route path="/factory/layout/edit" element={<RequireCapability cap="layout.edit"><LayoutEditorPage /></RequireCapability>} />
+              <Route path="/onboarding" element={<RequireCapability cap="onboarding.admin"><OnboardingPage /></RequireCapability>} />
+              <Route path="/onboarding/:step" element={<RequireCapability cap="onboarding.admin"><OnboardingPage /></RequireCapability>} />
+              <Route path="/reports/scheduled" element={<RequireCapability cap="reports.schedule"><ScheduledReportsPage /></RequireCapability>} />
+              <Route path="/factory/lines/:lineId" element={<LinePage />} />
+              <Route path="/factory/machines/:machineId" element={<MachinePage />} />
               <Route path="/lines"     element={<LinesPage />} />
               <Route path="/machines"  element={<MachinesPage />} />
               <Route path="/sensors"   element={<SensorsPage />} />
@@ -39,9 +142,14 @@ export default function App() {
               <Route path="/alerts"    element={<AlertsPage />} />
               <Route path="/ai"        element={<AiChatPage />} />
               <Route path="/admin"     element={<AdminPage />} />
+              <Route path="/account"   element={<AccountPage />} />
+              <Route path="/settings/users" element={<RequireCapability cap="users.admin"><UsersPage /></RequireCapability>} />
             </Route>
           </Route>
+          {/* Rota desconhecida: nunca uma página em branco */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
   );

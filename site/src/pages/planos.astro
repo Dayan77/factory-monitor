@@ -1,0 +1,56 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import Icon from "../components/Icon.astro";
+import { REGISTER_URL } from "../lib/site";
+
+const plans = [
+  {
+    name: "Piloto", tagline: "Prove o valor em uma linha",
+    items: ["Uma linha ou grupo de máquinas", "Gateway edge e mapeamento de sinais", "Produção, estado das máquinas e uso de componentes", "Acompanhamento próximo do nosso time"],
+    cta: { href: "/contato", label: "Fale conosco" }, highlight: false,
+  },
+  {
+    name: "Fábrica", tagline: "Raio-x completo de uma planta",
+    items: ["Todas as linhas da planta", "Eficiência (OEE) e indicadores de manutenção", "Alertas e usuários por perfil", "Suporte na implantação e treinamento"],
+    cta: { href: "/contato", label: "Fale conosco" }, highlight: true,
+  },
+  {
+    name: "Corporativo", tagline: "Várias plantas, uma visão",
+    items: ["Múltiplas plantas e comparações entre unidades", "Integração com sistemas da empresa via API", "Requisitos de segurança da TI corporativa", "Condições comerciais sob medida"],
+    cta: { href: "/contato", label: "Fale conosco" }, highlight: false,
+  },
+];
+---
+<Layout title="Planos" description="Planos do FactoryConnect: piloto em uma linha, fábrica completa ou várias plantas. Fale conosco para uma proposta sob medida para a sua operação.">
+  <PageHero eyebrow="Planos" title="Comece pequeno. Cresça com resultado." lead="Cada fábrica é diferente: número de máquinas, protocolos e objetivos. Por isso montamos a proposta com você, a partir de uma conversa rápida." />
+
+  <section class="container-x mt-16">
+    <div class="grid gap-6 lg:grid-cols-3">
+      {plans.map((p) => (
+        <div class:list={["card reveal flex flex-col", p.highlight && "border-brand-500/60 ring-1 ring-brand-500/40"]}>
+          {p.highlight && <span class="mb-3 self-start rounded-full bg-brand-500/15 px-3 py-1 text-xs font-semibold text-accent">Para escalar depois do piloto</span>}
+          <h2 class="text-xl font-bold text-fg">{p.name}</h2>
+          <p class="mt-1 text-sm text-muted">{p.tagline}</p>
+          <p class="mt-6 text-2xl font-bold text-fg">Sob consulta</p>
+          <ul class="mt-6 grid flex-1 content-start gap-3 text-sm text-muted">
+            {p.items.map((i) => <li class="flex gap-2"><Icon name="check" size={18} class="mt-0.5 shrink-0 text-accent" />{i}</li>)}
+          </ul>
+          <a href={p.cta.href} class={`mt-8 ${p.highlight ? "btn-primary" : "btn-ghost"}`}>{p.cta.label}</a>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="container-x mt-20">
+    <div class="prose-fc">
+      <h2>Perguntas frequentes</h2>
+      <h3>Preciso trocar meus CLPs ou máquinas?</h3>
+      <p>Não. O gateway lê os dados que os equipamentos já disponibilizam via Modbus TCP, OPC UA ou MQTT.</p>
+      <h3>Quanto tempo leva para começar?</h3>
+      <p>Uma primeira linha com CLPs acessíveis pela rede costuma ser conectada em poucos dias.</p>
+      <h3>O teste grátis exige cartão de crédito?</h3>
+      <p>Não. Você <a href={REGISTER_URL}>cria a conta no app</a> e conversamos sobre a conexão das suas máquinas.</p>
+    </div>
+  </section>
+</Layout>

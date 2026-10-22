@@ -1,0 +1,2212 @@
+{
+  "version": 1,
+  "description": "Planta Manaus — mapa de dispositivos/tags da planta virtual. Gerado por `python -m edge.virtual_plant --write-map`; tag_id é preenchido por `python -m edge.src.provision`.",
+  "gateway_id": "gw-planta-manaus-01",
+  "tenant_id": null,
+  "heartbeat_s": 10.0,
+  "pulse_poll_ms": 20,
+  "sources": [
+    {
+      "id": "opcua-plc",
+      "protocol": "opcua",
+      "endpoint": "opc.tcp://${VIRTUAL_PLANT_HOST:-localhost}:${VIRTUAL_PLANT_OPCUA_PORT:-4840}/factoryconnect/virtual-plant/",
+      "publishing_interval_ms": 250,
+      "timestamps": "${VIRTUAL_PLANT_TIMESTAMPS:-source}",
+      "max_clock_skew_s": "${VIRTUAL_PLANT_MAX_CLOCK_SKEW_S:-2}",
+      "device_heartbeat": true
+    },
+    {
+      "id": "modbus-plc",
+      "protocol": "modbus",
+      "host": "${VIRTUAL_PLANT_HOST:-localhost}",
+      "port": "${VIRTUAL_PLANT_MODBUS_PORT:-5020}"
+    }
+  ],
+  "assets": {
+    "plant": {
+      "name": "Planta Manaus",
+      "timezone": "America/Manaus",
+      "address": "Distrito Industrial, Manaus - AM (planta virtual)",
+      "shifts": [
+        {
+          "name": "Turno A",
+          "start_local": "06:00",
+          "end_local": "14:00",
+          "weekdays": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "breaks": [
+            {
+              "start_local": "08:30",
+              "end_local": "08:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            },
+            {
+              "start_local": "10:30",
+              "end_local": "11:30",
+              "reason_code": "PLN-01",
+              "label": "refeição"
+            },
+            {
+              "start_local": "12:30",
+              "end_local": "12:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            }
+          ]
+        },
+        {
+          "name": "Turno B",
+          "start_local": "14:00",
+          "end_local": "22:00",
+          "weekdays": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "breaks": [
+            {
+              "start_local": "16:30",
+              "end_local": "16:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            },
+            {
+              "start_local": "18:00",
+              "end_local": "19:00",
+              "reason_code": "PLN-01",
+              "label": "refeição"
+            },
+            {
+              "start_local": "20:30",
+              "end_local": "20:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            }
+          ]
+        },
+        {
+          "name": "Turno C",
+          "start_local": "22:00",
+          "end_local": "06:00",
+          "weekdays": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "breaks": [
+            {
+              "start_local": "00:30",
+              "end_local": "00:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            },
+            {
+              "start_local": "02:00",
+              "end_local": "03:00",
+              "reason_code": "PLN-01",
+              "label": "refeição"
+            },
+            {
+              "start_local": "04:30",
+              "end_local": "04:40",
+              "reason_code": "PLN-01",
+              "label": "café"
+            }
+          ]
+        }
+      ]
+    },
+    "products": [
+      {
+        "code": "EIXO-20",
+        "name": "Eixo Ø20 mm",
+        "plc_code": 20
+      },
+      {
+        "code": "EIXO-32",
+        "name": "Eixo Ø32 mm",
+        "plc_code": 32
+      },
+      {
+        "code": "FLG-A",
+        "name": "Flange tipo A",
+        "plc_code": 101
+      },
+      {
+        "code": "FLG-B",
+        "name": "Flange tipo B (dispositivo duplo)",
+        "plc_code": 102
+      },
+      {
+        "code": "SUP-100",
+        "name": "Suporte soldado 100",
+        "plc_code": 210
+      },
+      {
+        "code": "SUP-200",
+        "name": "Suporte soldado 200",
+        "plc_code": 220
+      }
+    ],
+    "lines": [
+      {
+        "name": "Linha de Usinagem",
+        "output_machine": "Centro de Usinagem",
+        "machines": [
+          {
+            "name": "Torno CNC",
+            "model": "Romi GL 250",
+            "serial_number": "VP-TOR-0001",
+            "ideal_cycle_time_s": 45.0,
+            "products": [
+              {
+                "product": "EIXO-20",
+                "ideal_cycle_time_s": 45.0,
+                "parts_per_cycle": 1,
+                "is_default": true
+              },
+              {
+                "product": "EIXO-32",
+                "ideal_cycle_time_s": 52.0,
+                "parts_per_cycle": 1,
+                "is_default": false
+              }
+            ],
+            "fault_code_map": {
+              "101": "EQP-01",
+              "102": "EQP-01",
+              "204": "EQP-02",
+              "205": "EQP-02",
+              "305": "EQP-04",
+              "410": "EQP-03",
+              "520": "EQP-05",
+              "523": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Eixo-árvore",
+                "component_type": "spindle",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "spindle",
+                  "manufacturer": "Romi",
+                  "model": "Spindle A2-6 4000rpm",
+                  "serial_number": "VP-TOR-SPD-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 15000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Servo eixo X",
+                "component_type": "servo_motor",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "servo_motor",
+                  "manufacturer": "Siemens",
+                  "model": "1FK7 060",
+                  "serial_number": "VP-TOR-SVX-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 25000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Servo eixo Z",
+                "component_type": "servo_motor",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "servo_motor",
+                  "manufacturer": "Siemens",
+                  "model": "1FK7 080",
+                  "serial_number": "VP-TOR-SVZ-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 25000,
+                    "starts": null
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Centro de Usinagem",
+            "model": "Romi D 800",
+            "serial_number": "VP-CUS-0001",
+            "ideal_cycle_time_s": 90.0,
+            "products": [
+              {
+                "product": "FLG-A",
+                "ideal_cycle_time_s": 90.0,
+                "parts_per_cycle": 1,
+                "is_default": true
+              },
+              {
+                "product": "FLG-B",
+                "ideal_cycle_time_s": 150.0,
+                "parts_per_cycle": 2,
+                "is_default": false
+              }
+            ],
+            "fault_code_map": {
+              "111": "EQP-01",
+              "212": "EQP-02",
+              "213": "EQP-02",
+              "214": "EQP-02",
+              "311": "EQP-04",
+              "421": "EQP-03",
+              "521": "EQP-05",
+              "524": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Eixo-árvore",
+                "component_type": "spindle",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "spindle",
+                  "manufacturer": "Romi",
+                  "model": "Spindle BT40 10000rpm",
+                  "serial_number": "VP-CUS-SPD-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 12000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Garra do trocador de ferramentas",
+                "component_type": "gripper",
+                "cycles_per_part": 4,
+                "counter_tag": "usinagem.centro.gripper.cycles",
+                "component": {
+                  "component_type": "gripper",
+                  "manufacturer": "Schunk",
+                  "model": "PGN-plus 100",
+                  "serial_number": "VP-CUS-GRP-0001",
+                  "nominal_life": {
+                    "cycles": 6000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Motor da bomba de refrigeração",
+                "component_type": "pump",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "pump",
+                  "manufacturer": "WEG",
+                  "model": "W22 1,5 cv",
+                  "serial_number": "VP-CUS-PMP-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 12000,
+                    "starts": 300000
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Linha de Montagem",
+        "output_machine": "Transportador de Saída",
+        "machines": [
+          {
+            "name": "Robô de Solda",
+            "model": "ABB IRB 2600",
+            "serial_number": "VP-ROB-0001",
+            "ideal_cycle_time_s": 40.0,
+            "products": [
+              {
+                "product": "SUP-100",
+                "ideal_cycle_time_s": 40.0,
+                "parts_per_cycle": 1,
+                "is_default": true
+              },
+              {
+                "product": "SUP-200",
+                "ideal_cycle_time_s": 44.0,
+                "parts_per_cycle": 1,
+                "is_default": false
+              }
+            ],
+            "fault_code_map": {
+              "131": "EQP-01",
+              "132": "EQP-01",
+              "133": "EQP-01",
+              "134": "EQP-01",
+              "135": "EQP-01",
+              "136": "EQP-01",
+              "137": "EQP-01",
+              "231": "EQP-02",
+              "331": "EQP-04",
+              "532": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Eixo 1",
+                "component_type": "robot_axis",
+                "cycles_per_part": 14,
+                "counter_tag": "montagem.robo.axis1.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 1",
+                  "serial_number": "VP-ROB-AX1-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Eixo 2",
+                "component_type": "robot_axis",
+                "cycles_per_part": 14,
+                "counter_tag": "montagem.robo.axis2.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 2",
+                  "serial_number": "VP-ROB-AX2-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Eixo 3",
+                "component_type": "robot_axis",
+                "cycles_per_part": 10,
+                "counter_tag": "montagem.robo.axis3.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 3",
+                  "serial_number": "VP-ROB-AX3-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Eixo 4",
+                "component_type": "robot_axis",
+                "cycles_per_part": 8,
+                "counter_tag": "montagem.robo.axis4.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 4",
+                  "serial_number": "VP-ROB-AX4-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Eixo 5",
+                "component_type": "robot_axis",
+                "cycles_per_part": 8,
+                "counter_tag": "montagem.robo.axis5.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 5",
+                  "serial_number": "VP-ROB-AX5-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Eixo 6",
+                "component_type": "robot_axis",
+                "cycles_per_part": 6,
+                "counter_tag": "montagem.robo.axis6.cycles",
+                "component": {
+                  "component_type": "robot_axis",
+                  "manufacturer": "ABB",
+                  "model": "IRB 2600 — redutor eixo 6",
+                  "serial_number": "VP-ROB-AX6-0001",
+                  "nominal_life": {
+                    "cycles": 4000000,
+                    "hours": 20000,
+                    "starts": null
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Estação de Fixação",
+            "model": "Dispositivo pneumático 4 cilindros",
+            "serial_number": "VP-FIX-0001",
+            "ideal_cycle_time_s": 40.0,
+            "products": [
+              {
+                "product": "SUP-100",
+                "ideal_cycle_time_s": 40.0,
+                "parts_per_cycle": 1,
+                "is_default": true
+              },
+              {
+                "product": "SUP-200",
+                "ideal_cycle_time_s": 44.0,
+                "parts_per_cycle": 1,
+                "is_default": false
+              }
+            ],
+            "fault_code_map": {
+              "141": "EQP-01",
+              "241": "EQP-02",
+              "441": "EQP-03",
+              "442": "EQP-03",
+              "443": "EQP-03",
+              "444": "EQP-03",
+              "445": "EQP-03",
+              "446": "EQP-03",
+              "447": "EQP-03",
+              "541": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Cilindro A1",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 1,
+                "counter_tag": "montagem.fixacao.a1.eos",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-A1-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Cilindro A2",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 1,
+                "counter_tag": "montagem.fixacao.a2.cycles",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-A2-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Cilindro A3",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 2,
+                "counter_tag": "montagem.fixacao.a3.cycles",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-A3-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Cilindro A4",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 1,
+                "counter_tag": "montagem.fixacao.a4.cycles",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-A4-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              },
+              {
+                "name": "Cilindro B3",
+                "component_type": "pneumatic_cylinder",
+                "cycles_per_part": 1,
+                "counter_tag": "montagem.fixacao.b3.cycles",
+                "component": {
+                  "component_type": "pneumatic_cylinder",
+                  "manufacturer": "Festo",
+                  "model": "DSBC-50-100-PPVA-N3",
+                  "serial_number": "VP-FIX-B3-0001",
+                  "nominal_life": {
+                    "cycles": 8000000,
+                    "hours": null,
+                    "starts": null
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "Transportador de Saída",
+            "model": "Esteira 6 m",
+            "serial_number": "VP-TRP-0001",
+            "ideal_cycle_time_s": 40.0,
+            "products": [
+              {
+                "product": "SUP-100",
+                "ideal_cycle_time_s": 40.0,
+                "parts_per_cycle": 1,
+                "is_default": true
+              },
+              {
+                "product": "SUP-200",
+                "ideal_cycle_time_s": 44.0,
+                "parts_per_cycle": 1,
+                "is_default": false
+              }
+            ],
+            "fault_code_map": {
+              "151": "EQP-01",
+              "251": "EQP-02",
+              "252": "EQP-02",
+              "351": "EQP-04"
+            },
+            "positions": [
+              {
+                "name": "Motor do transportador",
+                "component_type": "electric_motor",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "electric_motor",
+                  "manufacturer": "WEG",
+                  "model": "W22 2 cv + redutor",
+                  "serial_number": "VP-TRP-MOT-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 30000,
+                    "starts": 200000
+                  }
+                }
+              },
+              {
+                "name": "Motor B",
+                "component_type": "electric_motor",
+                "cycles_per_part": 1,
+                "counter_tag": null,
+                "component": {
+                  "component_type": "electric_motor",
+                  "manufacturer": "WEG",
+                  "model": "W22 3 cv + redutor",
+                  "serial_number": "VP-TRP-MOTB-0001",
+                  "nominal_life": {
+                    "cycles": null,
+                    "hours": 30000,
+                    "starts": 200000
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "fault_categories": {
+    "100-199": {
+      "category": "mechanical",
+      "reason_code": "EQP-01",
+      "label": "Falha mecânica"
+    },
+    "200-299": {
+      "category": "electrical",
+      "reason_code": "EQP-02",
+      "label": "Falha elétrica"
+    },
+    "300-399": {
+      "category": "automation",
+      "reason_code": "EQP-04",
+      "label": "Falha de automação/software"
+    },
+    "400-499": {
+      "category": "pneumatic",
+      "reason_code": "EQP-03",
+      "label": "Falha pneumática/hidráulica"
+    },
+    "500-599": {
+      "category": "tooling",
+      "reason_code": "EQP-05",
+      "label": "Ferramenta/molde/dispositivo"
+    }
+  },
+  "fault_codes": {
+    "usinagem.torno": {
+      "101": {
+        "description": "Travamento da placa",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "102": {
+        "description": "Quebra da correia do eixo-árvore",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "204": {
+        "description": "Sobrecarga do motor do eixo-árvore",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "205": {
+        "description": "Erro de servo eixo X",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "305": {
+        "description": "Falha de comunicação CNC/CLP",
+        "category": "automation",
+        "reason_code": "EQP-04",
+        "label": "Falha de automação/software"
+      },
+      "410": {
+        "description": "Pressão de ar baixa na placa pneumática",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "520": {
+        "description": "Quebra de ferramenta",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      },
+      "523": {
+        "description": "Ferramenta no fim de vida (desgaste)",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      }
+    },
+    "usinagem.centro": {
+      "111": {
+        "description": "Falha mecânica do trocador de ferramentas",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "212": {
+        "description": "Sobrecarga do eixo-árvore",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "213": {
+        "description": "Falha no motor da bomba de refrigeração",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "214": {
+        "description": "Rolamento do motor da bomba de refrigeração travando",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "311": {
+        "description": "Erro de programa CNC",
+        "category": "automation",
+        "reason_code": "EQP-04",
+        "label": "Falha de automação/software"
+      },
+      "421": {
+        "description": "Falha de fixação pneumática da peça",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "521": {
+        "description": "Quebra de ferramenta",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      },
+      "524": {
+        "description": "Ferramenta no fim de vida (desgaste)",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      }
+    },
+    "montagem.robo": {
+      "131": {
+        "description": "Colisão detectada",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "132": {
+        "description": "Folga excessiva no redutor do eixo 1",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "133": {
+        "description": "Folga excessiva no redutor do eixo 2",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "134": {
+        "description": "Folga excessiva no redutor do eixo 3",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "135": {
+        "description": "Folga excessiva no redutor do eixo 4",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "136": {
+        "description": "Folga excessiva no redutor do eixo 5",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "137": {
+        "description": "Folga excessiva no redutor do eixo 6",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "231": {
+        "description": "Falha da fonte de solda",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "331": {
+        "description": "Erro de encoder / controlador do robô",
+        "category": "automation",
+        "reason_code": "EQP-04",
+        "label": "Falha de automação/software"
+      },
+      "532": {
+        "description": "Bico de contato da tocha gasto",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      }
+    },
+    "montagem.fixacao": {
+      "141": {
+        "description": "Travamento do dispositivo",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "241": {
+        "description": "Sensor de presença de peça com falha",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "441": {
+        "description": "Pressão de ar baixa",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "442": {
+        "description": "Cilindro não atingiu fim de curso (timeout)",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "443": {
+        "description": "Vazamento na vedação do cilindro A1",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "444": {
+        "description": "Vazamento na vedação do cilindro A2",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "445": {
+        "description": "Vazamento na vedação do cilindro A3",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "446": {
+        "description": "Vazamento na vedação do cilindro A4",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "447": {
+        "description": "Cilindro B3 — tempo de curso acima do limite (vedação gasta)",
+        "category": "pneumatic",
+        "reason_code": "EQP-03",
+        "label": "Falha pneumática/hidráulica"
+      },
+      "541": {
+        "description": "Gabarito de fixação gasto",
+        "category": "tooling",
+        "reason_code": "EQP-05",
+        "label": "Ferramenta/molde/dispositivo"
+      }
+    },
+    "montagem.transportador": {
+      "151": {
+        "description": "Correia desalinhada",
+        "category": "mechanical",
+        "reason_code": "EQP-01",
+        "label": "Falha mecânica"
+      },
+      "251": {
+        "description": "Sobrecarga do motor",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "252": {
+        "description": "Rolamento do motor travando (proteção do motor)",
+        "category": "electrical",
+        "reason_code": "EQP-02",
+        "label": "Falha elétrica"
+      },
+      "351": {
+        "description": "Emergência acionada (CLP de segurança)",
+        "category": "automation",
+        "reason_code": "EQP-04",
+        "label": "Falha de automação/software"
+      }
+    }
+  },
+  "product_codes": {
+    "20": "EIXO-20",
+    "32": "EIXO-32",
+    "101": "FLG-A",
+    "102": "FLG-B",
+    "210": "SUP-100",
+    "220": "SUP-200"
+  },
+  "tags": [
+    {
+      "key": "usinagem.torno.run_state",
+      "tag_id": null,
+      "name": "Em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.run_state",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.torno.fault_state",
+      "tag_id": null,
+      "name": "Código de falha",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.fault_state",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.torno.parts_good",
+      "tag_id": null,
+      "name": "Peças boas",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.0444,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.parts_good",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.parts_scrap",
+      "tag_id": null,
+      "name": "Peças refugadas",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.0444,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.parts_scrap",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.spindle.run",
+      "tag_id": null,
+      "name": "Eixo-árvore — em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Eixo-árvore",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.spindle.run",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.torno.spindle.speed",
+      "tag_id": null,
+      "name": "Eixo-árvore — rotação",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Eixo-árvore",
+      "semantic_role": "speed",
+      "data_type": "float",
+      "unit": "rpm",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.spindle.speed",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.spindle.current",
+      "tag_id": null,
+      "name": "Eixo-árvore — corrente",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Eixo-árvore",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.spindle.current",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.servo_x.run",
+      "tag_id": null,
+      "name": "Servo X — em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Servo eixo X",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.servo_x.run",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.torno.servo_x.current",
+      "tag_id": null,
+      "name": "Servo X — corrente",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Servo eixo X",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.servo_x.current",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.servo_z.run",
+      "tag_id": null,
+      "name": "Servo Z — em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Servo eixo Z",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.servo_z.run",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.torno.servo_z.current",
+      "tag_id": null,
+      "name": "Servo Z — corrente",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": "Servo eixo Z",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.servo_z.current",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.torno.product_code",
+      "tag_id": null,
+      "name": "Produto atual (código no CLP)",
+      "line": "Linha de Usinagem",
+      "machine": "Torno CNC",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.torno.product_code",
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "product_code"
+    },
+    {
+      "key": "usinagem.centro.run_state",
+      "tag_id": null,
+      "name": "Em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.run_state",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.centro.fault_state",
+      "tag_id": null,
+      "name": "Código de falha",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.fault_state",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.centro.parts_good",
+      "tag_id": null,
+      "name": "Peças boas",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.0222,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.parts_good",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.parts_scrap",
+      "tag_id": null,
+      "name": "Peças refugadas",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.0222,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.parts_scrap",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.spindle.run",
+      "tag_id": null,
+      "name": "Eixo-árvore — em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Eixo-árvore",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.spindle.run",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.centro.spindle.speed",
+      "tag_id": null,
+      "name": "Eixo-árvore — rotação",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Eixo-árvore",
+      "semantic_role": "speed",
+      "data_type": "float",
+      "unit": "rpm",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.spindle.speed",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.spindle.current",
+      "tag_id": null,
+      "name": "Eixo-árvore — corrente",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Eixo-árvore",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.spindle.current",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.gripper.cycles",
+      "tag_id": null,
+      "name": "Garra do trocador — ciclos (CLP)",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Garra do trocador de ferramentas",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.0889,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.gripper.cycles",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.coolant.run",
+      "tag_id": null,
+      "name": "Bomba de refrigeração — em operação",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Motor da bomba de refrigeração",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.coolant.run",
+      "scale": 1.0,
+      "poll_interval_ms": 500
+    },
+    {
+      "key": "usinagem.centro.coolant.current",
+      "tag_id": null,
+      "name": "Bomba de refrigeração — corrente",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Motor da bomba de refrigeração",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.coolant.current",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "usinagem.centro.product_code",
+      "tag_id": null,
+      "name": "Produto atual (código no CLP)",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.product_code",
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "product_code"
+    },
+    {
+      "key": "usinagem.centro.coolant.vibration",
+      "tag_id": null,
+      "name": "Bomba de refrigeração — vibração",
+      "line": "Linha de Usinagem",
+      "machine": "Centro de Usinagem",
+      "position": "Motor da bomba de refrigeração",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "opcua-plc",
+      "address": "ns=2;s=usinagem.centro.coolant.vibration",
+      "scale": 1.0,
+      "poll_interval_ms": 1000
+    },
+    {
+      "key": "montagem.robo.run_state",
+      "tag_id": null,
+      "name": "Em operação",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 1,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.robo.fault_state",
+      "tag_id": null,
+      "name": "Código de falha",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.weld_cycles",
+      "tag_id": null,
+      "name": "Ciclos de solda (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis1.cycles",
+      "tag_id": null,
+      "name": "Eixo 1 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.7,
+      "source": "modbus-plc",
+      "address": 3,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis2.cycles",
+      "tag_id": null,
+      "name": "Eixo 2 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.7,
+      "source": "modbus-plc",
+      "address": 5,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis3.cycles",
+      "tag_id": null,
+      "name": "Eixo 3 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 3",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.5,
+      "source": "modbus-plc",
+      "address": 7,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis4.cycles",
+      "tag_id": null,
+      "name": "Eixo 4 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 4",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.4,
+      "source": "modbus-plc",
+      "address": 9,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis5.cycles",
+      "tag_id": null,
+      "name": "Eixo 5 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 5",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.4,
+      "source": "modbus-plc",
+      "address": 11,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.axis6.cycles",
+      "tag_id": null,
+      "name": "Eixo 6 — movimentos (CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": "Eixo 6",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.3,
+      "source": "modbus-plc",
+      "address": 13,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.product_code",
+      "tag_id": null,
+      "name": "Produto atual (código no CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 15,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "product_code",
+      "unit_id": 1,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.robo.starved",
+      "tag_id": null,
+      "name": "Aguardando material (starved)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "starved",
+      "unit_id": 1,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.robo.blocked",
+      "tag_id": null,
+      "name": "Saída bloqueada (blocked)",
+      "line": "Linha de Montagem",
+      "machine": "Robô de Solda",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 2,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "blocked",
+      "unit_id": 1,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.fixacao.run_state",
+      "tag_id": null,
+      "name": "Em operação",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 2,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.fixacao.fault_state",
+      "tag_id": null,
+      "name": "Código de falha",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a1.eos",
+      "tag_id": null,
+      "name": "Cilindro A1 — fim de curso (pulsos)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A1",
+      "semantic_role": "cycle_pulse",
+      "data_type": "bool",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.fixacao.a1.cycles",
+      "tag_id": null,
+      "name": "Ciclos de fixação — CLP 16 bits (cilindro A1)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 65535,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a1.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro A1 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A1",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 2,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a2.cycles",
+      "tag_id": null,
+      "name": "Cilindro A2 — ciclos (CLP 16 bits)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 65535,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 3,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a2.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro A2 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A2",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 4,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a3.cycles",
+      "tag_id": null,
+      "name": "Cilindro A3 — ciclos (CLP 16 bits)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A3",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 65535,
+      "max_rate_per_s": 0.1,
+      "source": "modbus-plc",
+      "address": 5,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a3.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro A3 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A3",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 6,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a4.cycles",
+      "tag_id": null,
+      "name": "Cilindro A4 — ciclos (CLP 16 bits)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A4",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 65535,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 7,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.a4.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro A4 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro A4",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 8,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.product_code",
+      "tag_id": null,
+      "name": "Produto atual (código no CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 9,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "product_code",
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.starved",
+      "tag_id": null,
+      "name": "Aguardando material (starved)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 2,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "starved",
+      "unit_id": 2,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.fixacao.blocked",
+      "tag_id": null,
+      "name": "Saída bloqueada (blocked)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 3,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "blocked",
+      "unit_id": 2,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.fixacao.b3.cycles",
+      "tag_id": null,
+      "name": "Cilindro B3 — ciclos (terminal de válvulas)",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro B3",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 10,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.fixacao.b3.stroke_time",
+      "tag_id": null,
+      "name": "Cilindro B3 — tempo de curso",
+      "line": "Linha de Montagem",
+      "machine": "Estação de Fixação",
+      "position": "Cilindro B3",
+      "semantic_role": "stroke_time",
+      "data_type": "float",
+      "unit": "ms",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 12,
+      "scale": 0.1,
+      "poll_interval_ms": 1000,
+      "unit_id": 2,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.fault_state",
+      "tag_id": null,
+      "name": "Código de falha",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor.run",
+      "tag_id": null,
+      "name": "Motor — em operação",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor do transportador",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 0,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 3,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.transportador.motor.current",
+      "tag_id": null,
+      "name": "Motor — corrente",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor do transportador",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.parts_good",
+      "tag_id": null,
+      "name": "Peças boas (saída da linha)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 2,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.parts_scrap",
+      "tag_id": null,
+      "name": "Peças refugadas (saída da linha)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": 4294967295,
+      "max_rate_per_s": 0.05,
+      "source": "modbus-plc",
+      "address": 4,
+      "scale": 1.0,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint32",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.product_code",
+      "tag_id": null,
+      "name": "Produto atual (código no CLP)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 6,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "product_code",
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.starved",
+      "tag_id": null,
+      "name": "Aguardando material (starved)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 1,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "starved",
+      "unit_id": 3,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.transportador.blocked",
+      "tag_id": null,
+      "name": "Saída bloqueada (blocked)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 2,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "signal_role": "blocked",
+      "unit_id": 3,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.transportador.motor.vibration",
+      "tag_id": null,
+      "name": "Motor — vibração",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor do transportador",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 7,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.run",
+      "tag_id": null,
+      "name": "Motor B — em operação",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 3,
+      "scale": 1.0,
+      "poll_interval_ms": 500,
+      "unit_id": 3,
+      "register_type": "discrete"
+    },
+    {
+      "key": "montagem.transportador.motor_b.current",
+      "tag_id": null,
+      "name": "Motor B — corrente RMS",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "current",
+      "data_type": "float",
+      "unit": "A",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 8,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.vibration",
+      "tag_id": null,
+      "name": "Motor B — vibração RMS",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 9,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    },
+    {
+      "key": "montagem.transportador.motor_b.vibration_peak",
+      "tag_id": null,
+      "name": "Motor B — vibração (pico)",
+      "line": "Linha de Montagem",
+      "machine": "Transportador de Saída",
+      "position": "Motor B",
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "mm/s",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "modbus-plc",
+      "address": 10,
+      "scale": 0.01,
+      "poll_interval_ms": 1000,
+      "unit_id": 3,
+      "register_type": "holding",
+      "data_type_plc": "uint16",
+      "word_order": "big"
+    }
+  ]
+}

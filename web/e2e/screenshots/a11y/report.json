@@ -1,0 +1,738 @@
+[
+  {
+    "label": "desktop/light/",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/login",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/register",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/esqueci-senha",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/redefinir-senha",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/convite",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/op/login",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/rota-que-nao-existe",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/dashboard",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/oee",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/timeline",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/stops",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/reports/shift",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/reports/scheduled",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/factory",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/factory/list",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/factory/layout/edit",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/factory/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/factory/machines/f5883be9-3d15-4dbe-8ecb-290eaa60d192",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/lines",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/machines",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/sensors",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/cameras",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/alerts",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/ai",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/upcoming",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/components",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/work-orders",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/schedule",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/failures",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/kpis",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/reliability",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/maintenance/predictive",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/settings/production",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/settings/maintenance-plans",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/settings/gateways",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/settings/users",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/onboarding",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/account",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/op",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/m/work-orders",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/m/work-orders/42df6388-d0fb-428e-983d-502b1aeed12c",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/m/log",
+    "violations": []
+  },
+  {
+    "label": "desktop/light/tv/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/login",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/register",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/esqueci-senha",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/redefinir-senha",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/convite",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/op/login",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/rota-que-nao-existe",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/dashboard",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/oee",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/timeline",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/stops",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/reports/shift",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/reports/scheduled",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/factory",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/factory/list",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/factory/layout/edit",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/factory/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/factory/machines/f5883be9-3d15-4dbe-8ecb-290eaa60d192",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/lines",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/machines",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/sensors",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/cameras",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/alerts",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/ai",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/upcoming",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/components",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/work-orders",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/schedule",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/failures",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/kpis",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/reliability",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/maintenance/predictive",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/settings/production",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/settings/maintenance-plans",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/settings/gateways",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/settings/users",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/onboarding",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/account",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/op",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/m/work-orders",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/m/work-orders/42df6388-d0fb-428e-983d-502b1aeed12c",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/m/log",
+    "violations": []
+  },
+  {
+    "label": "desktop/dark/tv/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "phone/light/",
+    "violations": []
+  },
+  {
+    "label": "phone/light/login",
+    "violations": []
+  },
+  {
+    "label": "phone/light/register",
+    "violations": []
+  },
+  {
+    "label": "phone/light/esqueci-senha",
+    "violations": []
+  },
+  {
+    "label": "phone/light/redefinir-senha",
+    "violations": []
+  },
+  {
+    "label": "phone/light/convite",
+    "violations": []
+  },
+  {
+    "label": "phone/light/op/login",
+    "violations": []
+  },
+  {
+    "label": "phone/light/rota-que-nao-existe",
+    "violations": []
+  },
+  {
+    "label": "phone/light/dashboard",
+    "violations": []
+  },
+  {
+    "label": "phone/light/oee",
+    "violations": []
+  },
+  {
+    "label": "phone/light/timeline",
+    "violations": []
+  },
+  {
+    "label": "phone/light/stops",
+    "violations": []
+  },
+  {
+    "label": "phone/light/reports/shift",
+    "violations": []
+  },
+  {
+    "label": "phone/light/reports/scheduled",
+    "violations": []
+  },
+  {
+    "label": "phone/light/factory",
+    "violations": []
+  },
+  {
+    "label": "phone/light/factory/list",
+    "violations": []
+  },
+  {
+    "label": "phone/light/factory/layout/edit",
+    "violations": []
+  },
+  {
+    "label": "phone/light/factory/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "phone/light/factory/machines/f5883be9-3d15-4dbe-8ecb-290eaa60d192",
+    "violations": []
+  },
+  {
+    "label": "phone/light/lines",
+    "violations": []
+  },
+  {
+    "label": "phone/light/machines",
+    "violations": []
+  },
+  {
+    "label": "phone/light/sensors",
+    "violations": []
+  },
+  {
+    "label": "phone/light/cameras",
+    "violations": []
+  },
+  {
+    "label": "phone/light/alerts",
+    "violations": []
+  },
+  {
+    "label": "phone/light/ai",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/upcoming",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/components",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/work-orders",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/schedule",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/failures",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/kpis",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/reliability",
+    "violations": []
+  },
+  {
+    "label": "phone/light/maintenance/predictive",
+    "violations": []
+  },
+  {
+    "label": "phone/light/settings/production",
+    "violations": []
+  },
+  {
+    "label": "phone/light/settings/maintenance-plans",
+    "violations": []
+  },
+  {
+    "label": "phone/light/settings/gateways",
+    "violations": []
+  },
+  {
+    "label": "phone/light/settings/users",
+    "violations": []
+  },
+  {
+    "label": "phone/light/onboarding",
+    "violations": []
+  },
+  {
+    "label": "phone/light/account",
+    "violations": []
+  },
+  {
+    "label": "phone/light/op",
+    "violations": []
+  },
+  {
+    "label": "phone/light/m/work-orders",
+    "violations": []
+  },
+  {
+    "label": "phone/light/m/work-orders/42df6388-d0fb-428e-983d-502b1aeed12c",
+    "violations": []
+  },
+  {
+    "label": "phone/light/m/log",
+    "violations": []
+  },
+  {
+    "label": "phone/light/tv/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/login",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/register",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/esqueci-senha",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/redefinir-senha",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/convite",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/op/login",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/rota-que-nao-existe",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/dashboard",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/oee",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/timeline",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/stops",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/reports/shift",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/reports/scheduled",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/factory",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/factory/list",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/factory/layout/edit",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/factory/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/factory/machines/f5883be9-3d15-4dbe-8ecb-290eaa60d192",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/lines",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/machines",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/sensors",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/cameras",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/alerts",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/ai",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/upcoming",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/components",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/work-orders",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/schedule",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/failures",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/kpis",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/reliability",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/maintenance/predictive",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/settings/production",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/settings/maintenance-plans",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/settings/gateways",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/settings/users",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/onboarding",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/account",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/op",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/m/work-orders",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/m/work-orders/42df6388-d0fb-428e-983d-502b1aeed12c",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/m/log",
+    "violations": []
+  },
+  {
+    "label": "phone/dark/tv/lines/4150b9c0-e02c-4eda-ac52-0a3b49b73ed2",
+    "violations": []
+  },
+  {
+    "label": "palette/light",
+    "violations": []
+  },
+  {
+    "label": "kpi-popover/light",
+    "violations": []
+  },
+  {
+    "label": "sheet/light",
+    "violations": []
+  },
+  {
+    "label": "drawer/light",
+    "violations": []
+  },
+  {
+    "label": "palette/dark",
+    "violations": []
+  },
+  {
+    "label": "kpi-popover/dark",
+    "violations": []
+  },
+  {
+    "label": "sheet/dark",
+    "violations": []
+  },
+  {
+    "label": "drawer/dark",
+    "violations": []
+  }
+]

@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
 from ...db import get_db
-from ...models import Camera, User, UserRole
+from ...models import Camera, Machine, User, UserRole
 from ...auth import get_current_user, require_roles
 from ..schemas import CameraCreate, CameraOut, CameraUpdate
+from ..tenant_refs import ensure_owned
+from ...services.validation import is_uuid
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -24,6 +26,8 @@ _MEDIAMTX_HLS = settings.mediamtx_hls_url
 
 
 async def _get_camera_or_404(camera_id: str, tenant_id: str, db: AsyncSession) -> Camera:
+    if not is_uuid(camera_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Câmera não encontrada.")
     result = await db.execute(
         select(Camera).where(Camera.id == camera_id, Camera.tenant_id == tenant_id)
     )
@@ -68,6 +72,8 @@ async def list_cameras(user: CurrentUser, db: DB, machine_id: str | None = None)
 @router.post("/", response_model=CameraOut, status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_roles(UserRole.admin))])
 async def create_camera(body: CameraCreate, user: CurrentUser, db: DB):
+    if body.machine_id is not None:
+        body.machine_id = await ensure_owned(db, Machine, body.machine_id, user.tenant_id, "machine_id")
     camera = Camera(tenant_id=user.tenant_id, **body.model_dump())
     db.add(camera)
     await db.commit()
@@ -85,6 +91,8 @@ async def get_camera(camera_id: str, user: CurrentUser, db: DB):
               dependencies=[Depends(require_roles(UserRole.manager))])
 async def update_camera(camera_id: str, body: CameraUpdate, user: CurrentUser, db: DB):
     camera = await _get_camera_or_404(camera_id, user.tenant_id, db)
+    if body.machine_id is not None:
+        body.machine_id = await ensure_owned(db, Machine, body.machine_id, user.tenant_id, "machine_id")
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(camera, field, value)
     await db.commit()

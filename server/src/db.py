@@ -3,9 +3,12 @@ from .config import settings
 
 engine = create_async_engine(
     settings.database_url,
-    pool_size=10,
-    max_overflow=20,
-    echo=settings.app_env == "development",
+    # Sprint 7: configurable (DB_POOL_SIZE / DB_MAX_OVERFLOW). Connections above pool_size are closed when returned
+    # and the next one pays a new connection + SCRAM authentication — the MQTT ingestion processes keep a pool
+    # sized for their concurrency instead (main.py passes INGEST_DB_POOL_SIZE to them).
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    echo=settings.sql_echo,   # SQL_ECHO=true to log statements (slows the MQTT pipeline a lot)
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)

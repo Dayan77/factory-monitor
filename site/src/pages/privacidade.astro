@@ -1,0 +1,82 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { CONTACT_EMAIL } from "../lib/site";
+const updated = "7 de outubro de 2026";
+---
+<Layout title="Política de Privacidade" description="Como a FactoryConnect trata dados pessoais no site e na plataforma, em conformidade com a Lei Geral de Proteção de Dados (LGPD — Lei nº 13.709/2018).">
+  <section class="container-x py-14 sm:py-20">
+    <p class="eyebrow">Legal</p>
+    <h1 class="mt-3 text-3xl font-bold text-fg sm:text-4xl">Política de Privacidade</h1>
+    <p class="mt-3 text-sm text-muted">Última atualização: {updated}</p>
+
+    <div class="prose-fc mt-8">
+      <p>Esta política explica como a FactoryConnect ("nós") trata dados pessoais coletados neste site (factoryconnect.tech) e no aplicativo (app.factoryconnect.tech), em conformidade com a Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018).</p>
+      <p><strong>Quem decide sobre os dados:</strong> no aplicativo, a empresa cliente é a <em>controladora</em> dos dados dos seus usuários e da operação da fábrica, e a FactoryConnect atua como <em>operadora</em>, tratando os dados em nome dela. No formulário de contato deste site, a FactoryConnect é a controladora.</p>
+
+      <h2>1. Quais dados coletamos</h2>
+      <ul>
+        <li><strong>Formulário de contato:</strong> nome, e-mail, empresa, telefone (opcional) e a mensagem que você escrever, além da data e hora do seu consentimento.</li>
+        <li><strong>Dados técnicos do envio:</strong> para evitar abuso, registramos o navegador (user agent) e uma versão irreversível (hash) do endereço IP — não guardamos o IP em si.</li>
+        <li><strong>Conta no aplicativo:</strong> nome, e-mail, empresa, papéis e linhas de atuação, e credenciais de acesso. A senha é armazenada apenas como hash (bcrypt), junto com o histórico das últimas para impedir a repetição; o segredo da verificação em duas etapas fica cifrado (AES-256-GCM) e os códigos de recuperação, só como hash.</li>
+        <li><strong>Sessões e segurança:</strong> início e último uso de cada sessão, o navegador e só o prefixo da rede (/24) do endereço IP — nunca o IP completo —, além de uma trilha de auditoria de ações de segurança (login, bloqueios, mudanças de papel, exportações).</li>
+        <li><strong>Uso do aplicativo:</strong> ordens de serviço, apontamentos de horas, justificativas de parada e registros de falha feitos por você; notificações e preferências; conversas com o assistente de IA.</li>
+        <li><strong>Dados industriais:</strong> sinais de máquinas e sensores coletados pelo gateway pertencem à empresa cliente e são tratados conforme o contrato; em regra não são dados pessoais.</li>
+      </ul>
+
+      <h2>2. Para que usamos</h2>
+      <ul>
+        <li>Responder ao seu contato e enviar informações sobre o FactoryConnect que você solicitou (base legal: consentimento, art. 7º, I, e procedimentos preliminares a contrato, art. 7º, V).</li>
+        <li>Prestar o serviço contratado e dar suporte (execução de contrato, art. 7º, V).</li>
+        <li>Proteger o site e a plataforma contra fraude e abuso (legítimo interesse, art. 7º, IX).</li>
+      </ul>
+      <p>Não vendemos dados pessoais e não os usamos para publicidade de terceiros.</p>
+
+      <h2>3. Cookies e rastreadores</h2>
+      <p>Este site <strong>não usa cookies de rastreamento, pixels de anúncios nem ferramentas de análise de terceiros</strong>. Guardamos no seu navegador apenas a sua preferência de tema (claro/escuro), que nunca sai do seu dispositivo. O único evento contado é "abriu a demonstração": só o número de demonstrações abertas, sem cookies, sem endereço IP e sem nenhum identificador seu (com "Do Not Track" ou Global Privacy Control ligado, o site não envia nem esse evento). O aplicativo usa armazenamento local estritamente necessário para manter você conectado.</p>
+
+      <h2>4. Compartilhamento</h2>
+      <p>Compartilhamos dados apenas com operadores necessários para o funcionamento do serviço — por exemplo, provedores de hospedagem e de envio de e-mail — sob obrigações de confidencialidade e segurança, ou quando exigido por lei ou ordem judicial.</p>
+
+      <h2>5. Por quanto tempo guardamos</h2>
+      <div class="overflow-x-auto">
+        <table class="mb-4 w-full text-left text-sm">
+          <caption class="sr-only">Prazos de retenção de dados pessoais</caption>
+          <thead><tr class="border-b border-line text-fg"><th scope="col" class="py-2 pr-4 font-semibold">Dado</th><th scope="col" class="py-2 font-semibold">Prazo</th></tr></thead>
+          <tbody class="divide-y divide-line">
+            <tr><td class="py-2 pr-4">Contatos do formulário do site</td><td class="py-2">365 dias, ou antes, se você pedir</td></tr>
+            <tr><td class="py-2 pr-4">Trilha de auditoria de segurança</td><td class="py-2">5 anos</td></tr>
+            <tr><td class="py-2 pr-4">Sessões encerradas ou expiradas</td><td class="py-2">30 dias após o fim</td></tr>
+            <tr><td class="py-2 pr-4">Convites não aceitos</td><td class="py-2">30 dias após expirarem</td></tr>
+            <tr><td class="py-2 pr-4">Links de redefinição de senha</td><td class="py-2">1 dia após expirarem (valem 15 minutos, uma única vez)</td></tr>
+            <tr><td class="py-2 pr-4">Conversas com o assistente de IA</td><td class="py-2">90 dias</td></tr>
+            <tr><td class="py-2 pr-4">Contadores anti-abuso (hash do IP)</td><td class="py-2">1 dia</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Dados de conta são mantidos durante a vigência do contrato com a empresa cliente. Dados da operação da fábrica (séries de máquinas, ordens de serviço, falhas) seguem o contrato do cliente e são apagados com a conta da empresa.</p>
+
+      <h2>6. Segurança</h2>
+      <p>Usamos conexão criptografada (HTTPS/TLS), controle de acesso por função, isolamento de dados por empresa, verificação em duas etapas, sessões revogáveis, bloqueio de tentativas de força bruta e trilha de auditoria — detalhes em <a href="/seguranca">Segurança</a>. Nenhum sistema é infalível; se ocorrer um incidente de segurança relevante, encerramos as sessões afetadas, comunicamos os titulares e a ANPD conforme a lei.</p>
+
+      <h2>7. Seus direitos</h2>
+      <p>Você pode, a qualquer momento: confirmar se tratamos seus dados; acessá-los; corrigir dados incompletos ou desatualizados; pedir anonimização, bloqueio ou eliminação; solicitar a portabilidade; obter informação sobre compartilhamento; e <strong>revogar o consentimento</strong>, sem prejuízo do tratamento já realizado (art. 18 da LGPD). Você também pode apresentar reclamação à Autoridade Nacional de Proteção de Dados (ANPD).</p>
+      <p>Quem tem conta no aplicativo exerce parte desses direitos sozinho, em <strong>Minha conta</strong>:</p>
+      <ul>
+        <li><strong>Baixar meus dados</strong> (acesso e portabilidade): um arquivo JSON com seu perfil, papéis, sessões, eventos de auditoria, notificações, preferências, conversas com o assistente e as ordens de serviço em que você é autor ou responsável.</li>
+        <li><strong>Excluir minha conta</strong> (eliminação): o acesso é encerrado e seus dados pessoais são anonimizados — nome, e-mail, senha, MFA, sessões, notificações e conversas são apagados. O histórico de produção e manutenção da fábrica (ordens de serviço, falhas, justificativas) continua existindo, ligado a um pseudônimo, porque é necessário para a rastreabilidade da manutenção e para os indicadores de confiabilidade. O administrador da empresa também pode anonimizar uma conta.</li>
+        <li><strong>Sessões</strong>: ver os dispositivos conectados e encerrar qualquer um deles.</li>
+      </ul>
+
+      <h2>8. Como falar conosco</h2>
+      <p>
+        Para exercer seus direitos ou tirar dúvidas sobre esta política,
+        {CONTACT_EMAIL
+          ? <>escreva para <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> ou use o <a href="/contato">formulário de contato</a>.</>
+          : <>use o <a href="/contato">formulário de contato</a> indicando "Privacidade" na mensagem.</>}
+      </p>
+
+      <h2>9. Alterações</h2>
+      <p>Podemos atualizar esta política. A data da última atualização fica sempre no topo desta página; mudanças relevantes serão comunicadas aos clientes.</p>
+    </div>
+  </section>
+</Layout>

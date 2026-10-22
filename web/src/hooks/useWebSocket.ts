@@ -1,57 +1,236 @@
-import { useEffect, useRef, useState } from "react";
-import type { SensorReading } from "@/services/types";
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { authApi, refreshTokens } from "@/services/api";
+import { TOKENS_EVENT, tokenExpiryMs } from "@/utils/jwt";
+import {
+  applyDowntimeToList, applyMachineStatus, applyMachineStatusToTree, applyUsageToMachineUsage, applyUsageToPosition,
+  parseRealtimeMessage, realtimeSocketParams, reconnectActionFor,
+} from "@/services/realtime";
+import type {
+  DowntimeEvent, DowntimeMessage, DowntimeQuery, Machine, MachineUsage, PositionDetail, TreePlant, UsageMessage,
+} from "@/services/types";
+import { queryKeys } from "@/hooks/useAssets";
+import type { MapView } from "@/services/sprint6Types";
+import { applyStatusToMapView } from "@/utils/plantMap";
+import { useRealtimeStore } from "@/store/realtime";
+import { isEmergency, useNotificationStore } from "@/store/notifications";
+import type { AppNotification } from "@/services/maintenanceTypes";
 
-type WsStatus = "connecting" | "connected" | "disconnected";
+/** Reconnect with exponential back-off (sprint6 §1.3): 1 s, 2 s, 4 s … capped at 30 s; reset once connected. */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 30_000;
+/** Map views refetch the authoritative marker state this soon after a status / stop event (≤ 2 s p95, §1.3). */
+const MAP_REFRESH_MS = 300;
+/** KPI queries (overview, OEE, Pareto) are recomputed server-side; refetch at most this often on stop events. */
+const KPI_REFRESH_MS = 5000;
 
-export function useRealtimeSensors(tenantId: string) {
-  const [readings, setReadings] = useState<Map<string, SensorReading>>(new Map());
-  const [status, setStatus] = useState<WsStatus>("disconnected");
-  const wsRef = useRef<WebSocket | null>(null);
-  const retryRef = useRef<ReturnType<typeof setTimeout>>();
+/**
+ * Opens the tenant's realtime WebSocket once (mounted in Layout).
+ * - authenticates with the access JWT (subprotocol ["bearer", token])
+ * - sensor readings go to the realtime store (dashboard / sensors page)
+ * - machine_status updates patch every cached ["machines", ...] query and the plants tree in place
+ * - usage deltas patch the cached machine usage / position detail (live counters)
+ * - downtime events patch cached ["downtime", query] lists in place (or refetch them when the
+ *   event is new) and schedule a throttled refresh of the KPI views (overview / OEE / Pareto)
+ * - notification messages are prepended to the cached ["notifications"] list (bell), emergency calls
+ *   raise the full-screen alert, and work-order related ones refresh the ["maintenance"] queries
+ * - predictive_alert messages (Sprint 5) invalidate the ["predictive"] queries (alerts, monitors, Raio-X card)
+ * - close 4401 (token expired/invalid): refresh the token through the API
+ *   client (its 401 interceptor rotates it, or logs out) and reconnect
+ * - close 4403 (token of another tenant): stop, never retry
+ */
+export function useRealtimeConnection(tenantId: string | undefined) {
+  const qc = useQueryClient();
 
   useEffect(() => {
+    if (!tenantId) return;
+    const { setStatus, pushReading, bumpUsage, reset, touch } = useRealtimeStore.getState();
     let destroyed = false;
+    let ws: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let renewTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Session renewal without dropping the socket (docs/security.md §1.1): the server closes the socket when the
+    // access token expires unless the client sends {"type":"reauth","token"}. ~45 s before the expiry the tab renews
+    // the pair (the refresh rotates under the cross-tab lock) and the new token goes over the open socket.
+    function planRenewal() {
+      clearTimeout(renewTimer);
+      const exp = tokenExpiryMs(localStorage.getItem("access_token"));
+      if (exp == null) return;
+      const wait = exp - Date.now() - 45_000;
+      if (wait <= 0) return;
+      renewTimer = setTimeout(() => {
+        void refreshTokens(localStorage.getItem("refresh_token")).catch(() => undefined);
+      }, Math.min(wait, 2 ** 31 - 1));
+    }
+    function sendReauth(token: string | null | undefined) {
+      if (token && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "reauth", token }));
+      planRenewal();
+    }
+    const onTokens = (e: Event) => sendReauth((e as CustomEvent<string>).detail);
+    // another tab renewed: same storage, adopt its token
+    const onStorage = (e: StorageEvent) => { if (e.key === "access_token" && e.newValue) sendReauth(e.newValue); };
+    window.addEventListener(TOKENS_EVENT, onTokens);
+    window.addEventListener("storage", onStorage);
+    let wasConnected = false;
+    let kpiTimer: ReturnType<typeof setTimeout> | undefined;
+    let mapTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    function refreshMapSoon() {
+      if (mapTimer) return;
+      mapTimer = setTimeout(() => {
+        mapTimer = undefined;
+        void qc.invalidateQueries({ queryKey: ["plant-map"] });
+      }, MAP_REFRESH_MS);
+    }
+
+    function refreshKpisSoon() {
+      if (kpiTimer) return;
+      kpiTimer = setTimeout(() => {
+        kpiTimer = undefined;
+        void qc.invalidateQueries({ queryKey: ["efficiency"] });
+      }, KPI_REFRESH_MS);
+    }
+
+    function applyDowntime(msg: DowntimeMessage) {
+      for (const [key, data] of qc.getQueriesData<DowntimeEvent[]>({ queryKey: ["downtime"] })) {
+        const q = (key[1] ?? {}) as DowntimeQuery;
+        const next = applyDowntimeToList(data, q, msg);
+        if (next === "refetch") void qc.invalidateQueries({ queryKey: key, exact: true });
+        else if (next !== data) qc.setQueryData(key, next);
+      }
+      refreshKpisSoon();
+      refreshMapSoon();
+    }
+
+    function scheduleRetry() {
+      if (destroyed) return;
+      const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** attempt);
+      attempt += 1;
+      retry = setTimeout(connect, delay);
+    }
+
+    function applyUsage(msg: UsageMessage) {
+      for (const [key, data] of qc.getQueriesData<MachineUsage>({ queryKey: queryKeys.machineUsageAll })) {
+        const machineId = key[2];
+        if (typeof machineId !== "string" || !data) continue;
+        const next = applyUsageToMachineUsage(data, machineId, msg);
+        if (next !== data) qc.setQueryData(key, next);
+      }
+      if (msg.position_id) {
+        qc.setQueryData<PositionDetail>(queryKeys.position(msg.position_id), (old) => applyUsageToPosition(old, msg));
+        bumpUsage(msg.position_id);
+      } else if (msg.machine_id) {
+        bumpUsage(msg.machine_id);
+      }
+    }
+
+    function applyNotification(n: AppNotification) {
+      qc.setQueryData<AppNotification[]>(["notifications"], (old) =>
+        old ? (old.some((o) => o.id === n.id) ? old : [n, ...old]) : old);
+      if (!qc.getQueryData(["notifications"])) void qc.invalidateQueries({ queryKey: ["notifications"], exact: true });
+      if (isEmergency(n) && !n.read_at) useNotificationStore.getState().raise(n);
+      if (n.work_order_id || /work_order|plan|failure|maint|emergenc/i.test(n.type)) {
+        void qc.invalidateQueries({ queryKey: ["maintenance"] });
+      }
+    }
 
     function connect() {
-      if (destroyed) return;
+      if (destroyed || !tenantId) return;
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        setStatus("disconnected");
+        return;
+      }
       setStatus("connecting");
-
-      const protocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${protocol}://${location.host}/ws/sensors/${tenantId}`);
-      wsRef.current = ws;
+      const { url, protocols } = realtimeSocketParams(tenantId, token);
+      ws = new WebSocket(url, protocols);
 
       ws.onopen = () => {
-        if (!destroyed) setStatus("connected");
-      };
-
-      ws.onmessage = (evt) => {
         if (destroyed) return;
-        try {
-          const reading: SensorReading = JSON.parse(evt.data);
-          setReadings((prev) => new Map(prev).set(reading.tag_id, reading));
-        } catch {
-          // ignore malformed messages
+        setStatus("connected");
+        planRenewal();
+        attempt = 0;
+        // after a reconnect, resync anything we may have missed while offline
+        if (wasConnected) {
+          void qc.invalidateQueries({ queryKey: ["machines"] });
+          void qc.invalidateQueries({ queryKey: queryKeys.tree });
+          void qc.invalidateQueries({ queryKey: ["usage"] });
+          void qc.invalidateQueries({ queryKey: ["positions"] });
+          void qc.invalidateQueries({ queryKey: ["downtime"] });
+          void qc.invalidateQueries({ queryKey: ["efficiency"] });
+          void qc.invalidateQueries({ queryKey: ["maintenance"] });
+          void qc.invalidateQueries({ queryKey: ["notifications"] });
+          void qc.invalidateQueries({ queryKey: ["predictive"] });
+        }
+        wasConnected = true;
+      };
+
+      ws.onmessage = (evt: MessageEvent<string>) => {
+        if (destroyed) return;
+        touch();
+        const msg = parseRealtimeMessage(evt.data);
+        if (!msg) return;
+        if (msg.type === "sensor_reading") {
+          pushReading({ tag_id: msg.tag_id, value: msg.value, unit: msg.unit, timestamp: msg.timestamp });
+        } else if (msg.type === "usage") {
+          applyUsage(msg);
+        } else if (msg.type === "downtime") {
+          applyDowntime(msg);
+        } else if (msg.type === "notification") {
+          applyNotification(msg.notification);
+        } else if (msg.type === "predictive_alert") {
+          refreshMapSoon();
+          // alert opened / escalated / closed: lists, details, monitors and the Raio-X card refetch
+          void qc.invalidateQueries({ queryKey: ["predictive"] });
+          if (msg.event === "converted" || msg.alert.state === "converted") void qc.invalidateQueries({ queryKey: ["maintenance"] });
+        } else {
+          qc.setQueriesData<Machine[]>({ queryKey: ["machines"] }, (old) => applyMachineStatus(old, msg));
+          qc.setQueryData<TreePlant[]>(queryKeys.tree, (old) => applyMachineStatusToTree(old, msg));
+          // plant map / operator tablet: the precedence rule right away, then the server's state (open failure,
+          // break, WO…) on the refetch
+          qc.setQueriesData<MapView>({ queryKey: ["plant-map"] }, (old) => applyStatusToMapView(old, msg));
+          refreshMapSoon();
         }
       };
 
-      ws.onclose = () => {
-        if (!destroyed) {
-          setStatus("disconnected");
-          retryRef.current = setTimeout(connect, 3000);
+      ws.onclose = (evt: CloseEvent) => {
+        if (destroyed) return;
+        setStatus("disconnected");
+        const action = reconnectActionFor(evt.code);
+        if (action === "stop") return;
+        if (action === "refresh-then-retry") {
+          // Any authenticated call triggers the refresh interceptor on 401.
+          authApi.me().then(scheduleRetry, scheduleRetry);
+          return;
         }
+        scheduleRetry();
       };
 
-      ws.onerror = () => ws.close();
+      ws.onerror = () => ws?.close();
     }
 
     connect();
 
     return () => {
       destroyed = true;
-      clearTimeout(retryRef.current);
-      wsRef.current?.close();
+      clearTimeout(retry);
+      clearTimeout(renewTimer);
+      window.removeEventListener(TOKENS_EVENT, onTokens);
+      window.removeEventListener("storage", onStorage);
+      clearTimeout(kpiTimer);
+      clearTimeout(mapTimer);
+      if (ws) {
+        const sock = ws;
+        sock.onclose = null;
+        sock.onerror = null;
+        sock.onmessage = null;
+        // closing a CONNECTING socket logs a browser error; close it once it opens instead
+        if (sock.readyState === WebSocket.CONNECTING) sock.onopen = () => sock.close();
+        else sock.close();
+      }
+      reset();
     };
-  }, [tenantId]);
-
-  return { readings, status };
+  }, [tenantId, qc]);
 }

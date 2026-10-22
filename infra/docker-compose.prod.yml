@@ -1,22 +1,42 @@
-version: "3.9"
-
+# Produção (VPS). Rodar sempre com --env-file para a interpolação das variáveis:
+#   docker compose --env-file /opt/factory-monitor/.env -f infra/docker-compose.prod.yml up -d
+# Imagens com versão fixa — atualize de propósito, nunca via :latest.
 # Usa o Traefik já instalado pelo Easypanel para roteamento.
-# Os containers server e web são expostos via labels do Traefik na rede easypanel.
+# Domínios (DNS A → VPS para os três):
+#   factoryconnect.tech        → site público estático (site/)        · www.factoryconnect.tech → 301 para o apex
+#   app.factoryconnect.tech    → app React (web) + API/WebSocket (server)
+#   Rotas antigas do app no apex (/login, /dashboard, /api, …) → 301/308 para app.factoryconnect.tech (mesmo caminho).
+# Os containers site, server e web são expostos via labels do Traefik na rede easypanel.
+#
+# Imagens do app (server, web, site, edge): ${FM_IMAGE_PREFIX}-<nome>:${FM_VERSION}
+#   - release (recomendado): FM_IMAGE_PREFIX=ghcr.io/<dono>/factoryconnect e FM_VERSION=<x.y.z> — imagens publicadas
+#     pelo workflow Release (.github/workflows/release.yml: build + scan + SBOM + proveniência) e só PUXADAS no VPS;
+#   - build local (padrão, compatível): factory-monitor-<nome>:<FM_VERSION ou latest>, construídas no VPS.
+#   scripts/remote_deploy.sh exporta FM_VERSION (x.y.z da tag ou sha-<commit>) — nunca reaproveita :latest.
+# Staging (pré-produção no mesmo VPS, staging.factoryconnect.tech, banco/volumes próprios): docker-compose.staging.yml.
+
+# Logs dos containers com rotação (json-file): no máximo 5 × 20 MB por container (docs/operations.md §8.5).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-20m}"
+    max-file: "${LOG_MAX_FILE:-5}"
 
 services:
   # ── Databases ─────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     container_name: fm_postgres
     restart: always
-    env_file: /opt/factory-monitor/.env
+    logging: *logging
+    env_file: ../.env   # = /opt/factory-monitor/.env no VPS
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -25,9 +45,10 @@ services:
     networks: [fm-net]
 
   influxdb:
-    image: influxdb:2.7-alpine
+    image: influxdb:2.7.12-alpine
     container_name: fm_influxdb
     restart: always
+    logging: *logging
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: admin
@@ -35,6 +56,17 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      # Limites de memória (docs/performance.md §5.1): sem eles uma consulta/compactação descontrolada levou o
+      # influxd a ~14 GB e o OOM killer do kernel o matou em loop (Sprint 7b). Com eles a consulta que estoura
+      # falha sozinha e o contêiner nunca derruba o Postgres/API do mesmo host.
+      INFLUXD_QUERY_CONCURRENCY: ${INFLUXD_QUERY_CONCURRENCY:-16}
+      INFLUXD_QUERY_QUEUE_SIZE: ${INFLUXD_QUERY_QUEUE_SIZE:-64}
+      INFLUXD_QUERY_INITIAL_MEMORY_BYTES: ${INFLUXD_QUERY_INITIAL_MEMORY_BYTES:-16777216}
+      INFLUXD_QUERY_MEMORY_BYTES: ${INFLUXD_QUERY_MEMORY_BYTES:-1073741824}
+      INFLUXD_QUERY_MAX_MEMORY_BYTES: ${INFLUXD_QUERY_MAX_MEMORY_BYTES:-2147483648}
+      INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE: ${INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE:-536870912}
+      INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS: ${INFLUXD_STORAGE_MAX_CONCURRENT_COMPACTIONS:-1}
+    mem_limit: ${INFLUX_MEM_LIMIT:-4g}
     volumes:
       - influxdb-data:/var/lib/influxdb2
     healthcheck:
@@ -44,18 +76,43 @@ services:
       retries: 10
     networks: [fm-net]
 
+  # ── MQTT Broker (autenticado; TLS para os gateways de campo) ──────
+  # Nunca anônimo em produção (o dev continua anônimo em infra/mosquitto/mosquitto.conf).
+  # Na partida, infra/mosquitto/prod/render.sh gera passwd/acl a partir de:
+  #   MQTT_USERNAME / MQTT_PASSWORD (.env)  → usuário do backend (lê factory/#)
+  #   $MQTT_GATEWAYS_DIR/gateways.conf      → 1 usuário por gateway, restrito a factory/<tenant>/#
+  #                                           (make mqtt-gateway-add GATEWAY=... TENANT=...)
+  # 1883 fica na rede interna (fm_server) e no loopback do VPS; os gateways usam 8883 com TLS
+  # (MQTT_TLS_ENABLED=true + certificado em $MQTT_TLS_CERT_DIR: fullchain.pem + privkey.pem — docs/operations.md §MQTT).
+  # PRÉ-REQUISITO do deploy (§6.4): credenciais no .env e gateways cadastrados — scripts/remote_deploy.sh
+  # confere antes de tocar em qualquer serviço.
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.0.22
     container_name: fm_mosquitto
     restart: always
+    logging: *logging
+    entrypoint: ["/bin/sh", "/fm/entrypoint.sh"]
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    environment:
+      MQTT_SERVER_USERNAME: ${MQTT_USERNAME:?defina MQTT_USERNAME no .env (usuário MQTT do backend)}
+      MQTT_SERVER_PASSWORD: ${MQTT_PASSWORD:?defina MQTT_PASSWORD no .env (>= 16 caracteres)}
+      # TLS só quando o certificado estiver instalado (docs/operations.md §6.3–6.4): ligado sem
+      # fullchain.pem/privkey.pem o broker não sobe. Padrão desligado = compatível com o deploy anterior.
+      MQTT_TLS_ENABLED: ${MQTT_TLS_ENABLED:-false}
+      MQTT_TLS_PORT: "8883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/prod:/fm:ro
+      - ${MQTT_GATEWAYS_DIR:-../mqtt}:/mosquitto/gateways:ro
+      - ${MQTT_TLS_CERT_DIR:-../mqtt/certs}:/mosquitto/certs:ro
       - mosquitto-data:/mosquitto/data
-      - mosquitto-log:/mosquitto/log
     ports:
-      - "1883:1883"
+      - "${MQTT_TLS_PUBLISH:-8883}:8883"
+      # 1883 (autenticado, SEM TLS) só no loopback do VPS. Transição de gateways antigos sem TLS:
+      # MQTT_PLAIN_BIND=0.0.0.0 temporariamente (senha trafega em claro — remova assim que migrarem).
+      - "${MQTT_PLAIN_BIND:-127.0.0.1}:1883:1883"
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t health -m ping -q 0 || exit 1"]
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -p 1883 -u fm-health -P \"$$(cat /mosquitto/runtime/health.pw)\" -t health/ping -m ping -q 0 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,26 +122,41 @@ services:
   # Accessed internally by fm_server only (no Traefik exposure needed).
   # HLS streams proxied to browser via GET /api/cameras/{id}/hls/...
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.21.1
     container_name: fm_mediamtx
     restart: always
+    logging: *logging
     volumes:
-      - ./mediamtx/mediamtx.yml:/mediamtx.yml
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
     networks: [fm-net]
 
   # ── Backend (FastAPI) ─────────────────────────────────────────────
   server:
-    image: factory-monitor-server:latest
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-server:${FM_VERSION:-latest}
     build:
       context: ../server
       dockerfile: Dockerfile
+      args:
+        FM_VERSION: ${FM_VERSION:-dev}
     container_name: fm_server
     restart: always
-    env_file: /opt/factory-monitor/.env
+    logging: *logging
+    env_file: ../.env   # = /opt/factory-monitor/.env no VPS
     environment:
       POSTGRES_HOST: postgres
       INFLUX_URL: http://influxdb:8086
       MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"     # listener interno (autenticado); TLS 8883 é para os gateways
+      # Proxies confiáveis p/ X-Forwarded-For (Traefik na rede easypanel). Nunca "*". docs/operations.md §IP do cliente
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7}
+      # Volume de arquivos dos tenants (plantas baixas do mapa, docs/operations.md §Arquivos): fora do container,
+      # sobrevive a redeploy/recriação. Mesmo caminho do volume abaixo.
+      FILES_DIR: /app/data/files
+      # demo-bot → API de controle da planta virtual (profile demo, §10): sem o token ela responde 403
+      DEMO_VIRTUAL_PLANT_CONTROL_URL: ${DEMO_VIRTUAL_PLANT_CONTROL_URL:-}
+      DEMO_VIRTUAL_PLANT_CONTROL_TOKEN: ${DEMO_VIRTUAL_PLANT_CONTROL_TOKEN:-}
+    volumes:
+      - server-files:/app/data/files
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,7 +167,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=easypanel"
-      - "traefik.http.routers.fm-api.rule=Host(`factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`) || PathPrefix(`/metrics`))"
+      - "traefik.http.routers.fm-api.rule=Host(`app.factoryconnect.tech`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))"
+      # /metrics NÃO é publicado: o Prometheus (profile monitoring) coleta pela rede interna fm-net.
       - "traefik.http.routers.fm-api.priority=200"
       - "traefik.http.routers.fm-api.entrypoints=https"
       - "traefik.http.routers.fm-api.tls=true"
@@ -104,41 +177,328 @@ services:
     networks:
       - fm-net
       - easypanel
+      - fm-demo        # demo-bot → API de controle da planta virtual da demo (profile demo)
 
   # ── Frontend (React/Nginx) ────────────────────────────────────────
   web:
-    image: factory-monitor-web:latest
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-web:${FM_VERSION:-latest}
     build:
       context: ../web
       dockerfile: Dockerfile
       target: prod
+      args:
+        FM_VERSION: ${FM_VERSION:-dev}
     container_name: fm_web
     restart: always
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=easypanel"
-      - "traefik.http.routers.fm-web.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web.rule=Host(`app.factoryconnect.tech`)"
       - "traefik.http.routers.fm-web.entrypoints=https"
       - "traefik.http.routers.fm-web.tls=true"
       - "traefik.http.routers.fm-web.tls.certresolver=letsencrypt"
       - "traefik.http.services.fm-web.loadbalancer.server.port=80"
       # Redirecionar HTTP → HTTPS
-      - "traefik.http.routers.fm-web-http.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-web-http.rule=Host(`app.factoryconnect.tech`)"
       - "traefik.http.routers.fm-web-http.entrypoints=http"
       - "traefik.http.routers.fm-web-http.middlewares=redirect-https"
       - "traefik.http.middlewares.redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-https.redirectscheme.permanent=true"
     networks:
       - fm-net
       - easypanel
 
+  # ── Site público (Astro estático + nginx) ─────────────────────────
+  site:
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-site:${FM_VERSION:-latest}
+    build:
+      context: ../site
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_APP_URL: https://app.factoryconnect.tech
+        PUBLIC_API_URL: https://app.factoryconnect.tech
+        PUBLIC_CONTACT_EMAIL: ${SITE_CONTACT_EMAIL:-}
+        FM_VERSION: ${FM_VERSION:-dev}
+    container_name: fm_site
+    restart: always
+    logging: *logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=easypanel"
+      - "traefik.http.services.fm-site.loadbalancer.server.port=80"
+      # factoryconnect.tech → site
+      - "traefik.http.routers.fm-site.rule=Host(`factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site.entrypoints=https"
+      - "traefik.http.routers.fm-site.tls=true"
+      - "traefik.http.routers.fm-site.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-site.service=fm-site"
+      # www.factoryconnect.tech → factoryconnect.tech (mesmo caminho)
+      - "traefik.http.routers.fm-site-www.rule=Host(`www.factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site-www.entrypoints=https"
+      - "traefik.http.routers.fm-site-www.tls=true"
+      - "traefik.http.routers.fm-site-www.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-site-www.middlewares=fm-www-to-apex"
+      - "traefik.http.routers.fm-site-www.service=fm-site"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.regex=^https?://www\\.factoryconnect\\.tech(:[0-9]+)?/(.*)"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.replacement=https://factoryconnect.tech/$${2}"
+      - "traefik.http.middlewares.fm-www-to-apex.redirectregex.permanent=true"
+      # Rotas antigas do app no apex → app.factoryconnect.tech (mantém caminho e query; POST /api vira 308)
+      - "traefik.http.routers.fm-legacy-app.rule=Host(`factoryconnect.tech`) && (Path(`/login`) || PathPrefix(`/login/`) || Path(`/register`) || PathPrefix(`/register/`) || Path(`/dashboard`) || PathPrefix(`/dashboard/`) || Path(`/factory`) || PathPrefix(`/factory/`) || Path(`/machines`) || PathPrefix(`/machines/`) || Path(`/lines`) || PathPrefix(`/lines/`) || Path(`/sensors`) || PathPrefix(`/sensors/`) || Path(`/cameras`) || PathPrefix(`/cameras/`) || Path(`/alerts`) || PathPrefix(`/alerts/`) || Path(`/ai`) || PathPrefix(`/ai/`) || Path(`/admin`) || PathPrefix(`/admin/`) || Path(`/api`) || PathPrefix(`/api/`) || Path(`/ws`) || PathPrefix(`/ws/`))"
+      - "traefik.http.routers.fm-legacy-app.priority=300"
+      - "traefik.http.routers.fm-legacy-app.entrypoints=https"
+      - "traefik.http.routers.fm-legacy-app.tls=true"
+      - "traefik.http.routers.fm-legacy-app.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.fm-legacy-app.middlewares=fm-legacy-to-app"
+      - "traefik.http.routers.fm-legacy-app.service=fm-site"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.regex=^https?://factoryconnect\\.tech(:[0-9]+)?/(.*)"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.replacement=https://app.factoryconnect.tech/$${2}"
+      - "traefik.http.middlewares.fm-legacy-to-app.redirectregex.permanent=true"
+      # HTTP → HTTPS (apex e www; o middleware redirect-https é definido no serviço web)
+      - "traefik.http.routers.fm-site-http.rule=Host(`factoryconnect.tech`) || Host(`www.factoryconnect.tech`)"
+      - "traefik.http.routers.fm-site-http.entrypoints=http"
+      - "traefik.http.routers.fm-site-http.middlewares=redirect-https"
+      - "traefik.http.routers.fm-site-http.service=fm-site"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - easypanel
+
+  # ── Demonstração pública (profile "demo") — docs/sprint6.md §5, docs/operations.md §10 ──
+  # COMPOSE_PROFILES=demo (ou monitoring,demo) no .env, depois do bootstrap do tenant demo
+  # (cd server && python -m src.demo bootstrap). A planta virtual roda o roteiro da demo em tempo real no fuso
+  # America/Sao_Paulo e só fala com o gateway da demo e com o servidor (demo-bot → POST /replace), na rede interna
+  # fm-demo (sem saída para a internet). O gateway da demo usa credenciais MQTT próprias, restritas a
+  # factory/<tenant demo>/# (make mqtt-gateway-add GATEWAY=gw-demo TENANT=<uuid do tenant demo>).
+  # Imagem do edge com versão fixa (build local a partir de ../edge; base python:3.12.15-slim fixada no Dockerfile).
+  demo-plant:
+    profiles: ["demo"]
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.6.0}}
+    build:
+      context: ../edge
+      dockerfile: Dockerfile
+      args:
+        EDGE_VERSION: ${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.6.0}}
+    container_name: fm_demo_plant
+    restart: always
+    logging: *logging
+    # o roteiro da demo exige o token da API de controle (fora do loopback ela recusa sem X-Control-Token)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if [ -z "$$VP_CONTROL_TOKEN" ]; then
+        echo "demo-plant: defina DEMO_VIRTUAL_PLANT_CONTROL_TOKEN no .env (openssl rand -hex 24)" >&2; exit 2; fi;
+        exec python -m virtual_plant --demo --host 0.0.0.0 --control-host 0.0.0.0 --state-file /data/demo_state.json
+    environment:
+      VP_SEED: ${DEMO_PLANT_SEED:-42}
+      VP_CONTROL_TOKEN: ${DEMO_VIRTUAL_PLANT_CONTROL_TOKEN:-}
+      # roteiro (padrões em edge/virtual_plant/demo.py)
+      DEMO_TZ: America/Sao_Paulo
+      DEMO_FAULT_MTBF_SCALE: ${DEMO_FAULT_MTBF_SCALE:-2.5}
+      DEMO_B3_STROKES_PER_CYCLE: ${DEMO_B3_STROKES_PER_CYCLE:-12}
+    volumes:
+      - demo-plant-data:/data
+    healthcheck:
+      # 503 (tempo simulado parado, atraso, relógio fora do fuso) → urlopen levanta → unhealthy
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks: [fm-demo]
+
+  demo-gateway:
+    profiles: ["demo"]
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.6.0}}
+    container_name: fm_demo_gateway
+    restart: always
+    logging: *logging
+    # cadastro por código (1ª partida; DEMO_GATEWAY_ENROLL_CODE) ou token do bootstrap (DEMO_GATEWAY_ID + _TOKEN);
+    # credencial MQTT própria sempre (o broker de produção só aceita usuários do gateways.conf)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        if [ -z "$$MQTT_USERNAME" ] || [ -z "$$MQTT_PASSWORD" ]; then
+        echo "demo-gateway: defina DEMO_GATEWAY_MQTT_USERNAME/_PASSWORD (make mqtt-gateway-add GATEWAY=gw-demo TENANT=<demo>)" >&2; exit 2; fi;
+        if [ ! -s /data/gateway_credentials.json ] && [ -z "$$ENROLL_CODE" ] && [ -z "$$GATEWAY_TOKEN" ]; then
+        echo "demo-gateway: defina DEMO_GATEWAY_ENROLL_CODE (ou DEMO_GATEWAY_ID + DEMO_GATEWAY_TOKEN)" >&2; exit 2; fi;
+        exec python -m src.gateway
+    environment:
+      SERVER_URL: http://server:8000
+      ALLOW_INSECURE_HTTP: "true"          # só a rede interna do compose (fm-net); nada sai do VPS
+      ENROLL_CODE: ${DEMO_GATEWAY_ENROLL_CODE:-}
+      GATEWAY_ID: ${DEMO_GATEWAY_ID:-}
+      GATEWAY_TOKEN: ${DEMO_GATEWAY_TOKEN:-}
+      GATEWAY_HEARTBEAT_S: "30"
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"             # listener interno autenticado
+      MQTT_USERNAME: ${DEMO_GATEWAY_MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${DEMO_GATEWAY_MQTT_PASSWORD:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}  # mesma chave do servidor (vazio = payload em claro na rede interna)
+      VIRTUAL_PLANT_HOST: demo-plant
+      VIRTUAL_PLANT_OPCUA_PORT: "4840"
+      VIRTUAL_PLANT_MODBUS_PORT: "5020"
+    volumes:
+      - demo-gateway-data:/data
+    depends_on:
+      demo-plant:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    networks: [fm-net, fm-demo]
+
+  # ── Observabilidade (profile "monitoring") ────────────────────────
+  # COMPOSE_PROFILES=monitoring no .env (ou --profile monitoring). Nada é exposto publicamente:
+  # Grafana só em 127.0.0.1:3000 do VPS → acesso por túnel SSH (docs/operations.md §Observabilidade).
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.5.0
+    container_name: fm_prometheus
+    restart: always
+    logging: *logging
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-5GB}
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/prometheus/alerts.platform.yml:/etc/prometheus/alerts.platform.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [fm-net]
+
+  # Alertas por e-mail (SMTP do .env: SMTP_HOST/PORT/USER/PASSWORD + ALERT_EMAIL_TO). Sem destino configurado o
+  # container recusa subir (alerta que ninguém recebe é pior que nenhum). UI: túnel SSH para 127.0.0.1:9093.
+  alertmanager:
+    profiles: ["monitoring"]
+    image: prom/alertmanager:v0.34.1
+    container_name: fm_alertmanager
+    restart: always
+    logging: *logging
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    environment:
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      ALERT_EMAIL_CRITICAL_TO: ${ALERT_EMAIL_CRITICAL_TO:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-${SMTP_TLS:-true}}
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks: [fm-net]
+
+  # Disco/memória/CPU do VPS + textfile collector (métricas do backup: BACKUP_METRICS_FILE em scripts/backup.sh)
+  node-exporter:
+    profiles: ["monitoring"]
+    image: prom/node-exporter:v1.12.1
+    container_name: fm_node_exporter
+    restart: always
+    logging: *logging
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containerd/.+)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+      - ${BACKUP_METRICS_DIR:-../backups/metrics}:/textfile:ro
+    networks: [fm-net]
+
+  # Consultas de negócio no Postgres (gateways sem contato, dead letters pendentes, demo) — monitoring/sql-exporter
+  sql-exporter:
+    profiles: ["monitoring"]
+    image: burningalchemist/sql_exporter:0.24.9
+    container_name: fm_sql_exporter
+    restart: always
+    logging: *logging
+    command:
+      - -config.file=/etc/sql_exporter/sql_exporter.yml
+      # papel só de leitura recomendado (docs/go_live.md §7); senha sem caracteres especiais de URL (openssl rand -hex)
+      - -config.data-source-name=postgres://${SQL_EXPORTER_USER:-${POSTGRES_USER}}:${SQL_EXPORTER_PASSWORD:-${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    volumes:
+      - ./monitoring/sql-exporter:/etc/sql_exporter:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [fm-net]
+
+  # Sondas HTTP: saúde pública (app, site, staging; validade do TLS) e /health da planta da demo (rede fm-demo)
+  blackbox-exporter:
+    profiles: ["monitoring"]
+    image: prom/blackbox-exporter:v0.29.0
+    container_name: fm_blackbox
+    restart: always
+    logging: *logging
+    command: ["--config.file=/etc/blackbox/blackbox.yml"]
+    volumes:
+      - ./monitoring/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks: [fm-net, fm-demo]
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:12.1.1
+    container_name: fm_grafana
+    restart: always
+    logging: *logging
+    # Recusa subir sem senha de admin (com ":?" no compose, o `config` falharia mesmo sem o profile ativo).
+    entrypoint: ["/bin/sh", "-c", "if [ $${#GF_SECURITY_ADMIN_PASSWORD} -lt 12 ]; then echo 'defina GRAFANA_ADMIN_PASSWORD (>= 12 caracteres) no .env' >&2; exit 1; fi; exec /run.sh"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    networks: [fm-net]
+
 networks:
   fm-net:
     driver: bridge
+  # demo pública: planta virtual ↔ gateway da demo ↔ servidor (demo-bot); sem rota para fora
+  fm-demo:
+    driver: bridge
+    internal: true
   easypanel:
     external: true
 
 volumes:
   postgres-data:
+  server-files:          # FILES_DIR do servidor (plantas baixas dos layouts) — dono uid 10001 (imagem)
   influxdb-data:
   mosquitto-data:
-  mosquitto-log:
+  prometheus-data:
+  alertmanager-data:     # silêncios e estado de notificação do Alertmanager
+  grafana-data:
+  demo-plant-data:       # estado do desgaste do Cilindro B3 (sobrevive ao restart)
+  demo-gateway-data:     # credencial do cadastro (0600), cópia da config, buffer offline

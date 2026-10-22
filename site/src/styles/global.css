@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+/* Tema: escuro por padrão (classe .dark no <html>), claro opcional — mesma marca verde do app. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-brand-50: #eefbf3;
+  --color-brand-100: #d6f5e3;
+  --color-brand-200: #b0eaca;
+  --color-brand-300: #7dd9aa;
+  --color-brand-400: #48c085;
+  --color-brand-500: #25a368;
+  --color-brand-600: #198554;
+  --color-brand-700: #166a44;
+  --color-brand-800: #155438;
+  --color-brand-900: #12452f;
+
+  /* Tokens semânticos (variam com o tema) */
+  --color-bg: var(--fc-bg);
+  --color-surface: var(--fc-surface);
+  --color-surface-2: var(--fc-surface-2);
+  --color-line: var(--fc-line);
+  --color-fg: var(--fc-fg);
+  --color-muted: var(--fc-muted);
+  --color-accent: var(--fc-accent);
+  --color-on-accent: var(--fc-on-accent);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  --fc-bg: #ffffff;
+  --fc-surface: #f6f8f7;
+  --fc-surface-2: #eef2f0;
+  --fc-line: #dfe5e2;
+  --fc-fg: #0f1a15;
+  --fc-muted: #4a5a53;
+  --fc-accent: #166a44;    /* texto/links verdes com contraste AA sobre branco */
+  --fc-on-accent: #ffffff;
+  color-scheme: light;
+}
+
+:root.dark {
+  --fc-bg: #0a0f0d;
+  --fc-surface: #111916;
+  --fc-surface-2: #17211d;
+  --fc-line: #24302b;
+  --fc-fg: #ecf3ef;
+  --fc-muted: #a3b3ab;
+  --fc-accent: #48c085;
+  --fc-on-accent: #04130b;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { @apply bg-bg text-fg antialiased font-sans; }
+  ::selection { background: color-mix(in oklab, var(--color-brand-500) 35%, transparent); }
+  :focus-visible { outline: 2px solid var(--color-brand-400); outline-offset: 2px; border-radius: 4px; }
+  h1, h2, h3 { text-wrap: balance; letter-spacing: -0.02em; }
+  p { text-wrap: pretty; }
+}
+
+@utility container-x { @apply mx-auto w-full max-w-6xl px-5 sm:px-6 lg:px-8; }
+@utility btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors duration-150 min-h-11; }
+@utility btn-primary { @apply btn bg-brand-700 text-white hover:bg-brand-800 dark:bg-brand-400 dark:text-[#04130b] dark:hover:bg-brand-300; }
+@utility btn-ghost { @apply btn border border-line text-fg hover:bg-surface-2; }
+@utility eyebrow { @apply text-xs font-semibold uppercase tracking-[0.14em] text-accent; }
+@utility card { @apply rounded-2xl border border-line bg-surface p-6; }
+
+@layer components {
+  .prose-fc { @apply max-w-3xl text-muted leading-relaxed; }
+  .prose-fc h2 { @apply mt-10 mb-3 text-xl font-semibold text-fg; }
+  .prose-fc h3 { @apply mt-6 mb-2 text-base font-semibold text-fg; }
+  .prose-fc p, .prose-fc ul { @apply mb-4; }
+  .prose-fc ul { @apply list-disc pl-5 space-y-1; }
+  .prose-fc a { @apply text-accent underline underline-offset-2; }
+  .prose-fc strong { @apply text-fg; }
+}
+
+/* Animações leves: só com JS ativo e sem "prefers-reduced-motion". */
+@media (prefers-reduced-motion: no-preference) {
+  .js .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  .js .reveal.is-visible { opacity: 1; transform: none; }
+  .pulse-dot { animation: pulse-dot 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .flow-line { stroke-dasharray: 6 8; animation: flow 1.6s linear infinite; }
+  .bar-grow { transform-box: fill-box; transform-origin: bottom; animation: bar-grow 1.2s cubic-bezier(.2,.8,.2,1) both; }
+}
+@keyframes pulse-dot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
+@keyframes flow { to { stroke-dashoffset: -28; } }
+@keyframes bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* Documentação (manual em markdown): tipografia de leitura longa, tabelas roláveis no celular. */
+@layer components {
+  .prose-doc { @apply max-w-[72ch] text-[1.0625rem] leading-[1.75] text-muted; }
+  .prose-doc > :first-child { @apply mt-0; }
+  .prose-doc h1 { @apply mb-6 text-3xl font-bold text-fg sm:text-4xl; }
+  .prose-doc h2 { @apply mt-14 mb-4 text-2xl font-semibold text-fg; scroll-margin-top: 5.5rem; }
+  .prose-doc h3 { @apply mt-10 mb-3 text-lg font-semibold text-fg; scroll-margin-top: 5.5rem; }
+  .prose-doc h4 { @apply mt-6 mb-2 font-semibold text-fg; }
+  .prose-doc a[id]:empty { display: block; position: relative; top: -5.5rem; visibility: hidden; }
+  .prose-doc p, .prose-doc ul, .prose-doc ol, .prose-doc blockquote, .prose-doc pre { @apply mb-5; }
+  .prose-doc ul { @apply list-disc space-y-1.5 pl-6; }
+  .prose-doc ol { @apply list-decimal space-y-1.5 pl-6; }
+  .prose-doc li > ul, .prose-doc li > ol { @apply mt-1.5 mb-0; }
+  .prose-doc a[href] { @apply font-medium text-accent underline underline-offset-2; }
+  .prose-doc strong { @apply font-semibold text-fg; }
+  .prose-doc code { @apply rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[0.875em] text-fg; }
+  .prose-doc pre { @apply overflow-x-auto rounded-xl border border-line bg-surface p-4 text-sm leading-relaxed; }
+  .prose-doc pre code { @apply bg-transparent p-0; }
+  .prose-doc blockquote { @apply rounded-r-xl border-l-4 border-accent bg-surface px-5 py-3 text-fg; }
+  .prose-doc blockquote > :last-child { @apply mb-0; }
+  .prose-doc hr { @apply my-10 border-line; }
+  .prose-doc table { @apply mb-6 block w-full max-w-full overflow-x-auto border-collapse text-[0.9375rem] leading-snug; }
+  .prose-doc .doc-table { @apply mb-6 max-w-full overflow-x-auto rounded-md; }
+  .prose-doc .doc-table > table { @apply mb-0 table; }
+  .prose-doc thead th { @apply border-b-2 border-line bg-surface px-3 py-2 text-left font-semibold whitespace-nowrap text-fg; }
+  .prose-doc td { @apply border-b border-line px-3 py-2 align-top; min-width: 8rem; }
+  .prose-doc .doc-ref { @apply font-medium text-fg; }
+}

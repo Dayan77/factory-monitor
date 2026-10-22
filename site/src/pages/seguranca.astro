@@ -1,0 +1,43 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import CtaBand from "../components/CtaBand.astro";
+---
+<Layout title="Segurança: dados industriais protegidos" description="Como o FactoryConnect protege seus dados: HTTPS/TLS, isolamento por empresa, MFA, sessões revogáveis, bloqueio de força bruta, auditoria, gateway só de saída e LGPD.">
+  <PageHero eyebrow="Segurança" title="Seus dados de produção são da sua empresa" lead="Segurança não é um opcional quando o assunto é a rede da fábrica. Estas são as práticas que seguimos — e, quando algo ainda está em evolução, dizemos isso." />
+
+  <section class="container-x mt-16" aria-labelledby="seg-plataforma">
+    <h2 id="seg-plataforma" class="text-2xl font-semibold text-fg">Na plataforma</h2>
+    <div class="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+      <FeatureCard icon="lock" title="Criptografia em trânsito">Acesso ao app e à API somente por HTTPS (TLS), com HSTS e política de conteúdo (CSP) restritiva. Opcionalmente, o gateway cifra a carga de dados de ponta a ponta (AES-256-GCM).</FeatureCard>
+      <FeatureCard icon="layers" title="Isolamento por empresa">Plataforma multiempresa: toda consulta é filtrada pela empresa do usuário, com testes automatizados de isolamento em cada parte do sistema.</FeatureCard>
+      <FeatureCard icon="key" title="Senhas fortes de verdade">Mínimo de 12 caracteres, recusa de senhas vazadas ou previsíveis (e das que contêm seu nome ou o da empresa), armazenamento só como hash (bcrypt) e histórico para não repetir as últimas.</FeatureCard>
+      <FeatureCard icon="shield" title="Verificação em duas etapas">MFA por aplicativo autenticador (TOTP) com códigos de recuperação de uso único. O administrador pode exigir MFA de todos os administradores da empresa.</FeatureCard>
+      <FeatureCard icon="clock" title="Sessões sob controle">Tokens de acesso de curta duração com renovação rotativa: um token reaproveitado encerra a sessão na hora. Em “Minha conta” você vê cada dispositivo conectado e encerra o que não reconhece.</FeatureCard>
+      <FeatureCard icon="bell" title="Proteção contra força bruta">Tentativas de login, de código MFA e de redefinição de senha são limitadas por conta e por rede, com bloqueio temporário. A redefinição de senha não revela quais e-mails têm conta.</FeatureCard>
+      <FeatureCard icon="users" title="Acesso por função">Operador, supervisor, PCM, técnico, gerente e administrador veem e fazem só o que o papel permite; operadores e supervisores ficam restritos às linhas da sua área. Novas pessoas entram por convite e criam a própria senha.</FeatureCard>
+      <FeatureCard icon="eye" title="Trilha de auditoria">Logins, falhas, bloqueios, MFA, mudanças de papel, convites, tokens de API e exportações de dados ficam registrados para apuração — sem senhas, tokens nem o endereço IP completo.</FeatureCard>
+      <FeatureCard icon="database" title="Privacidade e LGPD">Cada pessoa exporta os próprios dados e pode excluir a conta pelo app; dados pessoais têm prazos de retenção definidos. <a class="text-accent underline underline-offset-2" href="/privacidade">Política de Privacidade</a>.</FeatureCard>
+    </div>
+  </section>
+
+  <section class="container-x mt-16" aria-labelledby="seg-fabrica">
+    <h2 id="seg-fabrica" class="text-2xl font-semibold text-fg">Na fábrica</h2>
+    <div class="mt-6 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+      <FeatureCard icon="plug" title="Rede da fábrica preservada">O gateway só inicia conexões de saída. Nenhuma porta de entrada precisa ser aberta no firewall industrial.</FeatureCard>
+      <FeatureCard icon="chip" title="Somente leitura nas máquinas">A coleta lê dados dos CLPs e sensores. O FactoryConnect não envia comandos às suas máquinas.</FeatureCard>
+      <FeatureCard icon="cloud" title="Sem perder dados na queda de rede">O gateway guarda as leituras localmente durante uma queda e envia tudo quando a conexão volta; os indicadores mostram quando um período teve dados incompletos.</FeatureCard>
+    </div>
+  </section>
+
+  <section class="container-x mt-20">
+    <div class="prose-fc">
+      <h2>Em evolução</h2>
+      <p>Segurança é trabalho contínuo: revisamos dependências e imagens a cada versão e corrigimos vulnerabilidades conhecidas antes de publicar. Se a sua empresa tem requisitos específicos (questionário de segurança, VPN, rede segregada, avaliação de terceiros), <a href="/contato">fale com a gente</a> — respondemos com o que já existe e com o que ainda não existe.</p>
+      <p>Encontrou uma vulnerabilidade? Use o <a href="/contato">formulário de contato</a> indicando “Segurança”: tratamos o relato com prioridade e sem expor quem reportou.</p>
+    </div>
+  </section>
+
+  <CtaBand title="Tem requisitos de segurança da TI?" text="Conversamos com o time de TI/OT da sua empresa e explicamos a arquitetura em detalhes." />
+</Layout>

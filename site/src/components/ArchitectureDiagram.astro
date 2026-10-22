@@ -1,0 +1,96 @@
+---
+// Fluxo de dados: chão de fábrica → gateway edge → nuvem → pessoas.
+---
+<figure>
+  <svg viewBox="0 0 960 300" class="hidden w-full h-auto sm:block" role="img" aria-labelledby="arch-title arch-desc">
+    <title id="arch-title">Como os dados fluem no FactoryConnect</title>
+    <desc id="arch-desc">CLPs, inversores e sensores falam Modbus TCP, OPC UA ou MQTT com o gateway edge na rede da fábrica. O gateway guarda os dados localmente se a internet cair e envia por conexão criptografada para a plataforma, que calcula indicadores e mostra painéis e alertas.</desc>
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 10 5 0 10z" fill="#25a368" />
+      </marker>
+    </defs>
+    <g font-family="ui-sans-serif,system-ui,sans-serif">
+      <!-- Shop floor -->
+      <rect x="10" y="30" width="230" height="240" rx="16" class="fill-surface stroke-line" />
+      <text x="125" y="58" text-anchor="middle" class="fill-fg" font-size="15" font-weight="700">Chão de fábrica</text>
+      {["CLP / PLC", "Inversores e IHMs", "Sensores (vibração, temp.)", "Contadores e sinais"].map((t, i) => (
+        <g>
+          <rect x="30" y={76 + i * 46} width="190" height="36" rx="8" class="fill-bg stroke-line" />
+          <text x="125" y={99 + i * 46} text-anchor="middle" class="fill-muted" font-size="13">{t}</text>
+        </g>
+      ))}
+
+      <!-- Edge -->
+      <rect x="330" y="50" width="250" height="200" rx="16" class="fill-surface" stroke="#25a368" stroke-width="2" />
+      <text x="455" y="80" text-anchor="middle" class="fill-fg" font-size="15" font-weight="700">Gateway edge</text>
+      <text x="455" y="100" text-anchor="middle" class="fill-muted" font-size="12">na rede da fábrica</text>
+      {["Modbus TCP", "OPC UA", "MQTT"].map((p, i) => (
+        <g>
+          <rect x={348 + i * 76} y="116" width="70" height="28" rx="14" fill="#25a368" fill-opacity=".14" />
+          <text x={383 + i * 76} y="134" text-anchor="middle" class="fill-accent" font-size="11" font-weight="600">{p}</text>
+        </g>
+      ))}
+      <text x="455" y="176" text-anchor="middle" class="fill-muted" font-size="12">contadores · estado de operação</text>
+      <text x="455" y="196" text-anchor="middle" class="fill-muted" font-size="12">buffer local se a internet cair</text>
+      <text x="455" y="216" text-anchor="middle" class="fill-muted" font-size="12">só conexões de saída</text>
+
+      <!-- Cloud -->
+      <rect x="670" y="50" width="280" height="200" rx="16" class="fill-surface stroke-line" />
+      <text x="810" y="80" text-anchor="middle" class="fill-fg" font-size="15" font-weight="700">Plataforma FactoryConnect</text>
+      {["OEE e produção", "MTBF · MTTR · falhas", "Uso por componente", "Alertas e painéis"].map((t, i) => (
+        <g>
+          <circle cx="702" cy={112 + i * 34} r="4" fill="#25a368" class="pulse-dot" style={`animation-delay:${i * 300}ms`} />
+          <text x="716" y={117 + i * 34} class="fill-muted" font-size="13">{t}</text>
+        </g>
+      ))}
+
+      <line x1="244" y1="150" x2="324" y2="150" stroke="#25a368" stroke-width="2.5" class="flow-line" marker-end="url(#arrow)" />
+      <line x1="584" y1="150" x2="664" y2="150" stroke="#25a368" stroke-width="2.5" class="flow-line" marker-end="url(#arrow)" />
+      <text x="624" y="138" text-anchor="middle" class="fill-muted" font-size="11">TLS</text>
+    </g>
+  </svg>
+  <!-- Versão vertical para telas estreitas -->
+  <svg viewBox="0 0 340 760" class="block w-full h-auto sm:hidden" role="img" aria-labelledby="arch-title-m arch-desc-m">
+    <title id="arch-title-m">Como os dados fluem no FactoryConnect</title>
+    <desc id="arch-desc-m">CLPs, inversores e sensores falam Modbus TCP, OPC UA ou MQTT com o gateway edge na rede da fábrica. O gateway guarda os dados localmente se a internet cair e envia por conexão criptografada para a plataforma, que calcula indicadores e mostra painéis e alertas.</desc>
+    <g font-family="ui-sans-serif,system-ui,sans-serif">
+      <rect x="10" y="10" width="320" height="200" rx="16" class="fill-surface stroke-line" />
+      <text x="170" y="40" text-anchor="middle" class="fill-fg" font-size="16" font-weight="700">Chão de fábrica</text>
+      {["CLP / PLC", "Inversores e IHMs", "Sensores", "Contadores e sinais"].map((t, i) => (
+        <g>
+          <rect x={i % 2 === 0 ? 26 : 174} y={58 + Math.floor(i / 2) * 70} width="140" height="56" rx="8" class="fill-bg stroke-line" />
+          <text x={i % 2 === 0 ? 96 : 244} y={91 + Math.floor(i / 2) * 70} text-anchor="middle" class="fill-muted" font-size={t.length > 20 ? 10.5 : 13}>{t}</text>
+        </g>
+      ))}
+      <line x1="170" y1="214" x2="170" y2="262" stroke="#25a368" stroke-width="2.5" class="flow-line" marker-end="url(#arrow-m)" />
+      <rect x="10" y="268" width="320" height="200" rx="16" class="fill-surface" stroke="#25a368" stroke-width="2" />
+      <text x="170" y="298" text-anchor="middle" class="fill-fg" font-size="16" font-weight="700">Gateway edge</text>
+      <text x="170" y="318" text-anchor="middle" class="fill-muted" font-size="13">na rede da fábrica</text>
+      {["Modbus TCP", "OPC UA", "MQTT"].map((p, i) => (
+        <g>
+          <rect x={30 + i * 96} y="334" width="88" height="30" rx="15" fill="#25a368" fill-opacity=".14" />
+          <text x={74 + i * 96} y="354" text-anchor="middle" class="fill-accent" font-size="12" font-weight="600">{p}</text>
+        </g>
+      ))}
+      <text x="170" y="394" text-anchor="middle" class="fill-muted" font-size="13">contadores · estado de operação</text>
+      <text x="170" y="418" text-anchor="middle" class="fill-muted" font-size="13">buffer local se a internet cair</text>
+      <text x="170" y="442" text-anchor="middle" class="fill-muted" font-size="13">só conexões de saída</text>
+      <line x1="170" y1="472" x2="170" y2="520" stroke="#25a368" stroke-width="2.5" class="flow-line" marker-end="url(#arrow-m)" />
+      <text x="184" y="500" class="fill-muted" font-size="12">TLS</text>
+      <rect x="10" y="526" width="320" height="224" rx="16" class="fill-surface stroke-line" />
+      <text x="170" y="558" text-anchor="middle" class="fill-fg" font-size="16" font-weight="700">Plataforma FactoryConnect</text>
+      {["OEE e produção", "MTBF · MTTR · falhas", "Uso por componente", "Alertas e painéis"].map((t, i) => (
+        <g>
+          <circle cx="60" cy={594 + i * 38} r="4" fill="#25a368" />
+          <text x="76" y={599 + i * 38} class="fill-muted" font-size="14">{t}</text>
+        </g>
+      ))}
+    </g>
+    <defs>
+      <marker id="arrow-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 10 5 0 10z" fill="#25a368" />
+      </marker>
+    </defs>
+  </svg>
+</figure>

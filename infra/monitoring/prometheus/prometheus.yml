@@ -1,0 +1,80 @@
+# Prometheus de PRODUÇÃO (profile "monitoring" de infra/docker-compose.prod.yml).
+# Coleta o backend pela rede interna fm-net — /metrics não é publicado no Traefik.
+# Alertas: alerts.yml (backend) + alerts.platform.yml (VPS, backups, gateways, demo, sondas) → Alertmanager (e-mail).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+  external_labels:
+    env: production
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+  - /etc/prometheus/alerts.platform.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: fm-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["server:8000"]
+
+  # VPS: disco, memória, CPU + textfile collector (fm_backup_* gravado por scripts/backup.sh)
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Postgres: gateways sem contato, dead letters pendentes, idade do dado da demo (sql-exporter/)
+  - job_name: fm-postgres
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["sql-exporter:9399"]
+
+  # Sondas públicas (DNS + Traefik + TLS + app) — também medem a validade do certificado
+  - job_name: blackbox-public
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - https://app.factoryconnect.tech/api/health
+          - https://factoryconnect.tech/healthz
+        labels: { env: production }
+      - targets:
+          - https://staging.factoryconnect.tech/api/health
+        labels: { env: staging }
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # Demo pública: /health da planta virtual (só existe com COMPOSE_PROFILES=demo; o alerta exige o tenant demo)
+  - job_name: blackbox-demo
+    metrics_path: /probe
+    params:
+      module: [demo_health]
+    scrape_interval: 60s
+    static_configs:
+      - targets: ["http://demo-plant:8091/health"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

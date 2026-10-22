@@ -1,0 +1,84 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import ArchitectureDiagram from "../components/ArchitectureDiagram.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import CtaBand from "../components/CtaBand.astro";
+import DemoButton from "../components/DemoButton.astro";
+
+const protocols = [
+  { t: "Modbus TCP", d: "Leitura de registradores (holding/input) e bits de CLPs, inversores, medidores de energia e IHMs. O protocolo mais comum no chão de fábrica." },
+  { t: "OPC UA", d: "Leitura de nós de servidores OPC UA de CLPs e sistemas de supervisão modernos, com modelo de dados estruturado." },
+  { t: "MQTT", d: "Integração com sensores IoT e equipamentos que já publicam dados em tópicos MQTT." },
+];
+
+const rollout = [
+  { d: "Dia 1", t: "Conversa técnica", s: "Entendemos as máquinas, os CLPs e o que você quer enxergar primeiro." },
+  { d: "Dias 2–3", t: "Gateway instalado", s: "Gateway na rede da fábrica, mapeamento dos sinais e papel de cada tag." },
+  { d: "Dias 4–5", t: "Primeiros indicadores", s: "Produção, estado das máquinas e uso de componentes aparecendo no painel." },
+  { d: "Depois", t: "Expansão", s: "Novas máquinas e linhas no seu ritmo, com a mesma configuração." },
+];
+---
+<Layout title="Como funciona: gateway edge, protocolos e implantação" description="Como o FactoryConnect coleta dados: gateway edge na rede da fábrica com Modbus TCP, OPC UA e MQTT, buffer local, conexão criptografada e implantação em dias.">
+  <PageHero eyebrow="Como funciona" title="Um gateway na fábrica, uma plataforma na nuvem" lead="Nada de trocar CLPs nem reescrever programas. O gateway edge lê os dados que suas máquinas já produzem e os entrega à plataforma de forma segura." />
+
+  <section class="container-x mt-16">
+    <div class="card reveal p-4 sm:p-8"><ArchitectureDiagram /></div>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="gw">
+    <h2 id="gw" class="text-2xl font-bold text-fg sm:text-3xl">O gateway edge</h2>
+    <p class="mt-3 max-w-3xl text-muted">Um pequeno computador industrial (ou máquina virtual) na rede da fábrica, configurado pela nuvem.</p>
+    <div class="mt-8 grid gap-5 md:grid-cols-3">
+      <FeatureCard icon="counter" title="Contadores e estados">Lê contadores do CLP e também conta pulsos rápidos localmente, tratando reset e estouro do contador.</FeatureCard>
+      <FeatureCard icon="database" title="Buffer local">Se a internet cair, os dados ficam guardados no gateway e são enviados quando a conexão voltar.</FeatureCard>
+      <FeatureCard icon="lock" title="Só conexões de saída">O gateway inicia a comunicação com a nuvem. Não é preciso abrir portas de entrada no firewall da fábrica.</FeatureCard>
+    </div>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="protocolos">
+    <h2 id="protocolos" class="text-2xl font-bold text-fg sm:text-3xl">Protocolos suportados</h2>
+    <div class="mt-8 grid gap-5 md:grid-cols-3">
+      {protocols.map((p) => (
+        <div class="card reveal">
+          <h3 class="font-mono text-lg font-semibold text-accent">{p.t}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-muted">{p.d}</p>
+        </div>
+      ))}
+    </div>
+    <p class="mt-6 text-sm text-muted">Usa outro protocolo? <a class="text-accent underline underline-offset-2" href="/contato">Fale com a gente</a> — avaliamos caso a caso.</p>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="seg">
+    <h2 id="seg" class="text-2xl font-bold text-fg sm:text-3xl">Segurança em cada etapa</h2>
+    <p class="mt-3 max-w-3xl text-muted">Comunicação criptografada, dados isolados por empresa e controle de acesso por perfil. <a class="text-accent underline underline-offset-2" href="/seguranca">Veja a página de segurança</a>.</p>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="impl">
+    <h2 id="impl" class="text-2xl font-bold text-fg sm:text-3xl">Implantação em dias</h2>
+    <ol class="mt-8 grid gap-5 md:grid-cols-4">
+      {rollout.map((r) => (
+        <li class="card reveal">
+          <span class="font-mono text-xs uppercase tracking-wider text-accent">{r.d}</span>
+          <h3 class="mt-2 font-semibold text-fg">{r.t}</h3>
+          <p class="mt-2 text-sm text-muted">{r.s}</p>
+        </li>
+      ))}
+    </ol>
+    <p class="mt-6 text-sm text-muted">Prazo típico para uma primeira linha com CLPs acessíveis pela rede; o tempo real depende do acesso às máquinas e da documentação disponível.</p>
+  </section>
+
+  <section class="container-x mt-20" aria-labelledby="demo">
+    <div class="card reveal flex flex-col gap-6 sm:p-8 md:flex-row md:items-center md:justify-between">
+      <div class="max-w-2xl">
+        <h2 id="demo" class="text-2xl font-bold text-fg sm:text-3xl">Veja funcionando agora</h2>
+        <p class="mt-3 text-muted">A demonstração mostra o painel real alimentado por uma planta simulada — CLPs virtuais
+          lidos por um gateway, como numa fábrica: turnos, paradas, falhas com código, setup e o desgaste de um cilindro
+          até o alerta preditivo. Abre sem cadastro, é somente leitura e os dados são sempre identificados como simulados.</p>
+      </div>
+      <DemoButton placement="como-funciona" variant="primary" class="inline-flex shrink-0 [&>a]:px-6 [&>a]:text-base" />
+    </div>
+  </section>
+
+  <CtaBand />
+</Layout>

@@ -1,8 +1,8 @@
 {
-  "server_url": "https://factoryconnect.tech",
-  "mqtt_host": "factoryconnect.tech",
+  "server_url": "http://localhost:8000",
+  "mqtt_host": "localhost",
   "mqtt_port": 1883,
-  "email": "superadmin@factory-monitor.com",
-  "password": "Super@1234",
+  "email": "admin@factory-monitor.com",
+  "password": "Admin@1234",
   "simulator_interval": 2.0
 }

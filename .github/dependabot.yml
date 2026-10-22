@@ -1,0 +1,72 @@
+# Dependabot — atualizações de versão semanais (as de SEGURANÇA saem assim que o advisory é publicado, se
+# "Dependabot security updates" estiver ligado em Settings → Code security).
+# Tudo é fixado por versão exata (builds reprodutíveis); cada PR passa pelo CI completo + workflow Security.
+# Agrupado por ecossistema para não afogar o time em PRs; majors chegam separados (revisão humana).
+version: 2
+updates:
+  # ── Python ──────────────────────────────────────────────
+  - package-ecosystem: pip
+    directory: /server
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    open-pull-requests-limit: 5
+    labels: [dependencies, server]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    groups:
+      server-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /edge
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    open-pull-requests-limit: 5
+    labels: [dependencies, edge]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    groups:
+      edge-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /scripts
+    schedule: { interval: monthly }
+    labels: [dependencies, ops]
+    commit-message: { prefix: "chore(deps)", include: scope }
+
+  # ── npm ─────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    open-pull-requests-limit: 5
+    labels: [dependencies, web]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    groups:
+      web-minor:
+        update-types: [minor, patch]
+  - package-ecosystem: npm
+    directory: /site
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    open-pull-requests-limit: 5
+    labels: [dependencies, site]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    groups:
+      site-minor:
+        update-types: [minor, patch]
+
+  # ── Imagens base (Dockerfiles) e de terceiros (compose) ─
+  - package-ecosystem: docker
+    directories: [/server, /edge, /web, /site]
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    labels: [dependencies, docker]
+    commit-message: { prefix: "chore(deps)", include: scope }
+  - package-ecosystem: docker-compose
+    directory: /infra
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    labels: [dependencies, infra]
+    commit-message: { prefix: "chore(deps)", include: scope }
+
+  # ── GitHub Actions (fixadas por SHA; o Dependabot atualiza SHA + comentário da tag) ─
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: America/Sao_Paulo }
+    labels: [dependencies, ci]
+    commit-message: { prefix: "chore(deps)", include: scope }
+    groups:
+      actions:
+        patterns: ["*"]

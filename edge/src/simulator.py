@@ -4,9 +4,10 @@ Factory Monitor — Demo Simulator
 Generates realistic factory sensor data and publishes to the MQTT broker.
 Automatically creates demo machines and tags via REST API on first run.
 
-Usage:
-    python -m edge.src.simulator
-    python -m edge.src.simulator --server https://factoryconnect.tech --broker factoryconnect.tech
+Usage (defaults point to the LOCAL dev stack — never to production):
+    python -m edge.src.simulator                       # http://localhost:8000 + broker localhost:1883
+    python -m edge.src.simulator --server http://localhost:8000 --broker localhost
+    SIM_SERVER_URL=... SIM_BROKER_HOST=... python -m edge.src.simulator
     python -m edge.src.simulator --email admin@factory-monitor.com --password Admin@1234
 """
 
@@ -14,6 +15,7 @@ import argparse
 import asyncio
 import json
 import math
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -288,7 +290,6 @@ async def run_simulator(
                     dt = now - last
                     last = now
 
-                    tick_count = getattr(tick_count, '__add__', lambda x: x)(1) if hasattr(locals(), 'tick_count') else 1
                     for tag_id, info in tag_states.items():
                         value = info["state"].tick(dt)
                         topic = f"factory/{tenant_id}/sensors/{tag_id}"
@@ -324,15 +325,31 @@ async def run_simulator(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def main() -> None:
+# Safety: defaults always target the local dev stack. Pointing at another environment
+# must be an explicit choice (flag or SIM_* env var).
+DEFAULT_SERVER_URL = "http://localhost:8000"
+DEFAULT_BROKER_HOST = "localhost"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    env = os.environ.get
     parser = argparse.ArgumentParser(description="Factory Monitor — Demo Simulator")
-    parser.add_argument("--server",   default="https://factoryconnect.tech", help="API base URL")
-    parser.add_argument("--broker",   default="factoryconnect.tech",          help="MQTT broker host")
-    parser.add_argument("--port",     default=1883, type=int,                 help="MQTT broker port")
-    parser.add_argument("--email",    default="admin@factory-monitor.com",    help="Login email")
-    parser.add_argument("--password", default="Admin@1234",                   help="Login password")
-    parser.add_argument("--interval", default=2.0, type=float,                help="Publish interval (seconds)")
-    args = parser.parse_args()
+    parser.add_argument("--server",   default=env("SIM_SERVER_URL", DEFAULT_SERVER_URL),
+                        help=f"API base URL (default {DEFAULT_SERVER_URL})")
+    parser.add_argument("--broker",   default=env("SIM_BROKER_HOST", DEFAULT_BROKER_HOST),
+                        help=f"MQTT broker host (default {DEFAULT_BROKER_HOST})")
+    parser.add_argument("--port",     default=int(env("SIM_BROKER_PORT", "1883")), type=int,
+                        help="MQTT broker port")
+    parser.add_argument("--email",    default=env("SIM_EMAIL", "admin@factory-monitor.com"),
+                        help="Login email (dev seed user)")
+    parser.add_argument("--password", default=env("SIM_PASSWORD", "Admin@1234"),
+                        help="Login password (dev seed password)")
+    parser.add_argument("--interval", default=2.0, type=float, help="Publish interval (seconds)")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     asyncio.run(run_simulator(
         server_url=args.server,

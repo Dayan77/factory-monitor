@@ -3,7 +3,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { linesApi, machinesApi, alertsApi, sensorsApi, camerasApi } from "@/services/api";
+import { linesApi, machinesApi, alertsApi, sensorsApi, camerasApi, tagsApi } from "@/services/api";
 
 // ── Lines ─────────────────────────────────────────────────────────
 export function useLines() {
@@ -19,6 +19,15 @@ export function useMachines(lineId?: string) {
     queryKey: ["machines", lineId],
     queryFn:  () => machinesApi.list(lineId).then((r) => r.data),
     refetchInterval: 30_000,   // refresh status every 30s
+  });
+}
+
+// ── Tags (sensors) ────────────────────────────────────────────────
+export function useTags(machineId?: string) {
+  return useQuery({
+    queryKey: ["tags", machineId],
+    queryFn:  () => tagsApi.list(machineId).then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
 }
 

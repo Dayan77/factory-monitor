@@ -1,0 +1,2 @@
+# Mapa provisionado (tag_id/tenant do servidor local) — gerado por python -m edge.src.provision
+config/*.local.json

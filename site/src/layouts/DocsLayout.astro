@@ -1,0 +1,118 @@
+---
+import Layout from "./Layout.astro";
+import DocsSearch from "../components/DocsSearch.astro";
+import { DOCS, type Doc } from "../lib/docs";
+import { SITE_URL } from "../lib/site";
+
+interface Props { doc: Doc; title: string; description: string }
+const { doc, title, description: full } = Astro.props;
+// meta description: até ~160 caracteres, cortada em palavra
+const description = full.length <= 165 ? full : `${full.slice(0, 160).replace(/\s+\S*$/, "")}…`;
+const toc = doc.headings.filter((h) => h.depth === 2 || h.depth === 3);
+const i = DOCS.findIndex((d) => d.slug === doc.slug);
+const prev = i > 0 ? DOCS[i - 1] : null;
+const next = i >= 0 && i < DOCS.length - 1 ? DOCS[i + 1] : null;
+const breadcrumb = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Documentação", item: `${SITE_URL}/docs` },
+    ...(doc.slug ? [{ "@type": "ListItem", position: 2, name: doc.short, item: `${SITE_URL}${doc.url}` }] : []),
+  ],
+};
+---
+<Layout title={title} description={description} jsonLd={[breadcrumb]}>
+  <div class="container-x grid gap-8 py-10 lg:grid-cols-[14rem_minmax(0,1fr)] xl:max-w-7xl xl:grid-cols-[14rem_minmax(0,1fr)_13rem]">
+    <aside class="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:self-start lg:overflow-y-auto">
+      <DocsSearch />
+      <!-- celular: a lista de páginas fica recolhida (o conteúdo aparece logo) -->
+      <details class="card mt-4 !p-4 lg:hidden">
+        <summary class="cursor-pointer text-sm font-semibold text-fg">Páginas do manual</summary>
+        <ul class="mt-2 space-y-0.5">
+          {DOCS.map((d) => (
+            <li><a href={d.url} aria-current={d.slug === doc.slug ? "page" : undefined}
+              class:list={["block rounded-lg px-3 py-2 text-sm", d.slug === doc.slug ? "bg-surface-2 font-semibold text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"]}>{d.short}</a></li>
+          ))}
+        </ul>
+      </details>
+      <nav aria-label="Páginas do manual" class="mt-6 hidden lg:block">
+        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Manual do usuário</p>
+        <ul class="mt-2 space-y-0.5">
+          {DOCS.map((d) => (
+            <li>
+              <a href={d.url} aria-current={d.slug === doc.slug ? "page" : undefined}
+                class:list={["block rounded-lg px-3 py-2 text-sm", d.slug === doc.slug ? "bg-surface-2 font-semibold text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"]}>
+                {d.short}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </aside>
+
+    <article class="min-w-0">
+      <nav aria-label="Trilha" class="mb-4 text-sm text-muted">
+        <ol class="flex flex-wrap items-center gap-1">
+          <li><a href="/docs" class="underline-offset-2 hover:text-fg hover:underline">Documentação</a></li>
+          {doc.slug && <li aria-hidden="true">/</li>}
+          {doc.slug && <li><span aria-current="page" class="text-fg">{doc.short}</span></li>}
+        </ol>
+      </nav>
+      {toc.length > 0 && (
+        <details class="card mb-6 !p-4 xl:hidden">
+          <summary class="cursor-pointer text-sm font-semibold text-fg">Nesta página</summary>
+          <ul class="mt-3 space-y-1 text-sm">
+            {toc.map((h) => <li><a href={`#${h.slug}`} class:list={["block py-1 text-muted hover:text-fg", h.depth === 3 && "pl-4"]}>{h.text}</a></li>)}
+          </ul>
+        </details>
+      )}
+      <slot name="before" />
+      <div class="prose-doc">
+        <slot />
+      </div>
+      <nav aria-label="Navegação entre páginas" class="mt-12 grid gap-3 border-t border-line pt-6 sm:grid-cols-2">
+        {prev ? <a href={prev.url} class="card block !p-4 hover:border-accent"><span class="block text-xs text-muted">← Anterior</span><span class="mt-1 block font-semibold text-fg">{prev.short}</span></a> : <span />}
+        {next && <a href={next.url} class="card block !p-4 text-right hover:border-accent"><span class="block text-xs text-muted">Próxima →</span><span class="mt-1 block font-semibold text-fg">{next.short}</span></a>}
+      </nav>
+    </article>
+
+    {toc.length > 0 && (
+      <nav aria-label="Nesta página" class="hidden xl:sticky xl:top-20 xl:block xl:max-h-[calc(100dvh-6rem)] xl:self-start xl:overflow-y-auto">
+        <p class="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Nesta página</p>
+        <ul class="mt-2 space-y-1 border-l border-line text-sm">
+          {toc.map((h) => (
+            <li><a href={`#${h.slug}`} class:list={["-ml-px block border-l border-transparent py-1 text-muted hover:border-accent hover:text-fg", h.depth === 3 ? "pl-6" : "pl-3"]}>{h.text}</a></li>
+          ))}
+        </ul>
+      </nav>
+    )}
+  </div>
+</Layout>
+
+<script>
+  // Tabelas largas rolam para o lado no celular. Cada uma ganha um invólucro rolável que vira uma parada do Tab
+  // (rolagem pelo teclado, WCAG 2.1.1) só enquanto a tabela não cabe; a tabela mantém a semântica de tabela.
+  const wraps: HTMLDivElement[] = [];
+  for (const t of document.querySelectorAll<HTMLTableElement>(".prose-doc table")) {
+    const w = document.createElement("div");
+    w.className = "doc-table";
+    t.replaceWith(w);
+    w.appendChild(t);
+    wraps.push(w);
+  }
+  function mark() {
+    for (const w of wraps) {
+      if (w.scrollWidth > w.clientWidth + 1) {
+        w.tabIndex = 0;
+        w.setAttribute("role", "region");
+        w.setAttribute("aria-label", `Tabela: ${w.querySelector("th")?.textContent?.trim() ?? ""} (role para o lado)`);
+      } else {
+        w.removeAttribute("tabindex");
+        w.removeAttribute("role");
+        w.removeAttribute("aria-label");
+      }
+    }
+  }
+  mark();
+  window.addEventListener("resize", mark, { passive: true });
+</script>

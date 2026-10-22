@@ -3,6 +3,10 @@
 # Factory Monitor — Dev Cycle
 # Para tudo, faz deploy no VPS e reinicia localmente para teste.
 #
+# Credenciais do VPS vêm do ambiente (nunca do repositório):
+#   export VPS_HOST=<ip-ou-host> VPS_USER=deploy VPS_SSH_KEY=~/.ssh/factoryconnect_deploy
+# (veja scripts/vps.py). Preferível: deploy pelo GitHub Actions (.github/workflows/deploy.yml).
+#
 # Uso:
 #   ./scripts/dev_cycle.sh             # deploy + reinicia tudo
 #   ./scripts/dev_cycle.sh "msg"       # com mensagem de commit
@@ -53,7 +57,11 @@ echo ""
 
 # ── 3. Deploy VPS ─────────────────────────────────────────────
 echo "▶ Deploy no VPS..."
-VPS_PASS='Claw@Manaus26' "$VENV" "$ROOT/scripts/deploy_remote.py"
+if [ -z "${VPS_HOST:-}" ]; then
+  echo "  ✗ VPS_HOST não definido — exporte VPS_HOST/VPS_USER/VPS_SSH_KEY (veja scripts/vps.py)." >&2
+  exit 2
+fi
+"$VENV" "$ROOT/scripts/deploy_remote.py"
 echo ""
 
 # ── 4. Edge App local ─────────────────────────────────────────
