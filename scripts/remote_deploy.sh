@@ -24,6 +24,10 @@
 # Migrations NÃO são revertidas automaticamente: toda migration é compatível com o código anterior (expand/contract);
 # para desfazer uma destrutiva, restaure o backup pré-deploy (docs/operations.md §3 Rollback).
 # =============================================================
+# O workflow manda este script pelo stdin do ssh (`bash -s`). Tudo fica num bloco { … } </dev/null: o bash lê o
+# arquivo inteiro antes de executar, e nenhum comando (docker compose run mantém o stdin aberto) consome o resto
+# do script — em 25/10/2026 o `compose run … alembic current` fez o bash sair com 0 logo após o backup.
+{
 set -euo pipefail
 
 REF="${1:?uso: remote_deploy.sh <tag vX.Y.Z | sha> [app_dir]}"
@@ -269,3 +273,4 @@ else
   echo "  ✗ rollback também não respondeu — intervenção manual necessária (docs/operations.md §3)" >&2
 fi
 exit 1
+} </dev/null

@@ -22,6 +22,9 @@ case "$*" in
     exit 0 ;;
   "ps -a --format"*) printf '%b' "${FAKE_PS:-}"; exit 0 ;;
 esac
+# `docker compose run` mantém o stdin conectado (como o real): com o script vindo pelo stdin (ssh … bash -s),
+# um comando que lê o stdin consome o resto do script
+case "$*" in *" run "*) [ "${FAKE_RUN_READS_STDIN:-0}" = 1 ] && cat >/dev/null ;; esac
 if [ "$1" = "inspect" ] && [ "${FAKE_PG_RUNNING:-0}" = 1 ]; then echo true; exit 0; fi
 case "$*" in
   *"alembic upgrade head"*)
@@ -440,3 +443,17 @@ def test_host_port_taken_by_another_app_aborts_before_touching_anything(env):
     assert "porta 3000/tcp do serviço grafana" in r.stderr and "easypanel.1" in r.stderr
     calls = env["calls"].read_text()
     assert " up " not in calls and "alembic" not in calls and "build" not in calls
+
+
+def test_script_fed_through_stdin_runs_to_the_end(env):
+    """O workflow manda o script pelo stdin do ssh (`bash -s`). Em produção (25/10/2026) o `docker compose run …
+    alembic current` leu o resto do script do stdin: o bash terminou com 0 depois do backup, sem migrations, sem
+    `up` e sem healthcheck — e o job saiu verde."""
+    with open(SCRIPT) as script:
+        r = subprocess.run(["bash", "-s", "--", env["v2"], str(env["app"])], stdin=script,
+                           env={**env["env"], "FAKE_HEALTH": "ok", "FAKE_RUN_READS_STDIN": "1"},
+                           capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    calls = env["calls"].read_text()
+    assert "alembic upgrade head" in calls and "up -d --remove-orphans" in calls
+    assert "saudável" in r.stdout
