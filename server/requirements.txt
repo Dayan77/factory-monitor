@@ -30,7 +30,7 @@ pydantic-settings==2.10.1
 
 # AI / LLM
 openai==3.24.0
-anthropic==1.11.0          # Claude adapter of the AI assistant (services/ai/providers.py); pulls httpx2
+anthropic==2.1.0          # Claude adapter of the AI assistant (services/ai/providers.py); pulls httpx2
 
 # Notifications
 sendgrid==6.12.5
