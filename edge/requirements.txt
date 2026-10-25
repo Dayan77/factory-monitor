@@ -25,7 +25,7 @@ cryptography==50.0.2    # AES-256 encryption (45.x: 7 advisories)
 aiosqlite==0.22.1       # Local SQLite buffer when offline
 
 # Observability
-structlog==25.4.0
+structlog==26.1.0
 prometheus-client==0.26.0
 
 # Transitivas fixadas por segurança (pip-audit): asyncua → pyopenssl (25.x: 2 advisories)
