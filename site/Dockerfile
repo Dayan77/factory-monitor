@@ -1,6 +1,6 @@
 # Site público (factoryconnect.tech): build estático com Astro, servido por nginx.
 # Imagens com versão fixa — atualize de propósito (Dependabot: .github/dependabot.yml).
-FROM node:22.23.3-alpine AS build
+FROM node:26.12.1-alpine AS build
 WORKDIR /app
 ENV ASTRO_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
