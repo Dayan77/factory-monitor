@@ -79,18 +79,34 @@ preflight_isolation() {
   local cfg ps report
   command -v python3 >/dev/null || { echo "✗ python3 ausente no VPS (necessário para a checagem de isolamento)" >&2; return 1; }
   cfg="$("${COMPOSE[@]}" config --format json 2>/dev/null)" || { echo "✗ docker compose config falhou" >&2; return 1; }
-  ps="$(docker ps -a --format '{{.Names}}	{{.Label "com.docker.compose.project"}}')" \
+  ps="$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Ports}}')" \
     || { echo "✗ docker ps falhou" >&2; return 1; }
   report="$(CFG="$cfg" PS="$ps" PFX="$PFX" python3 -c '
 import json, os
 cfg = json.loads(os.environ["CFG"])
 project = cfg.get("name", "")
 ours = {s.get("container_name") for s in cfg.get("services", {}).values() if s.get("container_name")}
+WILD = {"", "0.0.0.0", "::", "[::]"}
+want = []   # portas do host publicadas pelo compose: (ip, porta, protocolo, serviço)
+for svc, s in cfg.get("services", {}).items():
+    for p in s.get("ports") or []:
+        if isinstance(p, dict) and p.get("published"):
+            want.append((p.get("host_ip") or "", str(p["published"]), p.get("protocol") or "tcp", svc))
 errs = []
 for line in os.environ["PS"].splitlines():
     if not line.strip():
         continue
-    name, _, proj = line.partition("\t")
+    name, proj, ports = (line.split("\t") + ["", ""])[:3]
+    if proj != project:   # porta já publicada por outro app: o nosso up falharia ao publicar a mesma
+        for spec in filter(None, (x.strip() for x in ports.split(","))):
+            if "->" not in spec:
+                continue
+            host, _, rest = spec.partition("->")
+            hip, _, hport = host.rpartition(":")
+            proto = rest.rpartition("/")[2] or "tcp"
+            for ip, port, wproto, svc in want:
+                if port == hport and proto == wproto and (ip == hip or ip in WILD or hip in WILD):
+                    errs.append(f"porta {port}/{proto} do serviço {svc} já é usada por {name} ({spec})")
     if proj == project and not name.startswith(os.environ["PFX"]):
         errs.append(f"container {name} está no projeto compose {project!r} mas não é do FactoryConnect "
                     "(up --remove-orphans o removeria)")

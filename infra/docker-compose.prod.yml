@@ -359,7 +359,7 @@ services:
 
   # ── Observabilidade (profile "monitoring") ────────────────────────
   # COMPOSE_PROFILES=monitoring no .env (ou --profile monitoring). Nada é exposto publicamente:
-  # Grafana só em 127.0.0.1:3000 do VPS → acesso por túnel SSH (docs/operations.md §Observabilidade).
+  # Grafana só em 127.0.0.1:3001 do VPS (GRAFANA_HOST_PORT; a 3000 é do painel do Easypanel) → acesso por túnel SSH (docs/operations.md §Observabilidade).
   prometheus:
     profiles: ["monitoring"]
     image: prom/prometheus:v3.5.0
@@ -477,7 +477,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3001}:3000"
     depends_on:
       - prometheus
     networks: [fm-net]

@@ -392,3 +392,51 @@ def test_other_apps_in_their_own_projects_do_not_block_the_deploy(env):
     r = _run(e, "ok")
     assert r.returncode == 0, r.stderr
     assert "projeto=infra" in r.stdout
+
+
+# `docker ps -a` do VPS de produção (25/10/2026): Easypanel (painel em 0.0.0.0:3000, Traefik em 80/443), outros
+# apps em projetos compose próprios e o FactoryConnect antigo no projeto "infra".
+VPS_PS = "\\n".join([
+    "pdi-project-manager-web-1\tpdi-project-manager\t127.0.0.1:8085->80/tcp",
+    "pdi-project-manager-api-1\tpdi-project-manager\t8000/tcp",
+    "easypanel.1.gy7asrlicjc9ocl125jbxexlh\t\t0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp",
+    "easypanel-traefik.1.iuvlqqgzw9e6ymamb9xtcpeio\t\t0.0.0.0:80->80/tcp, [::]:80->80/tcp, "
+    "0.0.0.0:443->443/tcp, [::]:443->443/tcp",
+    "pdi-project-manager-db-1\tpdi-project-manager\t127.0.0.1:5433->5432/tcp",
+    "fm_web\tinfra\t80/tcp",
+    "provision-cloud_platform-web-1\tprovision-cloud_platform\t8080/tcp",
+    "agente_postgres\tagente-atividades\t5432/tcp",
+    "fm_server\tinfra\t8000/tcp",
+    "fm_postgres\tinfra\t5432/tcp",
+    "fm_mosquitto\tinfra\t0.0.0.0:1883->1883/tcp, [::]:1883->1883/tcp",
+]) + "\\n"
+
+
+def _compose_json(grafana_port):
+    import json
+    return json.dumps({"name": "infra", "services": {
+        "server": {"container_name": "fm_server"},
+        "postgres": {"container_name": "fm_postgres"},
+        "mosquitto": {"container_name": "fm_mosquitto", "ports": [
+            {"host_ip": "", "target": 8883, "published": "8883", "protocol": "tcp"},
+            {"host_ip": "127.0.0.1", "target": 1883, "published": "1883", "protocol": "tcp"}]},
+        "grafana": {"container_name": "fm_grafana", "ports": [
+            {"host_ip": "127.0.0.1", "target": 3000, "published": str(grafana_port), "protocol": "tcp"}]},
+    }})
+
+
+def test_real_vps_layout_deploys_alongside_the_other_apps(env):
+    """O 1883 do fm_mosquitto antigo é do próprio projeto (será trocado) — não conta como conflito."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": VPS_PS, "FAKE_COMPOSE_JSON": _compose_json(3001)}}
+    r = _run(e, "ok")
+    assert r.returncode == 0, r.stderr
+
+
+def test_host_port_taken_by_another_app_aborts_before_touching_anything(env):
+    """Grafana em 127.0.0.1:3000 colide com o painel do Easypanel em 0.0.0.0:3000."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": VPS_PS, "FAKE_COMPOSE_JSON": _compose_json(3000)}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "porta 3000/tcp do serviço grafana" in r.stderr and "easypanel.1" in r.stderr
+    calls = env["calls"].read_text()
+    assert " up " not in calls and "alembic" not in calls and "build" not in calls
