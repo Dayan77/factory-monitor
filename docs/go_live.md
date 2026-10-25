@@ -166,7 +166,7 @@ obrigatórios, diferentes dos padrões).
 - [ ] **7.3** Teste o e-mail de ponta a ponta:
       `docker exec fm_alertmanager amtool alert add FmTesteGoLive severity=warning summary=teste --alertmanager.url=http://localhost:9093`
       → e-mail em ~1 min.
-- [ ] **7.4** Grafana por túnel (`ssh -L 3000:127.0.0.1:3000 fmonitor@VPS` → http://localhost:3000): painel
+- [ ] **7.4** Grafana por túnel (`ssh -L 3001:127.0.0.1:3001 fmonitor@VPS` → http://localhost:3001): painel
       **FactoryConnect — Operação** com dados; nenhum alerta disparando exceto `FmBackupNeverReported` (some no §8).
 - [ ] **7.5** Monitor **externo** (UptimeRobot/healthchecks.io, 1 min): `https://app.factoryconnect.tech/api/health`,
       `https://factoryconnect.tech/healthz`, TCP `mqtt.factoryconnect.tech:8883` — pega o VPS inteiro fora do ar,

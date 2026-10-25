@@ -23,7 +23,7 @@ alias dc='docker compose --env-file /opt/factory-monitor/.env -f infra/docker-co
 | `fm_web` | app React (nginx) | Traefik: `app.factoryconnect.tech` |
 | `fm_site` | site estático | Traefik: `factoryconnect.tech` |
 | `fm_mediamtx` | RTSP → HLS | só rede `fm-net` |
-| `fm_prometheus`, `fm_alertmanager`, `fm_grafana`, `fm_node_exporter`, `fm_sql_exporter`, `fm_blackbox` | profile `monitoring` (§8) | Grafana `127.0.0.1:3000`, Alertmanager `127.0.0.1:9093` (túnel SSH) |
+| `fm_prometheus`, `fm_alertmanager`, `fm_grafana`, `fm_node_exporter`, `fm_sql_exporter`, `fm_blackbox` | profile `monitoring` (§8) | Grafana `127.0.0.1:3001` (`GRAFANA_HOST_PORT`; a 3000 é do Easypanel), Alertmanager `127.0.0.1:9093` (túnel SSH) |
 | `fm_demo_plant`, `fm_demo_gateway` | profile `demo`: planta virtual + gateway do tenant DEMO (§10) | nada publicado (rede interna `fm-demo`) |
 
 Arquivos fora do git no VPS: `.env` (segredos), `mqtt/gateways.conf` e `mqtt/certs/` (MQTT),
@@ -299,7 +299,7 @@ anterior no ar se faltar algum (mensagem `pré-requisitos do MQTT de produção 
 |---|---|
 | `fm_prometheus` | coleta e regras (`alerts.yml` = backend, `alerts.platform.yml` = plataforma); retenção 30 dias **ou** 5 GB (`PROMETHEUS_RETENTION`, `PROMETHEUS_RETENTION_SIZE`) |
 | `fm_alertmanager` | agrupa e envia os alertas por **e-mail** (§8.3); UI em `127.0.0.1:9093` |
-| `fm_grafana` | painel **FactoryConnect — Operação**; `127.0.0.1:3000` |
+| `fm_grafana` | painel **FactoryConnect — Operação**; `127.0.0.1:3001` |
 | `fm_node_exporter` | disco/CPU/memória do VPS + textfile collector (métricas do backup) |
 | `fm_sql_exporter` | consultas de negócio no Postgres: gateways sem contato, dead letters pendentes, demo |
 | `fm_blackbox` | sondas HTTPS públicas (app, site, staging; validade do certificado) e `/health` da planta da demo |
@@ -307,7 +307,7 @@ anterior no ar se faltar algum (mensagem `pré-requisitos do MQTT de produção 
 ```bash
 # .env: COMPOSE_PROFILES=monitoring, GRAFANA_ADMIN_PASSWORD (>= 12), ALERT_EMAIL_TO + SMTP_* (§8.3)
 dc up -d prometheus alertmanager grafana node-exporter sql-exporter blackbox-exporter
-ssh -L 3000:127.0.0.1:3000 -L 9093:127.0.0.1:9093 -L 9090:127.0.0.1:9090 deploy@VPS   # Grafana, Alertmanager
+ssh -L 3001:127.0.0.1:3001 -L 9093:127.0.0.1:9093 -L 9090:127.0.0.1:9090 deploy@VPS   # Grafana, Alertmanager
 ```
 (Prometheus não publica porta; para a UI: `docker exec fm_prometheus wget -qO- localhost:9090/api/v1/alerts` ou
 acrescente `127.0.0.1:9090:9090` temporariamente.) Painel provisionado de

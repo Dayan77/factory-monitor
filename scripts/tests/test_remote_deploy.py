@@ -15,6 +15,16 @@ SCRIPT = Path(__file__).resolve().parent.parent / "remote_deploy.sh"
 
 DOCKER_STUB = """#!/usr/bin/env bash
 echo "docker $* [FM_VERSION=${FM_VERSION:-}]" >> "$CALLS"
+case "$*" in
+  *"config --format json"*)
+    def='{"name":"infra","services":{"server":{"container_name":"fm_server"},"postgres":{"container_name":"fm_postgres"}}}'
+    printf '%s' "${FAKE_COMPOSE_JSON:-$def}"
+    exit 0 ;;
+  "ps -a --format"*) printf '%b' "${FAKE_PS:-}"; exit 0 ;;
+esac
+# `docker compose run` mantém o stdin conectado (como o real): com o script vindo pelo stdin (ssh … bash -s),
+# um comando que lê o stdin consome o resto do script
+case "$*" in *" run "*) [ "${FAKE_RUN_READS_STDIN:-0}" = 1 ] && cat >/dev/null ;; esac
 if [ "$1" = "inspect" ] && [ "${FAKE_PG_RUNNING:-0}" = 1 ]; then echo true; exit 0; fi
 case "$*" in
   *"alembic upgrade head"*)
@@ -358,3 +368,92 @@ def test_demo_profile_pulls_the_edge_image_of_the_same_version(env):
     proc = _deploy(env, env["v2"])
     assert proc.returncode == 0, proc.stderr
     assert " pull server web site demo-plant [" in env["calls"].read_text()
+
+
+def test_foreign_container_in_the_compose_project_aborts_before_touching_anything(env):
+    """VPS compartilhado: um container de outro app no mesmo projeto compose seria removido por --remove-orphans."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": "fm_server\\tinfra\\nprojetos_web\\tinfra\\nfm_postgres\\tinfra\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "projetos_web" in r.stderr and "nada foi alterado" in r.stderr
+    calls = env["calls"].read_text()
+    assert "build" not in calls and " up " not in calls and "alembic" not in calls and " pull " not in calls
+    assert _rev(env["app"]) == env["v1"]
+
+
+def test_container_name_owned_by_another_project_aborts(env):
+    e = {**env, "env": {**env["env"], "FAKE_PS": "fm_postgres\\toutroapp\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "fm_postgres" in r.stderr and "outroapp" in r.stderr
+    assert " up " not in env["calls"].read_text()
+
+
+def test_other_apps_in_their_own_projects_do_not_block_the_deploy(env):
+    e = {**env, "env": {**env["env"],
+                        "FAKE_PS": "fm_server\\tinfra\\nfm_postgres\\tinfra\\nprojetos_web\\tprojetos\\ntraefik\\t\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 0, r.stderr
+    assert "projeto=infra" in r.stdout
+
+
+# `docker ps -a` do VPS de produção (25/10/2026): Easypanel (painel em 0.0.0.0:3000, Traefik em 80/443), outros
+# apps em projetos compose próprios e o FactoryConnect antigo no projeto "infra".
+VPS_PS = "\\n".join([
+    "pdi-project-manager-web-1\tpdi-project-manager\t127.0.0.1:8085->80/tcp",
+    "pdi-project-manager-api-1\tpdi-project-manager\t8000/tcp",
+    "easypanel.1.gy7asrlicjc9ocl125jbxexlh\t\t0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp",
+    "easypanel-traefik.1.iuvlqqgzw9e6ymamb9xtcpeio\t\t0.0.0.0:80->80/tcp, [::]:80->80/tcp, "
+    "0.0.0.0:443->443/tcp, [::]:443->443/tcp",
+    "pdi-project-manager-db-1\tpdi-project-manager\t127.0.0.1:5433->5432/tcp",
+    "fm_web\tinfra\t80/tcp",
+    "provision-cloud_platform-web-1\tprovision-cloud_platform\t8080/tcp",
+    "agente_postgres\tagente-atividades\t5432/tcp",
+    "fm_server\tinfra\t8000/tcp",
+    "fm_postgres\tinfra\t5432/tcp",
+    "fm_mosquitto\tinfra\t0.0.0.0:1883->1883/tcp, [::]:1883->1883/tcp",
+]) + "\\n"
+
+
+def _compose_json(grafana_port):
+    import json
+    return json.dumps({"name": "infra", "services": {
+        "server": {"container_name": "fm_server"},
+        "postgres": {"container_name": "fm_postgres"},
+        "mosquitto": {"container_name": "fm_mosquitto", "ports": [
+            {"host_ip": "", "target": 8883, "published": "8883", "protocol": "tcp"},
+            {"host_ip": "127.0.0.1", "target": 1883, "published": "1883", "protocol": "tcp"}]},
+        "grafana": {"container_name": "fm_grafana", "ports": [
+            {"host_ip": "127.0.0.1", "target": 3000, "published": str(grafana_port), "protocol": "tcp"}]},
+    }})
+
+
+def test_real_vps_layout_deploys_alongside_the_other_apps(env):
+    """O 1883 do fm_mosquitto antigo é do próprio projeto (será trocado) — não conta como conflito."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": VPS_PS, "FAKE_COMPOSE_JSON": _compose_json(3001)}}
+    r = _run(e, "ok")
+    assert r.returncode == 0, r.stderr
+
+
+def test_host_port_taken_by_another_app_aborts_before_touching_anything(env):
+    """Grafana em 127.0.0.1:3000 colide com o painel do Easypanel em 0.0.0.0:3000."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": VPS_PS, "FAKE_COMPOSE_JSON": _compose_json(3000)}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "porta 3000/tcp do serviço grafana" in r.stderr and "easypanel.1" in r.stderr
+    calls = env["calls"].read_text()
+    assert " up " not in calls and "alembic" not in calls and "build" not in calls
+
+
+def test_script_fed_through_stdin_runs_to_the_end(env):
+    """O workflow manda o script pelo stdin do ssh (`bash -s`). Em produção (25/10/2026) o `docker compose run …
+    alembic current` leu o resto do script do stdin: o bash terminou com 0 depois do backup, sem migrations, sem
+    `up` e sem healthcheck — e o job saiu verde."""
+    with open(SCRIPT) as script:
+        r = subprocess.run(["bash", "-s", "--", env["v2"], str(env["app"])], stdin=script,
+                           env={**env["env"], "FAKE_HEALTH": "ok", "FAKE_RUN_READS_STDIN": "1"},
+                           capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    calls = env["calls"].read_text()
+    assert "alembic upgrade head" in calls and "up -d --remove-orphans" in calls
+    assert "saudável" in r.stdout
