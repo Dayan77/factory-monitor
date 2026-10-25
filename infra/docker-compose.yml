@@ -272,7 +272,7 @@ services:
   # Coleta o backend do compose (server:8000) ou o local (host.docker.internal:8000).
   prometheus:
     profiles: ["monitoring"]
-    image: prom/prometheus:v3.5.0
+    image: prom/prometheus:v3.15.1
     container_name: fm_prometheus
     restart: unless-stopped
     command:
