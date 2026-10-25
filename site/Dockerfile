@@ -15,7 +15,7 @@ RUN npm run build
 # nginx final: CSP com o hash de cada script inline do build + origem da API no connect-src
 RUN node scripts/render-nginx.mjs --dist dist --connect-src "$PUBLIC_API_URL" --out /app/nginx-out
 
-FROM nginx:1.30.5-alpine AS prod
+FROM nginx:1.31.0-alpine AS prod
 # Aplica todas as correções de segurança do Alpine já publicadas que a tag base ainda não traz
 # (o Trivy no CI reprova HIGH/CRITICAL com correção disponível: libexpat, pcre2, libx11, tiff…).
 RUN apk upgrade --no-cache
