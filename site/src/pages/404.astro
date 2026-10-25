@@ -1,0 +1,15 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { APP_URL } from "../lib/site";
+---
+<Layout title="Página não encontrada" description="A página que você procura não existe ou mudou de endereço." noindex>
+  <section class="container-x py-24 text-center sm:py-32">
+    <p class="font-mono text-sm text-accent">404</p>
+    <h1 class="mt-3 text-3xl font-bold text-fg sm:text-5xl">Página não encontrada</h1>
+    <p class="mx-auto mt-4 max-w-xl text-muted">O endereço pode ter mudado. Se você procurava o aplicativo, ele agora fica em <a class="text-accent underline underline-offset-2" href={APP_URL}>{APP_URL.replace(/^https?:\/\//, "")}</a>.</p>
+    <div class="mt-8 flex flex-wrap justify-center gap-3">
+      <a href="/" class="btn-primary">Ir para o início</a>
+      <a href="/contato" class="btn-ghost">Fale conosco</a>
+    </div>
+  </section>
+</Layout>

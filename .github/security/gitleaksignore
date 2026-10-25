@@ -1,0 +1,57 @@
+# Achados ACEITOS do gitleaks (.github/workflows/security.yml varre o histórico completo do git).
+# Formato: <commit>:<arquivo>:<regra>:<linha> (fingerprint do relatório; gitleaks --redact nunca imprime o valor).
+# Regra do projeto (CLAUDE.md): segredo commitado é ROTACIONADO, não só apagado. Cada entrada diz por que pode ficar.
+# Achado novo fora desta lista reprova o CI. Para aceitar um: rotacione (se for real), adicione o fingerprint aqui
+# com o motivo e a data, e peça revisão do dono do projeto.
+
+# ── VAZAMENTO REAL CONHECIDO — senha SSH do VPS (root) ────────────────────────────────────────────────────────
+# Commit cc1d1e7 (2026-04-04, "deploy: atualização") colocou a senha SSH do VPS em scripts/dev_cycle.sh
+# (atribuição literal da variável VPS_PASS), junto com o IP do VPS em scripts/deploy_remote.py. Removido em 415a032 (Sprint 1, "secrets
+# out"), mas continua no histórico público do git: trate a senha como COMPROMETIDA.
+# Status: senha rotacionada e login SSH por senha desativado (deploy só por chave do usuário dedicado "deploy")
+# — conferência obrigatória no go-live: docs/go_live.md §1 (itens 1.1–1.3). Reescrever o histórico NÃO é necessário
+# depois da rotação (e quebraria forks/PRs); a entrada fica aqui para o achado nunca ser ignorado em silêncio.
+cc1d1e7ade96a23b44960f7f9a3b9c6ae586493e:scripts/dev_cycle.sh:fm-shell-secret-assignment:56
+
+# ── Senhas de DESENVOLVIMENTO documentadas (scripts/seed_dev.py: SEED_*; README/CLAUDE.md) ────────────────────
+# Valores padrão do seed do banco LOCAL (Admin@1234, Super@1234, ...). Não são segredo, mas se a produção algum dia
+# foi semeada com eles as contas precisam de senha nova: docs/go_live.md §4 (rotacionar senhas do seed).
+12b1c8b2ba4e2aa62ab9e35156c3e5fdb03c7b53:scripts/seed_dev.py:fm-secret-env-default:30
+db1c691e6e134612562f6f236cb9349be304f3d2:scripts/seed_dev.py:fm-secret-env-default:30
+12b1c8b2ba4e2aa62ab9e35156c3e5fdb03c7b53:scripts/seed_dev.py:fm-secret-env-default:35
+43de5838c005ed3df95e401c868dae7d68bf962b:scripts/seed_dev.py:fm-secret-env-default:50
+43de5838c005ed3df95e401c868dae7d68bf962b:scripts/seed_dev.py:fm-secret-env-default:52
+43de5838c005ed3df95e401c868dae7d68bf962b:scripts/seed_dev.py:fm-secret-env-default:54
+
+# ── Scripts e2e contra a stack LOCAL (logins de dev padrão, APP_SECRET_KEY descartável do teste de carga) ───────
+e8442e5af4ecfe9b46629cb42523ae427478010e:e2e/scale/load.py:fm-secret-env-default:108
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/scenario_c_replay.py:fm-secret-env-default:285
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/scenario_c_replay.py:fm-secret-env-default:287
+e8442e5af4ecfe9b46629cb42523ae427478010e:e2e/scenario_c_replay.py:fm-secret-env-default:332
+503deff3a3bce3ac5eab9f69b2e67447dd9ba8fd:e2e/sprint5b/ingest_load.py:fm-secret-env-default:106
+8151363eca1ff37f8e583afda3c227c19b24440f:e2e/tenant_isolation_assets.py:fm-secret-env-default:41
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/virtual_plant_downtime_live.py:fm-secret-env-default:88
+8151363eca1ff37f8e583afda3c227c19b24440f:e2e/virtual_plant_real_path.py:fm-secret-env-default:83
+8151363eca1ff37f8e583afda3c227c19b24440f:e2e/virtual_plant_real_path.py:fm-secret-env-default:189
+16fb2fc80fdde725e754cb7f339b131cd7fb7082:e2e/sprint7b/security_api_real.py:fm-secret-env-default:30
+
+# ── Testes automatizados: segredos FICTÍCIOS de fixtures (webhook HMAC, .env de teste do deploy) ──────────────
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/tests/test_remote_deploy.py:generic-api-key:31
+43de5838c005ed3df95e401c868dae7d68bf962b:server/tests/test_maintenance_notifications.py:generic-api-key:327
+de19833aa1d749cea8e5b4c6020dfad40b36e7f7:server/tests/test_sprint4_review_fixes.py:generic-api-key:280
+de19833aa1d749cea8e5b4c6020dfad40b36e7f7:server/tests/test_sprint4_review_fixes.py:generic-api-key:339
+
+# ── Falsos positivos ──────────────────────────────────────────────────────────────────────────────────────────
+# backup_restore_test.sh: senha/token de containers EFÊMEROS criados e destruídos pelo próprio teste;
+# push_deploy.sh (0b96d28): sed que grava no .env um token gerado em tempo de execução (variável, não literal).
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/backup_restore_test.sh:fm-shell-secret-assignment:58
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/backup_restore_test.sh:fm-shell-secret-assignment:83
+0b96d282a0af580a102bf2f787dd3f98544866f9:scripts/push_deploy.sh:fm-shell-secret-assignment:95
+# edge/config/ueapd.example.json: "key" das tags do mapa da planta (ex.: ledd.m1.parts_scrap) — identificador, não segredo (generic-api-key falso positivo)
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:197
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:245
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:261
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:277
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:341
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:373
+c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:389

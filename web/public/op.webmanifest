@@ -1,0 +1,20 @@
+{
+  "name": "FactoryConnect — Operador",
+  "short_name": "Operador",
+  "description": "Tablet do operador: estado da linha agora, justificar paradas, declarar parada, trocar produto e chamar a manutenção.",
+  "id": "/op/",
+  "start_url": "/op",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "lang": "pt-BR",
+  "background_color": "#030712",
+  "theme_color": "#111827",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/op-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/op-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/op-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

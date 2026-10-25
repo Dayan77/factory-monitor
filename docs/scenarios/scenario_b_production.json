@@ -1,0 +1,646 @@
+{
+ "id": "scenario_b_production",
+ "title": "Cenário B - Produção: contadores de peças boas/refugo da máquina de saída, turno que cruza a meia-noite",
+ "spec_refs": [
+  "domain.md §3.1",
+  "domain.md §3.3",
+  "domain.md §4.1",
+  "kpis.md §1.9",
+  "kpis.md 'Esclarecimentos Sprint 2'"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus",
+  "utc_offset": "-04:00",
+  "dst": false
+ },
+ "asset": {
+  "line": "Linha de Montagem",
+  "output_machine": "Transportador de Saída",
+  "ideal_cycle_time_s": 40,
+  "has_part_counter_total_tag": false
+ },
+ "tags": {
+  "good": {
+   "semantic_role": "part_counter_good",
+   "counter_max": 4294967295
+  },
+  "scrap": {
+   "semantic_role": "part_counter_scrap",
+   "counter_max": 4294967295
+  }
+ },
+ "derived": {
+  "max_rate_per_s": 0.05,
+  "plausibility_bound_dt_900s": 77.5
+ },
+ "shift": {
+  "name": "Turno C",
+  "start_local": "2026-10-05 18:00",
+  "end_local": "2026-10-06 02:00",
+  "start_utc": "2026-10-05T22:00:00Z",
+  "end_utc": "2026-10-06T06:00:00Z",
+  "productive_day": "2026-10-05",
+  "planned_breaks": [
+   {
+    "from": "22:00",
+    "to": "22:30",
+    "reason": "PLN-01",
+    "min": 30
+   },
+   {
+    "from": "01:45",
+    "to": "02:00",
+    "reason": "PLN-02",
+    "min": 15
+   }
+  ],
+  "unplanned_stops": [
+   {
+    "from": "18:00",
+    "to": "18:05",
+    "reason": "OPR-01",
+    "min": 5
+   }
+  ]
+ },
+ "readings": {
+  "good": [
+   {
+    "ts": "2026-10-05T21:52:00Z",
+    "local": "2026-10-05 17:52:00",
+    "value": 1204330,
+    "expect_delta": 0,
+    "note": "linha de base (linha parada desde 17:30)"
+   },
+   {
+    "ts": "2026-10-05T22:07:00Z",
+    "local": "2026-10-05 18:07:00",
+    "value": 1204333,
+    "expect_delta": 3,
+    "note": "linha parte as 18:05 (atraso de 5 min, OPR-01): 2 min de produção"
+   },
+   {
+    "ts": "2026-10-05T22:22:00Z",
+    "local": "2026-10-05 18:22:00",
+    "value": 1204354,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-05T22:37:00Z",
+    "local": "2026-10-05 18:37:00",
+    "value": 1204376,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-05T22:52:00Z",
+    "local": "2026-10-05 18:52:00",
+    "value": 1204397,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-05T23:07:00Z",
+    "local": "2026-10-05 19:07:00",
+    "value": 1204419,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-05T23:22:00Z",
+    "local": "2026-10-05 19:22:00",
+    "value": 1204440,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-05T23:37:00Z",
+    "local": "2026-10-05 19:37:00",
+    "value": 1204462,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-05T23:52:00Z",
+    "local": "2026-10-05 19:52:00",
+    "value": 1204484,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T00:07:00Z",
+    "local": "2026-10-05 20:07:00",
+    "value": 1204505,
+    "expect_delta": 21,
+    "note": "bucket que atravessa a meia-noite UTC (00:00Z = 20:00 local)"
+   },
+   {
+    "ts": "2026-10-06T00:07:00Z",
+    "local": "2026-10-05 20:07:00",
+    "value": 1204505,
+    "expect_delta": 0,
+    "expect_ignored": "duplicate",
+    "note": "reentrega MQTT QoS 1 (mesmo ts e valor)"
+   },
+   {
+    "ts": "2026-10-06T00:22:00Z",
+    "local": "2026-10-05 20:22:00",
+    "value": 1204527,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T00:37:00Z",
+    "local": "2026-10-05 20:37:00",
+    "value": 1204548,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T00:52:00Z",
+    "local": "2026-10-05 20:52:00",
+    "value": 1204570,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T01:07:00Z",
+    "local": "2026-10-05 21:07:00",
+    "value": 1204592,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T01:22:00Z",
+    "local": "2026-10-05 21:22:00",
+    "value": 1204613,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T01:37:00Z",
+    "local": "2026-10-05 21:37:00",
+    "value": 1204635,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T01:52:00Z",
+    "local": "2026-10-05 21:52:00",
+    "value": 1204656,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T02:07:00Z",
+    "local": "2026-10-05 22:07:00",
+    "value": 1204668,
+    "expect_delta": 12,
+    "note": "refeição 22:00-22:30: so 21:52-22:00 produziu"
+   },
+   {
+    "ts": "2026-10-06T02:22:00Z",
+    "local": "2026-10-05 22:22:00",
+    "value": 1204668,
+    "expect_delta": 0,
+    "note": "refeição: nada produzido"
+   },
+   {
+    "ts": "2026-10-06T02:37:00Z",
+    "local": "2026-10-05 22:37:00",
+    "value": 1204678,
+    "expect_delta": 10,
+    "note": "retomada as 22:30"
+   },
+   {
+    "ts": "2026-10-06T02:52:00Z",
+    "local": "2026-10-05 22:52:00",
+    "value": 1204700,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T03:07:00Z",
+    "local": "2026-10-05 23:07:00",
+    "value": 1204721,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T03:22:00Z",
+    "local": "2026-10-05 23:22:00",
+    "value": 1204743,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T03:37:00Z",
+    "local": "2026-10-05 23:37:00",
+    "value": 1204765,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T03:52:00Z",
+    "local": "2026-10-05 23:52:00",
+    "value": 1204786,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T04:07:00Z",
+    "local": "2026-10-06 00:07:00",
+    "value": 1204808,
+    "expect_delta": 22,
+    "note": "leitura que atravessa a meia-noite local: delta vai para o bucket 00:00 de 2026-10-06 (ts da leitura)"
+   },
+   {
+    "ts": "2026-10-06T04:22:00Z",
+    "local": "2026-10-06 00:22:00",
+    "value": 1204829,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T04:37:00Z",
+    "local": "2026-10-06 00:37:00",
+    "value": 1204851,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T04:52:00Z",
+    "local": "2026-10-06 00:52:00",
+    "value": 1204873,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T05:07:00Z",
+    "local": "2026-10-06 01:07:00",
+    "value": 1204894,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T05:22:00Z",
+    "local": "2026-10-06 01:22:00",
+    "value": 1204916,
+    "expect_delta": 22
+   },
+   {
+    "ts": "2026-10-06T05:37:00Z",
+    "local": "2026-10-06 01:37:00",
+    "value": 1204937,
+    "expect_delta": 21
+   },
+   {
+    "ts": "2026-10-06T05:52:00Z",
+    "local": "2026-10-06 01:52:00",
+    "value": 1204949,
+    "expect_delta": 12,
+    "note": "linha para as 01:45 (5S programado ate 02:00)"
+   },
+   {
+    "ts": "2026-10-06T06:07:00Z",
+    "local": "2026-10-06 02:07:00",
+    "value": 1204949,
+    "expect_delta": 0,
+    "note": "sem produção"
+   }
+  ],
+  "scrap": [
+   {
+    "ts": "2026-10-05T21:52:00Z",
+    "local": "2026-10-05 17:52:00",
+    "value": 25117,
+    "expect_delta": 0,
+    "note": "linha de base"
+   },
+   {
+    "ts": "2026-10-05T22:07:00Z",
+    "local": "2026-10-05 18:07:00",
+    "value": 25117,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-05T22:22:00Z",
+    "local": "2026-10-05 18:22:00",
+    "value": 25118,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-05T22:37:00Z",
+    "local": "2026-10-05 18:37:00",
+    "value": 25118,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-05T22:52:00Z",
+    "local": "2026-10-05 18:52:00",
+    "value": 25118,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-05T23:07:00Z",
+    "local": "2026-10-05 19:07:00",
+    "value": 25118,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-05T23:22:00Z",
+    "local": "2026-10-05 19:22:00",
+    "value": 25119,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-05T23:37:00Z",
+    "local": "2026-10-05 19:37:00",
+    "value": 25119,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-05T23:52:00Z",
+    "local": "2026-10-05 19:52:00",
+    "value": 25119,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T00:07:00Z",
+    "local": "2026-10-05 20:07:00",
+    "value": 25119,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T00:22:00Z",
+    "local": "2026-10-05 20:22:00",
+    "value": 25119,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T00:37:00Z",
+    "local": "2026-10-05 20:37:00",
+    "value": 25120,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T00:52:00Z",
+    "local": "2026-10-05 20:52:00",
+    "value": 25120,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T01:07:00Z",
+    "local": "2026-10-05 21:07:00",
+    "value": 25120,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T01:22:00Z",
+    "local": "2026-10-05 21:22:00",
+    "value": 25120,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T01:37:00Z",
+    "local": "2026-10-05 21:37:00",
+    "value": 25120,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T01:52:00Z",
+    "local": "2026-10-05 21:52:00",
+    "value": 25121,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T02:07:00Z",
+    "local": "2026-10-05 22:07:00",
+    "value": 25121,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T02:22:00Z",
+    "local": "2026-10-05 22:22:00",
+    "value": 25121,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T02:37:00Z",
+    "local": "2026-10-05 22:37:00",
+    "value": 25121,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T02:52:00Z",
+    "local": "2026-10-05 22:52:00",
+    "value": 25122,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T03:07:00Z",
+    "local": "2026-10-05 23:07:00",
+    "value": 25122,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T03:22:00Z",
+    "local": "2026-10-05 23:22:00",
+    "value": 25122,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T03:37:00Z",
+    "local": "2026-10-05 23:37:00",
+    "value": 25123,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T03:52:00Z",
+    "local": "2026-10-05 23:52:00",
+    "value": 25123,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T04:07:00Z",
+    "local": "2026-10-06 00:07:00",
+    "value": 25123,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T04:22:00Z",
+    "local": "2026-10-06 00:22:00",
+    "value": 25123,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T04:37:00Z",
+    "local": "2026-10-06 00:37:00",
+    "value": 25123,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T04:52:00Z",
+    "local": "2026-10-06 00:52:00",
+    "value": 25124,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T05:07:00Z",
+    "local": "2026-10-06 01:07:00",
+    "value": 25124,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T05:22:00Z",
+    "local": "2026-10-06 01:22:00",
+    "value": 25125,
+    "expect_delta": 1
+   },
+   {
+    "ts": "2026-10-06T05:37:00Z",
+    "local": "2026-10-06 01:37:00",
+    "value": 25125,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T05:52:00Z",
+    "local": "2026-10-06 01:52:00",
+    "value": 25125,
+    "expect_delta": 0
+   },
+   {
+    "ts": "2026-10-06T06:07:00Z",
+    "local": "2026-10-06 02:07:00",
+    "value": 25125,
+    "expect_delta": 0
+   }
+  ]
+ },
+ "expected": {
+  "shift_totals": {
+   "good": 619,
+   "scrap": 8,
+   "total": 627
+  },
+  "by_hour_local": {
+   "2026-10-05 18:00": {
+    "good": 67,
+    "scrap": 1,
+    "total": 68,
+    "cadence_parts_per_h": 68
+   },
+   "2026-10-05 19:00": {
+    "good": 87,
+    "scrap": 1,
+    "total": 88,
+    "cadence_parts_per_h": 88
+   },
+   "2026-10-05 20:00": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87,
+    "cadence_parts_per_h": 87
+   },
+   "2026-10-05 21:00": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87,
+    "cadence_parts_per_h": 87
+   },
+   "2026-10-05 22:00": {
+    "good": 44,
+    "scrap": 1,
+    "total": 45,
+    "cadence_parts_per_h": 45
+   },
+   "2026-10-05 23:00": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87,
+    "cadence_parts_per_h": 87
+   },
+   "2026-10-06 00:00": {
+    "good": 87,
+    "scrap": 1,
+    "total": 88,
+    "cadence_parts_per_h": 88
+   },
+   "2026-10-06 01:00": {
+    "good": 76,
+    "scrap": 1,
+    "total": 77,
+    "cadence_parts_per_h": 77
+   }
+  },
+  "by_hour_utc": {
+   "2026-10-05T22:00:00Z": {
+    "good": 67,
+    "scrap": 1,
+    "total": 68
+   },
+   "2026-10-05T23:00:00Z": {
+    "good": 87,
+    "scrap": 1,
+    "total": 88
+   },
+   "2026-10-06T00:00:00Z": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87
+   },
+   "2026-10-06T01:00:00Z": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87
+   },
+   "2026-10-06T02:00:00Z": {
+    "good": 44,
+    "scrap": 1,
+    "total": 45
+   },
+   "2026-10-06T03:00:00Z": {
+    "good": 86,
+    "scrap": 1,
+    "total": 87
+   },
+   "2026-10-06T04:00:00Z": {
+    "good": 87,
+    "scrap": 1,
+    "total": 88
+   },
+   "2026-10-06T05:00:00Z": {
+    "good": 76,
+    "scrap": 1,
+    "total": 77
+   }
+  },
+  "by_local_calendar_day": {
+   "2026-10-05": {
+    "good": 456,
+    "scrap": 6,
+    "total": 462
+   },
+   "2026-10-06": {
+    "good": 163,
+    "scrap": 2,
+    "total": 165
+   }
+  },
+  "by_productive_day": {
+   "2026-10-05": {
+    "good": 619,
+    "scrap": 8,
+    "total": 627
+   }
+  },
+  "cadence": {
+   "ideal_parts_per_h": 90,
+   "pot_min": 480,
+   "pdot_min": 45,
+   "pbt_min": 435,
+   "adot_min": 5,
+   "apt_min": 430,
+   "parts_per_hour_planned": 86.48275862068965,
+   "parts_per_hour_running": 87.48837209302326,
+   "performance": 0.9720930232558139
+  },
+  "wrong_answers": {
+   "by_utc_day": {
+    "2026-10-05": {
+     "good": 154,
+     "scrap": 2,
+     "total": 156
+    },
+    "2026-10-06": {
+     "good": 465,
+     "scrap": 6,
+     "total": 471
+    },
+    "why": "agrupou por data UTC: corta o turno as 20:00 local"
+   },
+   "duplicate_counted": {
+    "good": 640
+   }
+  }
+ }
+}

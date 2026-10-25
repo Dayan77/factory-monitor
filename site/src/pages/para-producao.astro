@@ -1,0 +1,39 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import DashboardMock from "../components/DashboardMock.astro";
+import CtaBand from "../components/CtaBand.astro";
+import Icon from "../components/Icon.astro";
+---
+<Layout title="Para Produção: OEE, cadência e paradas ao vivo" description="Para gestores de produção: contagem de peças, cadência da linha, paradas registradas automaticamente e OEE por máquina e linha, em tempo real.">
+  <PageHero eyebrow="Para Produção" title="Saiba agora — não no fim do turno — como a linha está indo" lead="Contagem de peças, ritmo da linha e paradas direto dos sinais da máquina. O OEE deixa de ser um número de planilha e vira uma ferramenta do dia a dia.">
+    <div class="mt-8 flex flex-wrap gap-3"><a href="/contato" class="btn-primary">Fale com um especialista</a></div>
+  </PageHero>
+
+  <section class="container-x mt-16 grid gap-10 lg:grid-cols-[1fr_1.1fr] lg:items-center">
+    <div>
+      <h2 class="text-2xl font-bold text-fg sm:text-3xl">Os números que a produção precisa, ao vivo</h2>
+      <ul class="mt-6 grid gap-3 text-sm text-muted">
+        {[
+          "Peças boas e refugo contados pelos sinais do CLP",
+          "Cadência da linha em peças por hora, comparada ao ritmo esperado",
+          "Estado de cada máquina: produzindo, parada, em falha",
+          "OEE por máquina, linha e período (ISO 22400)",
+        ].map((t) => <li class="flex gap-2"><Icon name="check" size={18} class="mt-0.5 shrink-0 text-accent" />{t}</li>)}
+      </ul>
+    </div>
+    <div class="reveal"><DashboardMock /></div>
+  </section>
+
+  <section class="container-x mt-20">
+    <h2 class="text-2xl font-bold text-fg sm:text-3xl">Menos achismo, mais ação</h2>
+    <div class="mt-8 grid gap-5 md:grid-cols-3">
+      <FeatureCard icon="gauge" title="Onde está a perda">Disponibilidade, desempenho ou qualidade? O OEE decomposto mostra qual alavanca puxar primeiro.</FeatureCard>
+      <FeatureCard icon="clock" title="Paradas sem apontamento manual">O início e o fim de cada parada vêm da máquina. O operador só informa o motivo.</FeatureCard>
+      <FeatureCard icon="trend" title="Comparações justas">Compare máquinas, linhas e períodos com a mesma régua, calculada da mesma forma.</FeatureCard>
+    </div>
+  </section>
+
+  <CtaBand title="Comece por uma linha" text="Em poucos dias a primeira linha está conectada e mostrando produção e paradas reais." />
+</Layout>

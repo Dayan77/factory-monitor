@@ -1,5 +1,7 @@
+import { apiErrorMessage } from "@/utils/errors";
+import ErrorState from "@/components/ui/ErrorState";
 import { useEffect, useRef, useState } from "react";
-import Hls from "hls.js";
+import type HlsType from "hls.js";
 import { camerasApi } from "@/services/api";
 import { useCameras, useCreateCamera, useUpdateCamera, useDeleteCamera } from "@/hooks/useQueries";
 import { useMachines } from "@/hooks/useQueries";
@@ -10,30 +12,35 @@ import { useAuthStore } from "@/store/auth";
 
 function HlsPlayer({ src, label }: { src: string; label: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef   = useRef<Hls | null>(null);
+  const hlsRef   = useRef<HlsType | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     setError(false);
     const video = videoRef.current;
     if (!video) return;
+    let cancelled = false;
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-      hlsRef.current = hls;
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) setError(true);
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      // Native HLS (Safari)
-      video.src = src;
-    } else {
-      setError(true);
-    }
+    // hls.js (light build: no subtitles / alt audio / DRM, which the cameras do not use) is only fetched when a stream is shown
+    import("hls.js/light").then(({ default: Hls }) => {
+      if (cancelled) return;
+      if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+        hlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal) setError(true);
+        });
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = src; // Native HLS (Safari)
+      } else {
+        setError(true);
+      }
+    }).catch(() => { if (!cancelled) setError(true); });
 
     return () => {
+      cancelled = true;
       hlsRef.current?.destroy();
       hlsRef.current = null;
     };
@@ -41,9 +48,9 @@ function HlsPlayer({ src, label }: { src: string; label: string }) {
 
   if (error) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-gray-900 rounded-lg text-gray-500 text-sm">
+      <div className="flex h-full w-full items-center justify-center bg-gray-900 rounded-lg text-fg-muted text-sm">
         <div className="text-center space-y-1">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-8 mx-auto text-gray-600">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-8 mx-auto text-fg-muted">
             <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.87v6.26a1 1 0 0 1-1.447.899L15 14" />
             <rect x="2" y="6" width="13" height="12" rx="2" />
             <line x1="2" y1="2" x2="22" y2="22" />
@@ -114,10 +121,10 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 shadow-2xl">
         <div className="flex items-center justify-between border-b border-gray-700 px-6 py-4">
-          <h2 className="text-base font-semibold text-white">
+          <h2 className="text-base font-semibold text-gray-50">
             {initial ? "Editar câmera" : "Nova câmera"}
           </h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">
+          <button onClick={onClose} className="text-fg-muted hover:text-gray-300">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-5">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
@@ -132,7 +139,7 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
               value={form.name}
               onChange={handleChange}
               required
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-50 focus:border-brand-500 focus:outline-none"
               placeholder="Câmera Linha 1 — Entrada"
             />
           </div>
@@ -144,7 +151,7 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
               value={form.rtsp_url}
               onChange={handleChange}
               required
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none font-mono"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-50 focus:border-brand-500 focus:outline-none font-mono"
               placeholder="rtsp://192.168.1.100:554/stream1"
             />
           </div>
@@ -155,7 +162,7 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
               name="description"
               value={form.description}
               onChange={handleChange}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-50 focus:border-brand-500 focus:outline-none"
               placeholder="Opcional"
             />
           </div>
@@ -166,7 +173,7 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
               name="machine_id"
               value={form.machine_id}
               onChange={handleChange}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white focus:border-brand-500 focus:outline-none"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-gray-50 focus:border-brand-500 focus:outline-none"
             >
               <option value="">— Nenhuma —</option>
               {machines.map((m) => (
@@ -199,7 +206,7 @@ function CameraFormModal({ initial, onClose }: CameraFormProps) {
             <button
               type="submit"
               disabled={isPending}
-              className="flex-1 rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+              className="flex-1 rounded-lg bg-accent py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-50"
             >
               {isPending ? "Salvando…" : "Salvar"}
             </button>
@@ -232,7 +239,7 @@ function CameraCard({ camera, machineName, onEdit, onDelete }: CameraCardProps) 
         ) : (
           <button
             onClick={() => setViewing(true)}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-500 hover:text-gray-300 transition-colors group"
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-fg-muted hover:text-gray-300 transition-colors group"
           >
             <div className="size-14 rounded-full border-2 border-gray-600 group-hover:border-gray-400 flex items-center justify-center transition-colors">
               <svg viewBox="0 0 24 24" fill="currentColor" className="size-7 ml-0.5">
@@ -250,19 +257,19 @@ function CameraCard({ camera, machineName, onEdit, onDelete }: CameraCardProps) 
       {/* Info */}
       <div className="flex items-start justify-between gap-3 p-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-white truncate">{camera.name}</p>
+          <p className="text-sm font-medium text-gray-50 truncate">{camera.name}</p>
           {machineName && (
-            <p className="text-xs text-gray-500 truncate mt-0.5">{machineName}</p>
+            <p className="text-xs text-fg-muted truncate mt-0.5">{machineName}</p>
           )}
           {camera.description && (
-            <p className="text-xs text-gray-600 truncate mt-0.5">{camera.description}</p>
+            <p className="text-xs text-fg-muted truncate mt-0.5">{camera.description}</p>
           )}
         </div>
 
         <div className="flex gap-1 shrink-0">
           <button
             onClick={() => onEdit(camera)}
-            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-700 hover:text-gray-300 transition-colors"
+            className="rounded-lg p-1.5 text-fg-muted hover:bg-gray-700 hover:text-gray-300 transition-colors"
             title="Editar"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-4">
@@ -272,7 +279,7 @@ function CameraCard({ camera, machineName, onEdit, onDelete }: CameraCardProps) 
           </button>
           <button
             onClick={() => onDelete(camera)}
-            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-700 hover:text-red-400 transition-colors"
+            className="rounded-lg p-1.5 text-fg-muted hover:bg-gray-700 hover:text-red-400 transition-colors"
             title="Excluir"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="size-4">
@@ -292,7 +299,8 @@ function CameraCard({ camera, machineName, onEdit, onDelete }: CameraCardProps) 
 
 export default function CamerasPage() {
   const { user } = useAuthStore();
-  const { data: cameras = [], isLoading } = useCameras();
+  const camerasQ = useCameras();
+  const { data: cameras = [], isLoading } = camerasQ;
   const { data: machines = [] } = useMachines();
   const deleteCamera = useDeleteCamera();
 
@@ -316,8 +324,10 @@ export default function CamerasPage() {
 
   async function handleConfirmDelete() {
     if (!confirmDelete) return;
-    await deleteCamera.mutateAsync(confirmDelete.id);
-    setConfirmDelete(null);
+    try {
+      await deleteCamera.mutateAsync(confirmDelete.id);
+      setConfirmDelete(null);
+    } catch { /* the dialog shows the error (deleteCamera.isError) */ }
   }
 
   return (
@@ -325,13 +335,13 @@ export default function CamerasPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-white">Câmeras IP</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Visualização ao vivo das câmeras da fábrica</p>
+          <h1 className="text-xl font-semibold text-gray-50">Câmeras IP</h1>
+          <p className="text-sm text-fg-muted mt-0.5">Visualização ao vivo das câmeras da fábrica</p>
         </div>
         {canEdit && (
           <button
             onClick={() => { setEditing(null); setShowForm(true); }}
-            className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:bg-accent-hover transition-colors"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -349,14 +359,17 @@ export default function CamerasPage() {
             <div key={i} className="rounded-xl border border-gray-700 bg-gray-800 aspect-video animate-pulse" />
           ))}
         </div>
+      ) : camerasQ.isError ? (
+        // never "Nenhuma câmera" when the list simply failed to load
+        <ErrorState title="Não foi possível carregar as câmeras" error={camerasQ.error} onRetry={() => void camerasQ.refetch()} />
       ) : cameras.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-700 bg-gray-800/40 py-20 text-center">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-12 text-gray-600 mb-3">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="size-12 text-fg-muted mb-3">
             <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.87v6.26a1 1 0 0 1-1.447.899L15 14" />
             <rect x="2" y="6" width="13" height="12" rx="2" />
           </svg>
           <p className="text-gray-400 font-medium">Nenhuma câmera cadastrada</p>
-          <p className="text-gray-600 text-sm mt-1">
+          <p className="text-fg-muted text-sm mt-1">
             {canEdit ? "Clique em \"Nova câmera\" para adicionar." : "Aguarde um administrador cadastrar câmeras."}
           </p>
         </div>
@@ -383,7 +396,7 @@ export default function CamerasPage() {
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-sm rounded-xl bg-gray-900 border border-gray-700 p-6 shadow-2xl space-y-4">
-            <p className="text-white font-medium">Excluir câmera?</p>
+            <p className="text-gray-50 font-medium">Excluir câmera?</p>
             <p className="text-sm text-gray-400">
               "{confirmDelete.name}" será removida permanentemente.
             </p>
@@ -402,6 +415,7 @@ export default function CamerasPage() {
                 {deleteCamera.isPending ? "Excluindo…" : "Excluir"}
               </button>
             </div>
+            {deleteCamera.isError && <p role="alert" className="mt-3 text-sm text-danger">{apiErrorMessage(deleteCamera.error, "Não foi possível excluir a câmera.")}</p>}
           </div>
         </div>
       )}

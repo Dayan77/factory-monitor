@@ -1,0 +1,26 @@
+---
+import Layout from "../layouts/Layout.astro";
+import PageHero from "../components/PageHero.astro";
+import FeatureCard from "../components/FeatureCard.astro";
+import CtaBand from "../components/CtaBand.astro";
+---
+<Layout title="Sobre" description="O FactoryConnect nasceu para dar à indústria brasileira uma visão clara de eficiência, manutenção e uso de cada componente, com tecnologia acessível e padrões abertos.">
+  <PageHero eyebrow="Sobre" title="Indústria 4.0 que cabe na fábrica real" lead="Acreditamos que toda fábrica — não só as gigantes — merece enxergar o que acontece nas suas máquinas, com dados confiáveis e sem projetos que duram anos." />
+
+  <section class="container-x mt-16 grid gap-12 lg:grid-cols-2">
+    <div class="prose-fc">
+      <h2>Nossa missão</h2>
+      <p>Conectar equipamentos e linhas de produção, coletar os dados fundamentais e entregar o <strong>raio-x da fábrica</strong> para os times de produção e manutenção: eficiência, perdas, confiabilidade, uso de cada componente e planejamento de manutenção.</p>
+      <h2>Como trabalhamos</h2>
+      <p>Construímos em etapas, com testes automatizados e uma planta virtual que simula CLPs reais — cada recurso é validado antes de chegar ao chão de fábrica. Os indicadores seguem normas reconhecidas, como a ISO 22400 (eficiência) e a ISO 14224 (falhas e confiabilidade), e as definições ficam documentadas.</p>
+    </div>
+    <div class="grid content-start gap-5 sm:grid-cols-2">
+      <FeatureCard icon="check" title="Honestidade com os dados">Nada de número inventado: se o dado não existe, mostramos que ele não existe.</FeatureCard>
+      <FeatureCard icon="plug" title="Padrões abertos">Protocolos industriais abertos e API para integrar com o que você já usa.</FeatureCard>
+      <FeatureCard icon="users" title="Feito com quem usa">Interfaces pensadas para o gerente, o técnico e o operador com luva no tablet.</FeatureCard>
+      <FeatureCard icon="factory" title="Foco na indústria">Pensado para manufatura discreta: prensas, injetoras, usinagem, montagem e embalagem.</FeatureCard>
+    </div>
+  </section>
+
+  <CtaBand />
+</Layout>

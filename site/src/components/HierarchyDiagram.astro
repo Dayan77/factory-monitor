@@ -1,0 +1,35 @@
+---
+// Hierarquia de ativos com acumuladores de uso no componente.
+const levels = [
+  { t: "Planta", s: "Unidade fabril" },
+  { t: "Linha", s: "Produção e cadência" },
+  { t: "Máquina", s: "OEE, paradas, estado" },
+  { t: "Posição", s: "Onde o componente trabalha" },
+  { t: "Componente", s: "Ciclos · horas · partidas" },
+];
+---
+<figure>
+  <svg viewBox="0 0 600 360" class="w-full h-auto" role="img" aria-labelledby="hier-title">
+    <title id="hier-title">Hierarquia de ativos: Planta, Linha, Máquina, Posição e Componente, com contadores de uso no componente</title>
+    <g font-family="ui-sans-serif,system-ui,sans-serif">
+      {levels.map((l, i) => (
+        <g>
+          {i > 0 && <path d={`M${34 + (i - 1) * 40} ${44 + (i - 1) * 64 + 22} v${42} h18`} fill="none" class="stroke-line" stroke-width="2" />}
+          <rect x={52 + i * 40 - 20} y={20 + i * 64} width={260} height="48" rx="12"
+                class={i === 4 ? "fill-surface" : "fill-surface stroke-line"}
+                stroke={i === 4 ? "#25a368" : undefined} stroke-width={i === 4 ? 2 : 1} />
+          <text x={52 + i * 40} y={42 + i * 64} class="fill-fg" font-size="15" font-weight="700">{l.t}</text>
+          <text x={52 + i * 40} y={59 + i * 64} class="fill-muted" font-size="12">{l.s}</text>
+        </g>
+      ))}
+      <g>
+        <line x1="452" y1="300" x2="466" y2="300" stroke="#25a368" stroke-width="2" />
+        <rect x="466" y="262" width="130" height="80" rx="12" fill="#25a368" fill-opacity=".12" />
+        <text x="478" y="284" class="fill-accent" font-size="12" font-weight="700">Acumuladores</text>
+        <text x="478" y="303" class="fill-muted" font-size="12">ciclos</text>
+        <text x="478" y="319" class="fill-muted" font-size="12">horas de operação</text>
+        <text x="478" y="335" class="fill-muted" font-size="12">partidas</text>
+      </g>
+    </g>
+  </svg>
+</figure>

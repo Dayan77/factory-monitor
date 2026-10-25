@@ -5,9 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import get_db
-from ...models import User, UserRole, AlertRule, AlertEvent
+from ...models import User, UserRole, AlertRule, AlertEvent, Tag, Machine
 from ...auth import get_current_user, require_roles
 from ..schemas import AlertRuleOut, AlertRuleCreate, AlertEventOut
+from ..tenant_refs import ensure_owned
+from ...services.validation import is_uuid
 
 router = APIRouter()
 
@@ -28,6 +30,7 @@ async def list_rules(user: CurrentUser, db: DB):
 @router.post("/rules", response_model=AlertRuleOut, status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_roles(UserRole.manager))])
 async def create_rule(body: AlertRuleCreate, user: CurrentUser, db: DB):
+    body.tag_id = await ensure_owned(db, Tag, body.tag_id, user.tenant_id, "tag_id")
     rule = AlertRule(tenant_id=user.tenant_id, **body.model_dump())
     db.add(rule)
     await db.commit()
@@ -38,6 +41,8 @@ async def create_rule(body: AlertRuleCreate, user: CurrentUser, db: DB):
 @router.patch("/rules/{rule_id}/toggle",
               dependencies=[Depends(require_roles(UserRole.manager))])
 async def toggle_rule(rule_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(rule_id):
+        raise HTTPException(status_code=404, detail="Regra não encontrada.")
     result = await db.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant_id == user.tenant_id)
     )
@@ -52,6 +57,8 @@ async def toggle_rule(rule_id: str, user: CurrentUser, db: DB):
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT,
                dependencies=[Depends(require_roles(UserRole.admin))])
 async def delete_rule(rule_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(rule_id):
+        raise HTTPException(status_code=404, detail="Regra não encontrada.")
     result = await db.execute(
         select(AlertRule).where(AlertRule.id == rule_id, AlertRule.tenant_id == user.tenant_id)
     )
@@ -69,7 +76,10 @@ async def list_events(
     limit: int = 50,
 ):
     q = (
-        select(AlertEvent)
+        select(AlertEvent, AlertRule, Tag, Machine.name)
+        .join(AlertRule, AlertRule.id == AlertEvent.rule_id)
+        .join(Tag, Tag.id == AlertRule.tag_id)
+        .outerjoin(Machine, Machine.id == Tag.machine_id)
         .where(AlertEvent.tenant_id == user.tenant_id)
         .order_by(AlertEvent.triggered_at.desc())
         .limit(limit)
@@ -77,12 +87,33 @@ async def list_events(
     if active_only:
         q = q.where(AlertEvent.resolved_at.is_(None))
     result = await db.execute(q)
-    return result.scalars().all()
+    return [_event_out(event, rule, tag, machine_name) for event, rule, tag, machine_name in result.all()]
+
+
+def _event_out(event: AlertEvent, rule: AlertRule, tag: Tag, machine_name: str | None) -> AlertEventOut:
+    message = None
+    if event.value_at_trigger is not None:
+        unit = f" {tag.unit}" if tag.unit else ""
+        message = f"{tag.name}: {event.value_at_trigger:g}{unit}"
+    return AlertEventOut(
+        id=event.id,
+        rule_id=event.rule_id,
+        rule_name=rule.name,
+        severity=rule.severity,
+        machine_name=machine_name,
+        message=message,
+        triggered_at=event.triggered_at,
+        resolved_at=event.resolved_at,
+        value_at_trigger=event.value_at_trigger,
+        notified=event.notified,
+    )
 
 
 @router.post("/events/{event_id}/resolve",
              dependencies=[Depends(require_roles(UserRole.operator))])
 async def resolve_event(event_id: str, user: CurrentUser, db: DB):
+    if not is_uuid(event_id):
+        raise HTTPException(status_code=404, detail="Evento não encontrado.")
     result = await db.execute(
         select(AlertEvent).where(AlertEvent.id == event_id, AlertEvent.tenant_id == user.tenant_id)
     )

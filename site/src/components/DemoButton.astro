@@ -1,0 +1,36 @@
+---
+// "Ver demonstração" (docs/sprint6.md §5). Sem JS: link direto para {APP_URL}/demo (o app abre a sessão).
+// Com JS (src/lib/demo-client.ts): carregando → consulta GET /api/public/demo-status → navega; erro → mensagem aqui.
+import { DEMO_URL, DEMO_STATUS_URL, DEMO_EVENT_URL } from "../lib/site";
+
+interface Props {
+  placement: "header" | "menu" | "hero" | "como-funciona";
+  variant?: "primary" | "ghost";
+  /** classes do invólucro; sem nenhuma, "inline-flex" (passe a exibição junto: "hidden md:inline-flex") */
+  class?: string;
+  statusClass?: string;
+  /** rótulo curto ("Ver demo") no cabeçalho em telas largas; o nome acessível começa pelo texto visível (WCAG 2.5.3) */
+  short?: boolean;
+}
+const { placement, variant = "ghost", class: extra = "", statusClass = "", short = false } = Astro.props;
+const id = `demo-status-${placement}${short ? "-short" : ""}`;
+---
+<span class:list={["demo-cta flex-col", extra || "inline-flex"]}>
+  <a
+    href={DEMO_URL}
+    data-demo-cta={placement}
+    data-demo-status-url={DEMO_STATUS_URL}
+    data-demo-event-url={DEMO_EVENT_URL || undefined}
+    aria-describedby={id}
+    aria-label={short ? "Ver demo — abrir a demonstração" : undefined}
+    data-demo-loading={short ? "Abrindo…" : undefined}
+    class:list={[variant === "primary" ? "btn-primary" : "btn-ghost", "gap-2 whitespace-nowrap aria-busy:cursor-progress aria-busy:opacity-80"]}
+  >
+    <svg data-demo-spinner class="hidden size-4 animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".3" stroke-width="3" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+    </svg>
+    <span data-demo-label>{short ? "Ver demo" : "Ver demonstração"}</span>
+  </a>
+  <span id={id} data-demo-status role="status" aria-live="polite" class:list={["mt-2 max-w-xs text-sm text-muted empty:hidden data-[state=error]:text-red-600 dark:data-[state=error]:text-red-400", statusClass]}></span>
+</span>

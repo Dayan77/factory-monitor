@@ -1,0 +1,58 @@
+---
+// Busca na documentação: o índice (/docs/busca.json) só é baixado no primeiro foco do campo.
+interface Props { id?: string }
+const { id = "docs-search" } = Astro.props;
+---
+<div class="docs-search" data-docs-search>
+  <label for={id} class="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Buscar no manual</label>
+  <input id={id} type="search" autocomplete="off" spellcheck="false" placeholder="Ex.: OEE, justificar parada, MTBF"
+    aria-controls={`${id}-results`} aria-describedby={`${id}-status`}
+    class="mt-2 min-h-11 w-full rounded-lg border border-line bg-bg px-3 text-sm text-fg placeholder:text-muted focus:border-accent focus:outline-none" />
+  <p id={`${id}-status`} class="sr-only" aria-live="polite" data-status></p>
+  <ul id={`${id}-results`} class="mt-2 space-y-1" data-results hidden></ul>
+</div>
+
+<script>
+  interface Entry { p: string; h: string; u: string; t: string }
+  const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  let index: Entry[] | null = null;
+  let loading: Promise<Entry[]> | null = null;
+  function load(): Promise<Entry[]> {
+    if (index) return Promise.resolve(index);
+    loading ??= fetch("/docs/busca.json").then((r) => r.json()).then((d: Entry[]) => (index = d));
+    return loading;
+  }
+  function esc(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string); }
+  function snippet(t: string, w: string) {
+    const i = fold(t).indexOf(w);
+    if (i < 0) return t.slice(0, 120);
+    const s = Math.max(0, i - 50);
+    return (s > 0 ? "…" : "") + t.slice(s, s + 140) + (s + 140 < t.length ? "…" : "");
+  }
+  for (const box of document.querySelectorAll<HTMLElement>("[data-docs-search]")) {
+    const input = box.querySelector("input")!;
+    const list = box.querySelector<HTMLUListElement>("[data-results]")!;
+    const status = box.querySelector<HTMLElement>("[data-status]")!;
+    input.addEventListener("focus", () => { void load(); }, { once: true });
+    input.addEventListener("input", async () => {
+      const q = fold(input.value.trim());
+      if (q.length < 2) { list.hidden = true; list.innerHTML = ""; status.textContent = ""; return; }
+      const words = q.split(/\s+/);
+      const data = await load();
+      const hits = data
+        .map((e) => {
+          const h = fold(e.h), t = fold(e.t);
+          if (!words.every((w) => h.includes(w) || t.includes(w))) return null;
+          return { e, score: words.reduce((n, w) => n + (h.includes(w) ? 10 : 0) + (t.includes(w) ? 1 : 0), 0) };
+        })
+        .filter((x): x is { e: Entry; score: number } => !!x)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8);
+      list.hidden = false;
+      list.innerHTML = hits.length
+        ? hits.map(({ e }) => `<li><a class="block rounded-lg px-3 py-2 hover:bg-surface-2" href="${esc(e.u)}"><span class="block text-sm font-medium text-fg">${esc(e.h)}</span><span class="block text-xs text-muted">${esc(e.p)} · ${esc(snippet(e.t, words[0] ?? ""))}</span></a></li>`).join("")
+        : `<li class="px-3 py-2 text-sm text-muted">Nada encontrado para “${esc(input.value.trim())}”.</li>`;
+      status.textContent = hits.length ? `${hits.length} resultado(s)` : "Nenhum resultado";
+    });
+  }
+</script>

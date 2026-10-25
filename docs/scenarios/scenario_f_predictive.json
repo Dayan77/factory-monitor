@@ -1,0 +1,1421 @@
+{
+ "id": "scenario_f_predictive",
+ "title": "Cenário F (Sprint 5) — preditiva: cilindro com tempo de curso em desvio até a falha (F1) e motor com corrente em desvio sem falha (F2); linha de base robusta, EWMA/CUSUM/z robusto móvel, regras de condição, ciclo de vida do alerta, RUL por condição com faixa, métricas de avaliação e PMP com OS preditivas",
+ "spec_refs": [
+  "predictive.md P-1..P-12",
+  "kpis.md §3.1, §4.2, C17, C18",
+  "domain.md §5.1 (gatilho de condição), §5.2, §5.5"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus",
+  "utc_offset_h": -4
+ },
+ "detectors": {
+  "baseline_min_windows": 20,
+  "sigma_floor_frac": 0.01,
+  "z_clip": 4.0,
+  "ewma_lambda": 0.2,
+  "ewma_L": 3.0,
+  "cusum_k": 0.5,
+  "cusum_h": 5.0,
+  "rolling_window": 20,
+  "rolling_z_limit": 3.5,
+  "anomaly_min": 3,
+  "anomaly_of": 10,
+  "trend_windows": 10,
+  "trend_t_min": 2.0,
+  "rul_warning_days": 30,
+  "rul_critical_days": 7,
+  "evaluation_horizon_days": 30,
+  "min_useful_lead_h": 24
+ },
+ "cases": {
+  "F1": {
+   "description": "Linha de Montagem › Estação de Fixação › posição Cilindro B3 (pneumatic_cylinder). Cilindro novo instalado em 04/01/2027 06:00 local; produção contínua de 20 000 ciclos/dia. Saudável até o bloco 30; depois a vedação gasta e o tempo de curso sobe 1 ms a cada 10 000 ciclos. No bloco 25 há um pico isolado (queda momentânea da pressão de ar). Na planta virtual o CLP declara a falha (fault 4xx, EQP-03, modo PDE) quando o tempo de curso nominal chega a 240 ms = bloco 70.",
+   "position": "POS-B3",
+   "feature": "stroke_time",
+   "unit": "ms",
+   "direction": "up",
+   "installed_at": "2027-01-04T10:00:00Z",
+   "window": {
+    "kind": "cycles",
+    "cycles": 10000,
+    "aggregate": "median"
+   },
+   "warmup_windows": 1,
+   "failure_limit": {
+    "value": 1.2,
+    "relative_to_baseline": true,
+    "note": "120 % da linha de base (domain.md §5.1: stroke_time > 120 % da referência)"
+   },
+   "rules": [
+    {
+     "id": "R-F1-THR",
+     "type": "threshold",
+     "value": 230.0,
+     "sustained_for": 2,
+     "severity": "warning"
+    },
+    {
+     "id": "R-F1-PCT",
+     "type": "pct_of_baseline",
+     "value": 1.1,
+     "sustained_for": 2,
+     "severity": "warning"
+    },
+    {
+     "id": "R-F1-ROC",
+     "type": "rate_of_change",
+     "value": 5e-05,
+     "unit": "ms/ciclo (= 0,5 ms por 10 000 ciclos)",
+     "sustained_for": 2,
+     "severity": "warning"
+    }
+   ],
+   "generator": {
+    "base": 200.0,
+    "noise": [
+     0.0,
+     1.0,
+     -1.0,
+     0.5,
+     -0.5,
+     1.5,
+     -1.5,
+     0.0,
+     2.0,
+     -2.0
+    ],
+    "drift_after_window": 30,
+    "drift_per_window": 1.0,
+    "overrides": {
+     "25": 212.0
+    },
+    "last_window": 70,
+    "hours_per_window": 12,
+    "cycles_per_day": 20000
+   },
+   "windows": [
+    {
+     "i": 1,
+     "x": 201.0
+    },
+    {
+     "i": 2,
+     "x": 199.0
+    },
+    {
+     "i": 3,
+     "x": 200.5
+    },
+    {
+     "i": 4,
+     "x": 199.5
+    },
+    {
+     "i": 5,
+     "x": 201.5
+    },
+    {
+     "i": 6,
+     "x": 198.5
+    },
+    {
+     "i": 7,
+     "x": 200.0
+    },
+    {
+     "i": 8,
+     "x": 202.0
+    },
+    {
+     "i": 9,
+     "x": 198.0
+    },
+    {
+     "i": 10,
+     "x": 200.0
+    },
+    {
+     "i": 11,
+     "x": 201.0
+    },
+    {
+     "i": 12,
+     "x": 199.0
+    },
+    {
+     "i": 13,
+     "x": 200.5
+    },
+    {
+     "i": 14,
+     "x": 199.5
+    },
+    {
+     "i": 15,
+     "x": 201.5
+    },
+    {
+     "i": 16,
+     "x": 198.5
+    },
+    {
+     "i": 17,
+     "x": 200.0
+    },
+    {
+     "i": 18,
+     "x": 202.0
+    },
+    {
+     "i": 19,
+     "x": 198.0
+    },
+    {
+     "i": 20,
+     "x": 200.0
+    },
+    {
+     "i": 21,
+     "x": 201.0
+    },
+    {
+     "i": 22,
+     "x": 199.0
+    },
+    {
+     "i": 23,
+     "x": 200.5
+    },
+    {
+     "i": 24,
+     "x": 199.5
+    },
+    {
+     "i": 25,
+     "x": 212.0
+    },
+    {
+     "i": 26,
+     "x": 198.5
+    },
+    {
+     "i": 27,
+     "x": 200.0
+    },
+    {
+     "i": 28,
+     "x": 202.0
+    },
+    {
+     "i": 29,
+     "x": 198.0
+    },
+    {
+     "i": 30,
+     "x": 200.0
+    },
+    {
+     "i": 31,
+     "x": 202.0
+    },
+    {
+     "i": 32,
+     "x": 201.0
+    },
+    {
+     "i": 33,
+     "x": 203.5
+    },
+    {
+     "i": 34,
+     "x": 203.5
+    },
+    {
+     "i": 35,
+     "x": 206.5
+    },
+    {
+     "i": 36,
+     "x": 204.5
+    },
+    {
+     "i": 37,
+     "x": 207.0
+    },
+    {
+     "i": 38,
+     "x": 210.0
+    },
+    {
+     "i": 39,
+     "x": 207.0
+    },
+    {
+     "i": 40,
+     "x": 210.0
+    },
+    {
+     "i": 41,
+     "x": 212.0
+    },
+    {
+     "i": 42,
+     "x": 211.0
+    },
+    {
+     "i": 43,
+     "x": 213.5
+    },
+    {
+     "i": 44,
+     "x": 213.5
+    },
+    {
+     "i": 45,
+     "x": 216.5
+    },
+    {
+     "i": 46,
+     "x": 214.5
+    },
+    {
+     "i": 47,
+     "x": 217.0
+    },
+    {
+     "i": 48,
+     "x": 220.0
+    },
+    {
+     "i": 49,
+     "x": 217.0
+    },
+    {
+     "i": 50,
+     "x": 220.0
+    },
+    {
+     "i": 51,
+     "x": 222.0
+    },
+    {
+     "i": 52,
+     "x": 221.0
+    },
+    {
+     "i": 53,
+     "x": 223.5
+    },
+    {
+     "i": 54,
+     "x": 223.5
+    },
+    {
+     "i": 55,
+     "x": 226.5
+    },
+    {
+     "i": 56,
+     "x": 224.5
+    },
+    {
+     "i": 57,
+     "x": 227.0
+    },
+    {
+     "i": 58,
+     "x": 230.0
+    },
+    {
+     "i": 59,
+     "x": 227.0
+    },
+    {
+     "i": 60,
+     "x": 230.0
+    },
+    {
+     "i": 61,
+     "x": 232.0
+    },
+    {
+     "i": 62,
+     "x": 231.0
+    },
+    {
+     "i": 63,
+     "x": 233.5
+    },
+    {
+     "i": 64,
+     "x": 233.5
+    },
+    {
+     "i": 65,
+     "x": 236.5
+    },
+    {
+     "i": 66,
+     "x": 234.5
+    },
+    {
+     "i": 67,
+     "x": 237.0
+    },
+    {
+     "i": 68,
+     "x": 240.0
+    },
+    {
+     "i": 69,
+     "x": 237.0
+    },
+    {
+     "i": 70,
+     "x": 240.0
+    }
+   ],
+   "failure": {
+    "window": 70,
+    "failed_at": "2027-02-08T10:00:00Z",
+    "failure_mode": "PDE",
+    "failure_mechanism": "2.4",
+    "failure_cause": "3.4",
+    "severity": "critical",
+    "detection_method_if_unmonitored": "production_interference"
+   }
+  },
+  "F2": {
+   "description": "Linha de Montagem › Transportador de Saída › posição Motor B (electric_motor), corrente média diária com a máquina rodando (run_state = 1). Rolamentos trocados em 04/01/2027 (dia 1 = aquecimento). A partir do dia 31 a carga do transportador sobe (mix de produto mais pesado): +0,02 A/dia por 25 dias e estabiliza em +0,5 A (+4,2 %). Dia 47 = feriado, máquina parada (janela inválida). Nenhuma falha até 30 dias depois do fim dos dados. O planejador fecha o alerta no fim do dia 62 com resolução `rebaseline` (novo normal).",
+   "position": "POS-MOTB",
+   "feature": "current",
+   "unit": "A",
+   "direction": "up",
+   "first_day": "2027-01-04",
+   "window": {
+    "kind": "time",
+    "duration_h": 24,
+    "aggregate": "mean_while_running",
+    "min_running_fraction": 0.25
+   },
+   "warmup_windows": 1,
+   "failure_limit": {
+    "value": 15.0,
+    "relative_to_baseline": false,
+    "note": "corrente nominal de placa (In) do motor"
+   },
+   "rules": [
+    {
+     "id": "R-F2-THR",
+     "type": "threshold",
+     "value": 15.0,
+     "sustained_for": 2,
+     "severity": "warning"
+    },
+    {
+     "id": "R-F2-PCT",
+     "type": "pct_of_baseline",
+     "value": 1.15,
+     "sustained_for": 2,
+     "severity": "warning"
+    },
+    {
+     "id": "R-F2-ROC",
+     "type": "rate_of_change",
+     "value": 0.005,
+     "unit": "A/h de operação (= 0,1 A por dia de 20 h)",
+     "sustained_for": 2,
+     "severity": "warning"
+    }
+   ],
+   "generator": {
+    "base": 12.0,
+    "noise": [
+     0.0,
+     0.1,
+     -0.1,
+     0.05,
+     -0.05,
+     0.15,
+     -0.15,
+     0.0,
+     0.2,
+     -0.2
+    ],
+    "drift_after_day": 30,
+    "drift_per_day": 0.02,
+    "drift_days": 25,
+    "invalid_days": [
+     47
+    ],
+    "running_hours_per_day": 20.0,
+    "last_day": 90
+   },
+   "windows": [
+    {
+     "i": 1,
+     "x": 12.1,
+     "running_h": 20.0
+    },
+    {
+     "i": 2,
+     "x": 11.9,
+     "running_h": 20.0
+    },
+    {
+     "i": 3,
+     "x": 12.05,
+     "running_h": 20.0
+    },
+    {
+     "i": 4,
+     "x": 11.95,
+     "running_h": 20.0
+    },
+    {
+     "i": 5,
+     "x": 12.15,
+     "running_h": 20.0
+    },
+    {
+     "i": 6,
+     "x": 11.85,
+     "running_h": 20.0
+    },
+    {
+     "i": 7,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 8,
+     "x": 12.2,
+     "running_h": 20.0
+    },
+    {
+     "i": 9,
+     "x": 11.8,
+     "running_h": 20.0
+    },
+    {
+     "i": 10,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 11,
+     "x": 12.1,
+     "running_h": 20.0
+    },
+    {
+     "i": 12,
+     "x": 11.9,
+     "running_h": 20.0
+    },
+    {
+     "i": 13,
+     "x": 12.05,
+     "running_h": 20.0
+    },
+    {
+     "i": 14,
+     "x": 11.95,
+     "running_h": 20.0
+    },
+    {
+     "i": 15,
+     "x": 12.15,
+     "running_h": 20.0
+    },
+    {
+     "i": 16,
+     "x": 11.85,
+     "running_h": 20.0
+    },
+    {
+     "i": 17,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 18,
+     "x": 12.2,
+     "running_h": 20.0
+    },
+    {
+     "i": 19,
+     "x": 11.8,
+     "running_h": 20.0
+    },
+    {
+     "i": 20,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 21,
+     "x": 12.1,
+     "running_h": 20.0
+    },
+    {
+     "i": 22,
+     "x": 11.9,
+     "running_h": 20.0
+    },
+    {
+     "i": 23,
+     "x": 12.05,
+     "running_h": 20.0
+    },
+    {
+     "i": 24,
+     "x": 11.95,
+     "running_h": 20.0
+    },
+    {
+     "i": 25,
+     "x": 12.15,
+     "running_h": 20.0
+    },
+    {
+     "i": 26,
+     "x": 11.85,
+     "running_h": 20.0
+    },
+    {
+     "i": 27,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 28,
+     "x": 12.2,
+     "running_h": 20.0
+    },
+    {
+     "i": 29,
+     "x": 11.8,
+     "running_h": 20.0
+    },
+    {
+     "i": 30,
+     "x": 12.0,
+     "running_h": 20.0
+    },
+    {
+     "i": 31,
+     "x": 12.12,
+     "running_h": 20.0
+    },
+    {
+     "i": 32,
+     "x": 11.94,
+     "running_h": 20.0
+    },
+    {
+     "i": 33,
+     "x": 12.11,
+     "running_h": 20.0
+    },
+    {
+     "i": 34,
+     "x": 12.03,
+     "running_h": 20.0
+    },
+    {
+     "i": 35,
+     "x": 12.25,
+     "running_h": 20.0
+    },
+    {
+     "i": 36,
+     "x": 11.97,
+     "running_h": 20.0
+    },
+    {
+     "i": 37,
+     "x": 12.14,
+     "running_h": 20.0
+    },
+    {
+     "i": 38,
+     "x": 12.36,
+     "running_h": 20.0
+    },
+    {
+     "i": 39,
+     "x": 11.98,
+     "running_h": 20.0
+    },
+    {
+     "i": 40,
+     "x": 12.2,
+     "running_h": 20.0
+    },
+    {
+     "i": 41,
+     "x": 12.32,
+     "running_h": 20.0
+    },
+    {
+     "i": 42,
+     "x": 12.14,
+     "running_h": 20.0
+    },
+    {
+     "i": 43,
+     "x": 12.31,
+     "running_h": 20.0
+    },
+    {
+     "i": 44,
+     "x": 12.23,
+     "running_h": 20.0
+    },
+    {
+     "i": 45,
+     "x": 12.45,
+     "running_h": 20.0
+    },
+    {
+     "i": 46,
+     "x": 12.17,
+     "running_h": 20.0
+    },
+    {
+     "i": 47,
+     "x": null,
+     "running_h": 0.0
+    },
+    {
+     "i": 48,
+     "x": 12.56,
+     "running_h": 20.0
+    },
+    {
+     "i": 49,
+     "x": 12.18,
+     "running_h": 20.0
+    },
+    {
+     "i": 50,
+     "x": 12.4,
+     "running_h": 20.0
+    },
+    {
+     "i": 51,
+     "x": 12.52,
+     "running_h": 20.0
+    },
+    {
+     "i": 52,
+     "x": 12.34,
+     "running_h": 20.0
+    },
+    {
+     "i": 53,
+     "x": 12.51,
+     "running_h": 20.0
+    },
+    {
+     "i": 54,
+     "x": 12.43,
+     "running_h": 20.0
+    },
+    {
+     "i": 55,
+     "x": 12.65,
+     "running_h": 20.0
+    },
+    {
+     "i": 56,
+     "x": 12.35,
+     "running_h": 20.0
+    },
+    {
+     "i": 57,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 58,
+     "x": 12.7,
+     "running_h": 20.0
+    },
+    {
+     "i": 59,
+     "x": 12.3,
+     "running_h": 20.0
+    },
+    {
+     "i": 60,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 61,
+     "x": 12.6,
+     "running_h": 20.0
+    },
+    {
+     "i": 62,
+     "x": 12.4,
+     "running_h": 20.0
+    },
+    {
+     "i": 63,
+     "x": 12.55,
+     "running_h": 20.0
+    },
+    {
+     "i": 64,
+     "x": 12.45,
+     "running_h": 20.0
+    },
+    {
+     "i": 65,
+     "x": 12.65,
+     "running_h": 20.0
+    },
+    {
+     "i": 66,
+     "x": 12.35,
+     "running_h": 20.0
+    },
+    {
+     "i": 67,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 68,
+     "x": 12.7,
+     "running_h": 20.0
+    },
+    {
+     "i": 69,
+     "x": 12.3,
+     "running_h": 20.0
+    },
+    {
+     "i": 70,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 71,
+     "x": 12.6,
+     "running_h": 20.0
+    },
+    {
+     "i": 72,
+     "x": 12.4,
+     "running_h": 20.0
+    },
+    {
+     "i": 73,
+     "x": 12.55,
+     "running_h": 20.0
+    },
+    {
+     "i": 74,
+     "x": 12.45,
+     "running_h": 20.0
+    },
+    {
+     "i": 75,
+     "x": 12.65,
+     "running_h": 20.0
+    },
+    {
+     "i": 76,
+     "x": 12.35,
+     "running_h": 20.0
+    },
+    {
+     "i": 77,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 78,
+     "x": 12.7,
+     "running_h": 20.0
+    },
+    {
+     "i": 79,
+     "x": 12.3,
+     "running_h": 20.0
+    },
+    {
+     "i": 80,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 81,
+     "x": 12.6,
+     "running_h": 20.0
+    },
+    {
+     "i": 82,
+     "x": 12.4,
+     "running_h": 20.0
+    },
+    {
+     "i": 83,
+     "x": 12.55,
+     "running_h": 20.0
+    },
+    {
+     "i": 84,
+     "x": 12.45,
+     "running_h": 20.0
+    },
+    {
+     "i": 85,
+     "x": 12.65,
+     "running_h": 20.0
+    },
+    {
+     "i": 86,
+     "x": 12.35,
+     "running_h": 20.0
+    },
+    {
+     "i": 87,
+     "x": 12.5,
+     "running_h": 20.0
+    },
+    {
+     "i": 88,
+     "x": 12.7,
+     "running_h": 20.0
+    },
+    {
+     "i": 89,
+     "x": 12.3,
+     "running_h": 20.0
+    },
+    {
+     "i": 90,
+     "x": 12.5,
+     "running_h": 20.0
+    }
+   ],
+   "actions": [
+    {
+     "after_window": 62,
+     "action": "close",
+     "resolution": "rebaseline",
+     "by": "maintenance_planner",
+     "comment": "carga maior com o novo produto; motor inspecionado, sem defeito"
+    }
+   ],
+   "observed_until": "2027-05-03T04:00:00Z",
+   "failures": []
+  }
+ },
+ "pmp_with_predictive": {
+  "description": "Mês com OS preditivas (P-9): duas vindas de alertas confirmados, uma sem defeito (falso alarme) e uma cancelada `superseded` porque a falha chegou antes.",
+  "work_orders": [
+   {
+    "id": "OS-201",
+    "type": "preventive",
+    "state": "closed",
+    "labor_hours": 60.0
+   },
+   {
+    "id": "OS-202",
+    "type": "predictive",
+    "state": "completed",
+    "labor_hours": 6.0,
+    "source_alert": "AL-1",
+    "finding": "defect_confirmed"
+   },
+   {
+    "id": "OS-203",
+    "type": "predictive",
+    "state": "closed",
+    "labor_hours": 4.0,
+    "source_alert": "AL-2",
+    "finding": "defect_confirmed"
+   },
+   {
+    "id": "OS-204",
+    "type": "predictive",
+    "state": "completed",
+    "labor_hours": 2.0,
+    "source_alert": "AL-3",
+    "finding": "no_defect"
+   },
+   {
+    "id": "OS-205",
+    "type": "predictive",
+    "state": "cancelled",
+    "cancel_reason": "superseded",
+    "labor_hours": 0.0,
+    "source_alert": "AL-4"
+   },
+   {
+    "id": "OS-206",
+    "type": "corrective",
+    "urgency": "emergency",
+    "state": "completed",
+    "labor_hours": 5.0,
+    "source_alert": "AL-4",
+    "note": "a falha chegou antes da preditiva"
+   },
+   {
+    "id": "OS-207",
+    "type": "corrective",
+    "urgency": "deferred",
+    "state": "completed",
+    "labor_hours": 3.0
+   },
+   {
+    "id": "OS-208",
+    "type": "predictive",
+    "state": "in_progress",
+    "labor_hours": 1.5,
+    "source_alert": "AL-5"
+   }
+  ],
+  "expected": {
+   "planned_hours": 75.0,
+   "total_hours": 80.0,
+   "pmp": 0.9375,
+   "predictive_no_defect_hours": 2.0
+  },
+  "wrong_answers": {
+   "pmp_excluding_no_defect_predictive": 0.935897,
+   "pmp_counting_in_progress": 0.93865
+  }
+ },
+ "expected": {
+  "F1": {
+   "baseline": {
+    "from_i": 2,
+    "to_i": 21,
+    "m0": 200.0,
+    "mad": 1.0,
+    "sigma": 2.0,
+    "sigma_floor": 2.0,
+    "established_at": "2027-01-14T22:00:00Z"
+   },
+   "alert": {
+    "opened_at": "2027-01-21T22:00:00Z",
+    "opened_window": 35,
+    "first_triggers": [
+     "CUSUM",
+     "EWMA",
+     "RUL_WARNING"
+    ],
+    "severity": "critical",
+    "escalations": {
+     "warning": "2027-01-21T22:00:00Z",
+     "critical": "2027-01-28T10:00:00Z"
+    },
+    "escalation_windows": {
+     "warning": 35,
+     "critical": 48
+    },
+    "state": "open",
+    "triggers_seen": {
+     "EWMA": 35,
+     "CUSUM": 35,
+     "RUL_WARNING": 35,
+     "R-F1-ROC": 36,
+     "RUL_CRITICAL": 48,
+     "R-F1-PCT": 52,
+     "R-F1-THR": 62
+    }
+   },
+   "lead_time_h": {
+    "warning": 420.0,
+    "critical": 264.0
+   },
+   "lead_time_by_rule_h": {
+    "EWMA": 420,
+    "CUSUM": 420,
+    "RUL_WARNING": 420,
+    "R-F1-ROC": 408,
+    "RUL_CRITICAL": 264,
+    "R-F1-PCT": 216,
+    "R-F1-THR": 96
+   },
+   "trace": [
+    {
+     "i": 22,
+     "x": 199.0,
+     "z": -0.5,
+     "ewma": -0.1,
+     "cusum": 0.0,
+     "rolling_z": -0.5,
+     "slope": -6.061e-06,
+     "triggers": []
+    },
+    {
+     "i": 25,
+     "x": 212.0,
+     "z": 4.0,
+     "ewma": 0.7408,
+     "cusum": 3.5,
+     "rolling_z": 6.0,
+     "slope": 6.9394e-05,
+     "triggers": []
+    },
+    {
+     "i": 26,
+     "x": 198.5,
+     "z": -0.75,
+     "ewma": 0.44264,
+     "cusum": 2.25,
+     "rolling_z": -0.75,
+     "slope": 3.8485e-05,
+     "triggers": []
+    },
+    {
+     "i": 33,
+     "x": 203.5,
+     "z": 1.75,
+     "ewma": 0.634444336,
+     "cusum": 2.0,
+     "rolling_z": 1.75,
+     "slope": -1.6667e-05,
+     "triggers": []
+    },
+    {
+     "i": 34,
+     "x": 203.5,
+     "z": 1.75,
+     "ewma": 0.857555469,
+     "cusum": 3.25,
+     "rolling_z": 1.75,
+     "slope": -2.0909e-05,
+     "triggers": []
+    },
+    {
+     "i": 35,
+     "x": 206.5,
+     "z": 3.25,
+     "ewma": 1.336044375,
+     "cusum": 6.0,
+     "rolling_z": 2.810378164,
+     "slope": 6.9697e-05,
+     "triggers": [
+      "CUSUM",
+      "EWMA",
+      "RUL_WARNING"
+     ]
+    },
+    {
+     "i": 36,
+     "x": 204.5,
+     "z": 2.25,
+     "ewma": 1.5188355,
+     "cusum": 7.75,
+     "rolling_z": 1.638048987,
+     "slope": 6.6061e-05,
+     "triggers": [
+      "CUSUM",
+      "EWMA",
+      "R-F1-ROC",
+      "RUL_WARNING"
+     ]
+    },
+    {
+     "i": 48,
+     "x": 220.0,
+     "z": 4.0,
+     "ewma": 3.807483966,
+     "cusum": 48.75,
+     "rolling_z": 1.753675975,
+     "slope": 0.000118182,
+     "triggers": [
+      "CUSUM",
+      "EWMA",
+      "R-F1-ROC",
+      "RUL_CRITICAL",
+      "RUL_WARNING"
+     ]
+    },
+    {
+     "i": 52,
+     "x": 221.0,
+     "z": 4.0,
+     "ewma": 3.921145433,
+     "cusum": 62.75,
+     "rolling_z": 1.281532443,
+     "slope": 9.3939e-05,
+     "triggers": [
+      "CUSUM",
+      "EWMA",
+      "R-F1-PCT",
+      "R-F1-ROC",
+      "RUL_CRITICAL",
+      "RUL_WARNING"
+     ]
+    },
+    {
+     "i": 62,
+     "x": 231.0,
+     "z": 4.0,
+     "ewma": 3.991533055,
+     "cusum": 97.75,
+     "rolling_z": 1.281532443,
+     "slope": 9.3939e-05,
+     "triggers": [
+      "CUSUM",
+      "EWMA",
+      "R-F1-PCT",
+      "R-F1-ROC",
+      "R-F1-THR",
+      "RUL_CRITICAL",
+      "RUL_WARNING"
+     ]
+    }
+   ],
+   "rul_checkpoints": [
+    {
+     "window": 40,
+     "slope": 9.3939e-05,
+     "slope_se": 1.4923e-05,
+     "x_fit": 209.727272727,
+     "rul_usage": 322258.064516129,
+     "rul_usage_low": 244560.081666733,
+     "rul_usage_high": 472314.918333268,
+     "rate_per_day": 20000.0,
+     "rate_low": 20000.0,
+     "rate_high": 20000.0,
+     "today": "2027-01-24",
+     "rul_days": 17,
+     "rul_days_low": 12,
+     "rul_days_high": 24,
+     "projected_date": "2027-02-10",
+     "projected_date_low": "2027-02-05",
+     "projected_date_high": "2027-02-17",
+     "failure_limit": 240.0,
+     "true_rul_usage": 300000,
+     "true_failure_date": "2027-02-08",
+     "true_rul_days": 15.0
+    },
+    {
+     "window": 50,
+     "slope": 9.3939e-05,
+     "slope_se": 1.4923e-05,
+     "x_fit": 219.727272727,
+     "rul_usage": 215806.451612903,
+     "rul_usage_low": 163774.469104148,
+     "rul_usage_high": 316294.975340297,
+     "rate_per_day": 20000.0,
+     "rate_low": 20000.0,
+     "rate_high": 20000.0,
+     "today": "2027-01-29",
+     "rul_days": 11,
+     "rul_days_low": 8,
+     "rul_days_high": 16,
+     "projected_date": "2027-02-09",
+     "projected_date_low": "2027-02-06",
+     "projected_date_high": "2027-02-14",
+     "failure_limit": 240.0,
+     "true_rul_usage": 200000,
+     "true_failure_date": "2027-02-08",
+     "true_rul_days": 10.0
+    },
+    {
+     "window": 60,
+     "slope": 9.3939e-05,
+     "slope_se": 1.4923e-05,
+     "x_fit": 229.727272727,
+     "rul_usage": 109354.838709677,
+     "rul_usage_low": 82988.856541564,
+     "rul_usage_high": 160275.032347325,
+     "rate_per_day": 20000.0,
+     "rate_low": 20000.0,
+     "rate_high": 20000.0,
+     "today": "2027-02-03",
+     "rul_days": 6,
+     "rul_days_low": 4,
+     "rul_days_high": 9,
+     "projected_date": "2027-02-09",
+     "projected_date_low": "2027-02-07",
+     "projected_date_high": "2027-02-12",
+     "failure_limit": 240.0,
+     "true_rul_usage": 100000,
+     "true_failure_date": "2027-02-08",
+     "true_rul_days": 5.0
+    },
+    {
+     "window": 66,
+     "slope": 9.3939e-05,
+     "slope_se": 1.4923e-05,
+     "x_fit": 235.727272727,
+     "rul_usage": 45483.870967742,
+     "rul_usage_low": 34517.489004013,
+     "rul_usage_high": 66663.066551542,
+     "rate_per_day": 20000.0,
+     "rate_low": 20000.0,
+     "rate_high": 20000.0,
+     "today": "2027-02-06",
+     "rul_days": 3,
+     "rul_days_low": 1,
+     "rul_days_high": 4,
+     "projected_date": "2027-02-09",
+     "projected_date_low": "2027-02-07",
+     "projected_date_high": "2027-02-10",
+     "failure_limit": 240.0,
+     "true_rul_usage": 40000,
+     "true_failure_date": "2027-02-08",
+     "true_rul_days": 2.0
+    }
+   ]
+  },
+  "F2": {
+   "alert": {
+    "opened_at": "2027-02-14T04:00:00Z",
+    "opened_window": 41,
+    "first_triggers": [
+     "EWMA"
+    ],
+    "severity": "watch",
+    "escalations": {
+     "watch": "2027-02-14T04:00:00Z"
+    },
+    "escalation_windows": {
+     "watch": 41
+    },
+    "state": "closed",
+    "triggers_seen": {
+     "EWMA": 41,
+     "CUSUM": 42
+    },
+    "resolution": "rebaseline",
+    "closed_at": "2027-03-07T04:00:00Z"
+   },
+   "baselines": [
+    {
+     "from_i": 2,
+     "to_i": 21,
+     "established_at": "2027-01-25T04:00:00Z"
+    },
+    {
+     "from_i": 63,
+     "to_i": 82,
+     "established_at": "2027-03-27T04:00:00Z"
+    }
+   ],
+   "baselines_m0": [
+    12.0,
+    12.5
+   ],
+   "baselines_sigma": [
+    0.14826,
+    0.14826
+   ],
+   "rul_checkpoints": [
+    {
+     "window": 38,
+     "slope": 0.001854545,
+     "slope_se": 0.000669299,
+     "x_fit": 12.238909091,
+     "rul_usage": 1488.823529412,
+     "rul_usage_low": 864.693548919,
+     "rul_usage_high": 5351.50068558,
+     "rate_per_day": 20.0,
+     "rate_low": 20.0,
+     "rate_high": 20.0,
+     "today": "2027-02-11",
+     "rul_days": 75,
+     "rul_days_low": 43,
+     "rul_days_high": 268,
+     "projected_date": "2027-04-27",
+     "projected_date_low": "2027-03-26",
+     "projected_date_high": "2027-11-06",
+     "failure_limit": 15.0
+    },
+    {
+     "window": 50,
+     "slope": 0.000824242,
+     "slope_se": 0.000753327,
+     "x_fit": 12.370181818,
+     "rul_days": null,
+     "reason": "no_significant_trend",
+     "failure_limit": 15.0
+    },
+    {
+     "window": 58,
+     "slope": 0.001630303,
+     "slope_se": 0.000682713,
+     "x_fit": 12.604727273,
+     "rul_usage": 1469.219330855,
+     "rul_usage_low": 799.562428923,
+     "rul_usage_high": 9042.976107391,
+     "rate_per_day": 18.571428571,
+     "rate_low": 17.142857143,
+     "rate_high": 20.0,
+     "today": "2027-03-03",
+     "rul_days": 80,
+     "rul_days_low": 39,
+     "rul_days_high": 528,
+     "projected_date": "2027-05-22",
+     "projected_date_low": "2027-04-11",
+     "projected_date_high": "2028-08-12",
+     "failure_limit": 15.0
+    }
+   ]
+  },
+  "evaluation": {
+   "true_positives": 1,
+   "false_alarms": 1,
+   "true_positives_warning": 1,
+   "false_alarms_warning": 0,
+   "failures_total": 1,
+   "failures_detected": 1,
+   "precision": 0.5,
+   "precision_warning": 1.0,
+   "monitored_days": {
+    "F1": 24.5,
+    "F2": 49.0
+   },
+   "false_alarms_per_position_year": 4.965986395,
+   "false_alarms_per_position_year_warning": 0.0,
+   "lead_time_h_first_alert": 420.0
+  }
+ },
+ "production_plan_example": {
+  "description": "P-7: F1 no bloco 50 com plano de produção (30 000 ciclos por dia útil, 0 no sábado e domingo). O acúmulo começa no dia seguinte a hoje, como a projeção pelo ritmo (data = hoje + dias).",
+  "case": "F1",
+  "window": 50,
+  "plan": {
+   "weekday_usage": 30000,
+   "weekend_usage": 0,
+   "horizon_days": 60
+  },
+  "expected": {
+   "today": "2027-01-29",
+   "weekday_today": "sexta",
+   "rul_usage": 215806.451612903,
+   "projected_date": "2027-02-10",
+   "projected_date_history_rate": "2027-02-09",
+   "rate_source": "production_plan"
+  }
+ },
+ "detector_overrides_vs_defaults": {
+  "F1": {
+   "warmup_windows": 1,
+   "window": {
+    "cycles": 10000
+   }
+  },
+  "F2": {
+   "warmup_windows": 1,
+   "window": {
+    "hours": 24
+   }
+  }
+ }
+}

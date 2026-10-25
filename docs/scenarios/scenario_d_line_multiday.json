@@ -1,0 +1,1818 @@
+{
+ "id": "scenario_d_line_multiday",
+ "title": "Cenário D (Sprint 3) — linha com gargalo, mix de produtos e setup, turno que cruza a meia-noite, feriado, turno extra, buraco de dados; OEE por turno/dia/período, TEEP, Pareto",
+ "spec_refs": [
+  "domain.md §4.1–4.4",
+  "kpis.md §1.2–1.10",
+  "kpis.md §2.6",
+  "kpis.md C19, C22, C24",
+  "kpis.md Decisões Sprint 3 D2, D4, D5, D7, D9, D10",
+  "kpis.md Esclarecimentos Sprint 3 S3-1..S3-9"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus",
+  "utc_offset_h": -4
+ },
+ "line": {
+  "name": "Linha de Montagem",
+  "output_machine": "Transportador de Saída",
+  "bottleneck_machine": "Robô de Solda"
+ },
+ "machines": {
+  "Robô de Solda": {
+   "micro_stop_threshold_s": 120,
+   "products": [
+    {
+     "product": "SUP-100",
+     "ideal_cycle_time_s": 48,
+     "is_default": true
+    },
+    {
+     "product": "SUP-200",
+     "ideal_cycle_time_s": 60
+    }
+   ]
+  },
+  "Transportador de Saída": {
+   "micro_stop_threshold_s": 120,
+   "fault_code_map": {
+    "151": "EQP-01",
+    "251": "EQP-02"
+   },
+   "products": [
+    {
+     "product": "SUP-100",
+     "ideal_cycle_time_s": 30,
+     "is_default": true
+    },
+    {
+     "product": "SUP-200",
+     "ideal_cycle_time_s": 30
+    }
+   ]
+  }
+ },
+ "line_pri_s": {
+  "SUP-100": 48.0,
+  "SUP-200": 60.0
+ },
+ "calendar": {
+  "shifts": [
+   {
+    "id": "A",
+    "name": "Turno A",
+    "start_local": "06:00",
+    "end_local": "14:00",
+    "weekdays": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "breaks": [
+     {
+      "start_local": "10:00",
+      "end_local": "10:30",
+      "reason_code": "PLN-01",
+      "label": "refeição"
+     }
+    ]
+   },
+   {
+    "id": "B",
+    "name": "Turno B",
+    "start_local": "14:00",
+    "end_local": "22:00",
+    "weekdays": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "breaks": [
+     {
+      "start_local": "18:00",
+      "end_local": "18:30",
+      "reason_code": "PLN-01",
+      "label": "refeição"
+     }
+    ]
+   },
+   {
+    "id": "C",
+    "name": "Turno C",
+    "start_local": "22:00",
+    "end_local": "06:00",
+    "weekdays": [
+     6,
+     0,
+     1,
+     2,
+     3
+    ],
+    "breaks": [
+     {
+      "start_local": "02:00",
+      "end_local": "02:30",
+      "reason_code": "PLN-01",
+      "label": "refeição"
+     }
+    ]
+   }
+  ],
+  "exceptions": [
+   {
+    "date": "2026-10-10",
+    "kind": "extra_shift",
+    "shift_id": "A",
+    "start_local": "06:00",
+    "end_local": "14:00",
+    "note": "sábado: turno extra para compensar o feriado de segunda (herda as pausas do Turno A)"
+   },
+   {
+    "date": "2026-10-12",
+    "kind": "holiday",
+    "shift_id": null,
+    "note": "Nossa Senhora Aparecida — remove A, B e C do dia produtivo 12/10"
+   },
+   {
+    "date": "2026-10-13",
+    "kind": "holiday",
+    "shift_id": "C",
+    "note": "PCP cancelou o Turno C de terça (sem programação) — exceção 'holiday' só do turno C"
+   }
+  ]
+ },
+ "query": {
+  "scope": "line",
+  "start_local": "2026-10-10 00:00",
+  "stop_local": "2026-10-14 00:00",
+  "start_utc": "2026-10-10T04:00:00Z",
+  "stop_utc": "2026-10-14T04:00:00Z",
+  "group_by": [
+   "shift",
+   "day"
+  ],
+  "productive_days": [
+   "2026-10-10",
+   "2026-10-11",
+   "2026-10-12",
+   "2026-10-13"
+  ]
+ },
+ "production_runs": [
+  {
+   "product": "SUP-100",
+   "from_local": "2026-10-10 06:00",
+   "to_local": "2026-10-10 14:00",
+   "from_utc": "2026-10-10T10:00:00Z",
+   "to_utc": "2026-10-10T18:00:00Z"
+  },
+  {
+   "product": "SUP-100",
+   "from_local": "2026-10-11 22:00",
+   "to_local": "2026-10-12 06:00",
+   "from_utc": "2026-10-12T02:00:00Z",
+   "to_utc": "2026-10-12T10:00:00Z"
+  },
+  {
+   "product": "SUP-100",
+   "from_local": "2026-10-13 06:00",
+   "to_local": "2026-10-13 11:00",
+   "from_utc": "2026-10-13T10:00:00Z",
+   "to_utc": "2026-10-13T15:00:00Z"
+  },
+  {
+   "product": "SUP-200",
+   "from_local": "2026-10-13 11:00",
+   "to_local": "2026-10-13 22:00",
+   "from_utc": "2026-10-13T15:00:00Z",
+   "to_utc": "2026-10-14T02:00:00Z"
+  }
+ ],
+ "downtime_events": [
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 07:15",
+   "to_local": "2026-10-10 07:35",
+   "from_utc": "2026-10-10T11:15:00Z",
+   "to_utc": "2026-10-10T11:35:00Z",
+   "duration_s": 1200.0,
+   "operator_reason_code": "MAT-01",
+   "effective_reason_code": "MAT-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "esteira sem peça: o Robô de Solda (gargalo) parou por colisão 07:13–07:33 — operador informa MAT-01"
+  },
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 11:40",
+   "to_local": "2026-10-10 11:50",
+   "from_utc": "2026-10-10T15:40:00Z",
+   "to_utc": "2026-10-10T15:50:00Z",
+   "duration_s": 600.0,
+   "operator_reason_code": "OPR-01",
+   "effective_reason_code": "OPR-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "turno extra com equipe reduzida"
+  },
+  {
+   "shift": "S2",
+   "from_local": "2026-10-11 23:45",
+   "to_local": "2026-10-12 00:20",
+   "from_utc": "2026-10-12T03:45:00Z",
+   "to_utc": "2026-10-12T04:20:00Z",
+   "duration_s": 2100.0,
+   "operator_reason_code": "EQP-01",
+   "effective_reason_code": "EQP-01",
+   "planned": false,
+   "fault_code": 151,
+   "source": "auto_fault",
+   "note": "correia desalinhada; a parada atravessa a meia-noite dentro do mesmo turno"
+  },
+  {
+   "shift": "S2",
+   "from_local": "2026-10-12 03:10",
+   "to_local": "2026-10-12 03:22",
+   "from_utc": "2026-10-12T07:10:00Z",
+   "to_utc": "2026-10-12T07:22:00Z",
+   "duration_s": 720.0,
+   "operator_reason_code": "MAT-01",
+   "effective_reason_code": "MAT-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "falta de suporte na entrada"
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 08:00",
+   "to_local": "2026-10-13 08:15",
+   "from_utc": "2026-10-13T12:00:00Z",
+   "to_utc": "2026-10-13T12:15:00Z",
+   "duration_s": 900.0,
+   "operator_reason_code": "EQP-02",
+   "effective_reason_code": "EQP-02",
+   "planned": false,
+   "fault_code": 251,
+   "source": "auto_fault",
+   "note": "sobrecarga do motor"
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 11:00",
+   "to_local": "2026-10-13 11:30",
+   "from_utc": "2026-10-13T15:00:00Z",
+   "to_utc": "2026-10-13T15:30:00Z",
+   "duration_s": 1800.0,
+   "operator_reason_code": "SET-01",
+   "effective_reason_code": "SET-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "setup SUP-100 → SUP-200 (a ordem do SUP-200 abre no início do setup)"
+  },
+  {
+   "shift": "S4",
+   "from_local": "2026-10-13 14:00",
+   "to_local": "2026-10-13 14:15",
+   "from_utc": "2026-10-13T18:00:00Z",
+   "to_utc": "2026-10-13T18:15:00Z",
+   "duration_s": 900.0,
+   "operator_reason_code": "PLN-02",
+   "effective_reason_code": "PLN-02",
+   "planned": true,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "DDS não previsto no calendário: parada detectada e reclassificada como PLN-02 pelo supervisor (S3-4)"
+  },
+  {
+   "shift": "S4",
+   "from_local": "2026-10-13 16:10",
+   "to_local": "2026-10-13 16:16",
+   "from_utc": "2026-10-13T20:10:00Z",
+   "to_utc": "2026-10-13T20:16:00Z",
+   "duration_s": 360.0,
+   "operator_reason_code": null,
+   "effective_reason_code": "UNK-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "ninguém justificou: ao fim do turno vira UNK-01"
+  },
+  {
+   "shift": "S4",
+   "from_local": "2026-10-13 20:30",
+   "to_local": "2026-10-13 20:45",
+   "from_utc": "2026-10-14T00:30:00Z",
+   "to_utc": "2026-10-14T00:45:00Z",
+   "duration_s": 900.0,
+   "operator_reason_code": "MAT-01",
+   "effective_reason_code": "MAT-01",
+   "planned": false,
+   "fault_code": null,
+   "source": "auto_run_state",
+   "note": "falta de material"
+  }
+ ],
+ "bottleneck_events": [
+  {
+   "machine": "Robô de Solda",
+   "from_local": "2026-10-10 07:13",
+   "to_local": "2026-10-10 07:33",
+   "from_utc": "2026-10-10T11:13:00Z",
+   "to_utc": "2026-10-10T11:33:00Z",
+   "duration_s": 1200,
+   "fault_code": 131,
+   "effective_reason_code": "EQP-01",
+   "note": "parada de máquina intermediária: só entra na linha como MAT-01 na máquina de saída (kpis.md §1.6)"
+  }
+ ],
+ "micro_stops": [
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 06:40:00",
+   "from_utc": "2026-10-10T10:40:00Z",
+   "duration_s": 80
+  },
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 08:20:00",
+   "from_utc": "2026-10-10T12:20:00Z",
+   "duration_s": 100
+  },
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 12:10:00",
+   "from_utc": "2026-10-10T16:10:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S1",
+   "from_local": "2026-10-10 13:20:00",
+   "from_utc": "2026-10-10T17:20:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S2",
+   "from_local": "2026-10-11 22:50:00",
+   "from_utc": "2026-10-12T02:50:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S2",
+   "from_local": "2026-10-12 01:15:00",
+   "from_utc": "2026-10-12T05:15:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S2",
+   "from_local": "2026-10-12 04:40:00",
+   "from_utc": "2026-10-12T08:40:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 06:50:00",
+   "from_utc": "2026-10-13T10:50:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 07:30:00",
+   "from_utc": "2026-10-13T11:30:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 09:10:00",
+   "from_utc": "2026-10-13T13:10:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 12:40:00",
+   "from_utc": "2026-10-13T16:40:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S3",
+   "from_local": "2026-10-13 13:30:00",
+   "from_utc": "2026-10-13T17:30:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S4",
+   "from_local": "2026-10-13 15:20:00",
+   "from_utc": "2026-10-13T19:20:00Z",
+   "duration_s": 90
+  },
+  {
+   "shift": "S4",
+   "from_local": "2026-10-13 21:10:00",
+   "from_utc": "2026-10-14T01:10:00Z",
+   "duration_s": 90
+  }
+ ],
+ "data_gaps": [
+  {
+   "from_local": "2026-10-13 19:00",
+   "to_local": "2026-10-13 19:40",
+   "last_reading_local": "2026-10-13 18:59:00",
+   "last_reading_utc": "2026-10-13T22:59:00Z",
+   "from_utc": "2026-10-13T23:00:00Z",
+   "to_utc": "2026-10-13T23:40:00Z",
+   "note": "rede da célula caiu; nenhuma leitura de nenhuma tag; na volta os contadores não avançaram (a linha estava parada, causa desconhecida, ninguém declarou)"
+  }
+ ],
+ "production_totals": [
+  {
+   "shift": "S1",
+   "product": "SUP-100",
+   "produced": 480,
+   "good": 470,
+   "scrap": 10
+  },
+  {
+   "shift": "S2",
+   "product": "SUP-100",
+   "produced": 450,
+   "good": 441,
+   "scrap": 9
+  },
+  {
+   "shift": "S3",
+   "product": "SUP-100",
+   "produced": 300,
+   "good": 294,
+   "scrap": 6
+  },
+  {
+   "shift": "S3",
+   "product": "SUP-200",
+   "produced": 130,
+   "good": 126,
+   "scrap": 4
+  },
+  {
+   "shift": "S4",
+   "product": "SUP-200",
+   "produced": 360,
+   "good": 352,
+   "scrap": 8
+  }
+ ],
+ "production_by_hour": [
+  {
+   "hour_local": "2026-10-10 06:00",
+   "hour_utc": "2026-10-10T10:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 67,
+   "scrap": 2,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-10 07:00",
+   "hour_utc": "2026-10-10T11:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 45,
+   "scrap": 1,
+   "running_min": 40.0
+  },
+  {
+   "hour_local": "2026-10-10 08:00",
+   "hour_utc": "2026-10-10T12:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 67,
+   "scrap": 2,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-10 09:00",
+   "hour_utc": "2026-10-10T13:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 68,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-10 10:00",
+   "hour_utc": "2026-10-10T14:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 33,
+   "scrap": 1,
+   "running_min": 30.0
+  },
+  {
+   "hour_local": "2026-10-10 11:00",
+   "hour_utc": "2026-10-10T15:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 56,
+   "scrap": 1,
+   "running_min": 50.0
+  },
+  {
+   "hour_local": "2026-10-10 12:00",
+   "hour_utc": "2026-10-10T16:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 67,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-10 13:00",
+   "hour_utc": "2026-10-10T17:00:00Z",
+   "shift": "S1",
+   "product": "SUP-100",
+   "good": 67,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-11 22:00",
+   "hour_utc": "2026-10-12T02:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 65,
+   "scrap": 2,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-11 23:00",
+   "hour_utc": "2026-10-12T03:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 49,
+   "scrap": 1,
+   "running_min": 45.0
+  },
+  {
+   "hour_local": "2026-10-12 00:00",
+   "hour_utc": "2026-10-12T04:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 44,
+   "scrap": 1,
+   "running_min": 40.0
+  },
+  {
+   "hour_local": "2026-10-12 01:00",
+   "hour_utc": "2026-10-12T05:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 66,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-12 02:00",
+   "hour_utc": "2026-10-12T06:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 32,
+   "scrap": 1,
+   "running_min": 30.0
+  },
+  {
+   "hour_local": "2026-10-12 03:00",
+   "hour_utc": "2026-10-12T07:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 53,
+   "scrap": 1,
+   "running_min": 48.0
+  },
+  {
+   "hour_local": "2026-10-12 04:00",
+   "hour_utc": "2026-10-12T08:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 66,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-12 05:00",
+   "hour_utc": "2026-10-12T09:00:00Z",
+   "shift": "S2",
+   "product": "SUP-100",
+   "good": 66,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-12 09:00",
+   "hour_utc": "2026-10-12T13:00:00Z",
+   "shift": null,
+   "product": null,
+   "good": 12,
+   "scrap": 0,
+   "running_min": null,
+   "note": "feriado: manutenção rodou a linha 09:00–10:00 para testar a correia nova; sem turno, sem ordem"
+  },
+  {
+   "hour_local": "2026-10-13 06:00",
+   "hour_utc": "2026-10-13T10:00:00Z",
+   "shift": "S3",
+   "product": "SUP-100",
+   "good": 69,
+   "scrap": 2,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 07:00",
+   "hour_utc": "2026-10-13T11:00:00Z",
+   "shift": "S3",
+   "product": "SUP-100",
+   "good": 70,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 08:00",
+   "hour_utc": "2026-10-13T12:00:00Z",
+   "shift": "S3",
+   "product": "SUP-100",
+   "good": 52,
+   "scrap": 1,
+   "running_min": 45.0
+  },
+  {
+   "hour_local": "2026-10-13 09:00",
+   "hour_utc": "2026-10-13T13:00:00Z",
+   "shift": "S3",
+   "product": "SUP-100",
+   "good": 69,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 10:00",
+   "hour_utc": "2026-10-13T14:00:00Z",
+   "shift": "S3",
+   "product": "SUP-100",
+   "good": 34,
+   "scrap": 1,
+   "running_min": 30.0
+  },
+  {
+   "hour_local": "2026-10-13 11:00",
+   "hour_utc": "2026-10-13T15:00:00Z",
+   "shift": "S3",
+   "product": "SUP-200",
+   "good": 25,
+   "scrap": 1,
+   "running_min": 30.0
+  },
+  {
+   "hour_local": "2026-10-13 12:00",
+   "hour_utc": "2026-10-13T16:00:00Z",
+   "shift": "S3",
+   "product": "SUP-200",
+   "good": 50,
+   "scrap": 2,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 13:00",
+   "hour_utc": "2026-10-13T17:00:00Z",
+   "shift": "S3",
+   "product": "SUP-200",
+   "good": 51,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 14:00",
+   "hour_utc": "2026-10-13T18:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 42,
+   "scrap": 1,
+   "running_min": 45.0
+  },
+  {
+   "hour_local": "2026-10-13 15:00",
+   "hour_utc": "2026-10-13T19:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 57,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 16:00",
+   "hour_utc": "2026-10-13T20:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 51,
+   "scrap": 1,
+   "running_min": 54.0
+  },
+  {
+   "hour_local": "2026-10-13 17:00",
+   "hour_utc": "2026-10-13T21:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 57,
+   "scrap": 1,
+   "running_min": 60.0
+  },
+  {
+   "hour_local": "2026-10-13 18:00",
+   "hour_utc": "2026-10-13T22:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 28,
+   "scrap": 1,
+   "running_min": 30.0
+  },
+  {
+   "hour_local": "2026-10-13 19:00",
+   "hour_utc": "2026-10-13T23:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 18,
+   "scrap": 1,
+   "running_min": 20.0
+  },
+  {
+   "hour_local": "2026-10-13 20:00",
+   "hour_utc": "2026-10-14T00:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 42,
+   "scrap": 1,
+   "running_min": 45.0
+  },
+  {
+   "hour_local": "2026-10-13 21:00",
+   "hour_utc": "2026-10-14T01:00:00Z",
+   "shift": "S4",
+   "product": "SUP-200",
+   "good": 57,
+   "scrap": 1,
+   "running_min": 60.0
+  }
+ ],
+ "signals_output_machine": {
+  "heartbeat_s": 10,
+  "note": "só as transições; o QA acrescenta heartbeat a cada 10 s com o valor corrente, exceto dentro de data_gaps",
+  "transitions": [
+   {
+    "ts": "2026-10-10T04:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T10:00:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T10:40:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T10:41:20Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T11:15:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T11:35:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T12:20:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T12:21:40Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T14:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T14:30:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T15:40:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T15:50:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T16:10:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T16:11:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T17:20:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T17:21:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-10T18:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T02:00:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T02:50:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T02:51:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T03:45:00Z",
+    "run_state": 0,
+    "fault_state": 151
+   },
+   {
+    "ts": "2026-10-12T04:20:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T05:15:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T05:16:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T06:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T06:30:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T07:10:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T07:22:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T08:40:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T08:41:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T10:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T13:00:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-12T14:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T10:00:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T10:50:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T10:51:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T11:30:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T11:31:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T12:00:00Z",
+    "run_state": 0,
+    "fault_state": 251
+   },
+   {
+    "ts": "2026-10-13T12:15:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T13:10:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T13:11:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T14:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T14:30:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T15:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T15:30:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T16:40:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T16:41:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T17:30:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T17:31:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T18:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T18:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T18:15:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T19:20:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T19:21:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T20:10:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T20:16:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T22:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T22:30:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-13T22:59:00Z",
+    "run_state": 1,
+    "fault_state": 0,
+    "last_reading_before_gap": true
+   },
+   {
+    "ts": "2026-10-13T23:40:00Z",
+    "run_state": 1,
+    "fault_state": 0,
+    "after_gap": true
+   },
+   {
+    "ts": "2026-10-14T00:30:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-14T00:45:00Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-14T01:10:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-14T01:11:30Z",
+    "run_state": 1,
+    "fault_state": 0
+   },
+   {
+    "ts": "2026-10-14T02:00:00Z",
+    "run_state": 0,
+    "fault_state": 0
+   }
+  ]
+ },
+ "expected": {
+  "instances": [
+   {
+    "key": "S1",
+    "shift_id": "A",
+    "name": "Turno A",
+    "extra": true,
+    "productive_day": "2026-10-10",
+    "start_utc": "2026-10-10T10:00:00Z",
+    "end_utc": "2026-10-10T18:00:00Z",
+    "start_local": "2026-10-10 06:00:00",
+    "end_local": "2026-10-10 14:00:00",
+    "breaks_utc": [
+     [
+      "2026-10-10T14:00:00Z",
+      "2026-10-10T14:30:00Z",
+      "PLN-01"
+     ]
+    ]
+   },
+   {
+    "key": "S2",
+    "shift_id": "C",
+    "name": "Turno C",
+    "extra": false,
+    "productive_day": "2026-10-11",
+    "start_utc": "2026-10-12T02:00:00Z",
+    "end_utc": "2026-10-12T10:00:00Z",
+    "start_local": "2026-10-11 22:00:00",
+    "end_local": "2026-10-12 06:00:00",
+    "breaks_utc": [
+     [
+      "2026-10-12T06:00:00Z",
+      "2026-10-12T06:30:00Z",
+      "PLN-01"
+     ]
+    ]
+   },
+   {
+    "key": "S3",
+    "shift_id": "A",
+    "name": "Turno A",
+    "extra": false,
+    "productive_day": "2026-10-13",
+    "start_utc": "2026-10-13T10:00:00Z",
+    "end_utc": "2026-10-13T18:00:00Z",
+    "start_local": "2026-10-13 06:00:00",
+    "end_local": "2026-10-13 14:00:00",
+    "breaks_utc": [
+     [
+      "2026-10-13T14:00:00Z",
+      "2026-10-13T14:30:00Z",
+      "PLN-01"
+     ]
+    ]
+   },
+   {
+    "key": "S4",
+    "shift_id": "B",
+    "name": "Turno B",
+    "extra": false,
+    "productive_day": "2026-10-13",
+    "start_utc": "2026-10-13T18:00:00Z",
+    "end_utc": "2026-10-14T02:00:00Z",
+    "start_local": "2026-10-13 14:00:00",
+    "end_local": "2026-10-13 22:00:00",
+    "breaks_utc": [
+     [
+      "2026-10-13T22:00:00Z",
+      "2026-10-13T22:30:00Z",
+      "PLN-01"
+     ]
+    ]
+   }
+  ],
+  "shifts": [
+   {
+    "key": "S1",
+    "label": "Turno A 10/10",
+    "shift_id": "A",
+    "extra": true,
+    "productive_day": "2026-10-10",
+    "start_utc": "2026-10-10T10:00:00Z",
+    "end_utc": "2026-10-10T18:00:00Z",
+    "pot_min": 480.0,
+    "pdot_min": 30.0,
+    "nodata_min": 0.0,
+    "pbt_min": 450.0,
+    "adot_min": 30.0,
+    "apt_min": 420.0,
+    "data_coverage": 1.0,
+    "produced": 480.0,
+    "good": 470.0,
+    "scrap": 10.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 480,
+      "good": 470,
+      "scrap": 10
+     }
+    },
+    "ideal_produced_min": 384.0,
+    "net_productive_min": 376.0,
+    "availability": 0.9333333333333333,
+    "performance": 0.9142857142857143,
+    "quality": 0.9791666666666666,
+    "oee": 0.8355555555555556,
+    "micro_stop_count": 4,
+    "micro_stop_min": 6.0,
+    "speed_loss_min": 30.0,
+    "quality_loss_min": 8.0,
+    "losses_by_reason_min": {
+     "MAT-01": 20.0,
+     "OPR-01": 10.0
+    },
+    "availability_operational": {
+     "required_min": 450.0,
+     "d_eq_min": 0.0,
+     "ao": 1.0
+    }
+   },
+   {
+    "key": "S2",
+    "label": "Turno C 11/10",
+    "shift_id": "C",
+    "extra": false,
+    "productive_day": "2026-10-11",
+    "start_utc": "2026-10-12T02:00:00Z",
+    "end_utc": "2026-10-12T10:00:00Z",
+    "pot_min": 480.0,
+    "pdot_min": 30.0,
+    "nodata_min": 0.0,
+    "pbt_min": 450.0,
+    "adot_min": 47.0,
+    "apt_min": 403.0,
+    "data_coverage": 1.0,
+    "produced": 450.0,
+    "good": 441.0,
+    "scrap": 9.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 450,
+      "good": 441,
+      "scrap": 9
+     }
+    },
+    "ideal_produced_min": 360.0,
+    "net_productive_min": 352.8,
+    "availability": 0.8955555555555555,
+    "performance": 0.8933002481389578,
+    "quality": 0.98,
+    "oee": 0.784,
+    "micro_stop_count": 3,
+    "micro_stop_min": 4.5,
+    "speed_loss_min": 38.5,
+    "quality_loss_min": 7.199999999999989,
+    "losses_by_reason_min": {
+     "EQP-01": 35.0,
+     "MAT-01": 12.0
+    },
+    "availability_operational": {
+     "required_min": 450.0,
+     "d_eq_min": 35.0,
+     "ao": 0.9222222222222223
+    }
+   },
+   {
+    "key": "S3",
+    "label": "Turno A 13/10",
+    "shift_id": "A",
+    "extra": false,
+    "productive_day": "2026-10-13",
+    "start_utc": "2026-10-13T10:00:00Z",
+    "end_utc": "2026-10-13T18:00:00Z",
+    "pot_min": 480.0,
+    "pdot_min": 30.0,
+    "nodata_min": 0.0,
+    "pbt_min": 450.0,
+    "adot_min": 45.0,
+    "apt_min": 405.0,
+    "data_coverage": 1.0,
+    "produced": 430.0,
+    "good": 420.0,
+    "scrap": 10.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 300,
+      "good": 294,
+      "scrap": 6
+     },
+     "SUP-200": {
+      "produced": 130,
+      "good": 126,
+      "scrap": 4
+     }
+    },
+    "ideal_produced_min": 370.0,
+    "net_productive_min": 361.2,
+    "availability": 0.9,
+    "performance": 0.9135802469135802,
+    "quality": 0.9762162162162162,
+    "oee": 0.8026666666666666,
+    "micro_stop_count": 5,
+    "micro_stop_min": 7.5,
+    "speed_loss_min": 27.5,
+    "quality_loss_min": 8.800000000000011,
+    "losses_by_reason_min": {
+     "EQP-02": 15.0,
+     "SET-01": 30.0
+    },
+    "availability_operational": {
+     "required_min": 450.0,
+     "d_eq_min": 15.0,
+     "ao": 0.9666666666666667
+    }
+   },
+   {
+    "key": "S4",
+    "label": "Turno B 13/10",
+    "shift_id": "B",
+    "extra": false,
+    "productive_day": "2026-10-13",
+    "start_utc": "2026-10-13T18:00:00Z",
+    "end_utc": "2026-10-14T02:00:00Z",
+    "pot_min": 480.0,
+    "pdot_min": 45.0,
+    "nodata_min": 40.0,
+    "pbt_min": 395.0,
+    "adot_min": 21.0,
+    "apt_min": 374.0,
+    "data_coverage": 0.9166666666666666,
+    "produced": 360.0,
+    "good": 352.0,
+    "scrap": 8.0,
+    "by_product": {
+     "SUP-200": {
+      "produced": 360,
+      "good": 352,
+      "scrap": 8
+     }
+    },
+    "ideal_produced_min": 360.0,
+    "net_productive_min": 352.0,
+    "availability": 0.9468354430379747,
+    "performance": 0.9625668449197861,
+    "quality": 0.9777777777777777,
+    "oee": 0.8911392405063291,
+    "micro_stop_count": 2,
+    "micro_stop_min": 3.0,
+    "speed_loss_min": 11.0,
+    "quality_loss_min": 8.0,
+    "losses_by_reason_min": {
+     "MAT-01": 15.0,
+     "UNK-01": 6.0
+    },
+    "availability_operational": {
+     "required_min": 395.0,
+     "d_eq_min": 0.0,
+     "ao": 1.0
+    }
+   }
+  ],
+  "days": [
+   {
+    "productive_day": "2026-10-10",
+    "shifts": [
+     "S1"
+    ],
+    "pot_min": 480.0,
+    "pdot_min": 30.0,
+    "nodata_min": 0.0,
+    "pbt_min": 450.0,
+    "adot_min": 30.0,
+    "apt_min": 420.0,
+    "data_coverage": 1.0,
+    "produced": 480.0,
+    "good": 470.0,
+    "scrap": 10.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 480,
+      "good": 470,
+      "scrap": 10
+     }
+    },
+    "ideal_produced_min": 384.0,
+    "net_productive_min": 376.0,
+    "availability": 0.9333333333333333,
+    "performance": 0.9142857142857143,
+    "quality": 0.9791666666666666,
+    "oee": 0.8355555555555556,
+    "micro_stop_count": 4,
+    "micro_stop_min": 6.0,
+    "speed_loss_min": 30.0,
+    "quality_loss_min": 8.0,
+    "losses_by_reason_min": {
+     "MAT-01": 20.0,
+     "OPR-01": 10.0
+    },
+    "availability_operational": {
+     "required_min": 450.0,
+     "d_eq_min": 0.0,
+     "ao": 1.0
+    },
+    "calendar_min": 1440,
+    "loading": 0.3125,
+    "teep": 0.2611111111111111,
+    "reason": null
+   },
+   {
+    "productive_day": "2026-10-11",
+    "shifts": [
+     "S2"
+    ],
+    "pot_min": 480.0,
+    "pdot_min": 30.0,
+    "nodata_min": 0.0,
+    "pbt_min": 450.0,
+    "adot_min": 47.0,
+    "apt_min": 403.0,
+    "data_coverage": 1.0,
+    "produced": 450.0,
+    "good": 441.0,
+    "scrap": 9.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 450,
+      "good": 441,
+      "scrap": 9
+     }
+    },
+    "ideal_produced_min": 360.0,
+    "net_productive_min": 352.8,
+    "availability": 0.8955555555555555,
+    "performance": 0.8933002481389578,
+    "quality": 0.98,
+    "oee": 0.784,
+    "micro_stop_count": 3,
+    "micro_stop_min": 4.5,
+    "speed_loss_min": 38.5,
+    "quality_loss_min": 7.199999999999989,
+    "losses_by_reason_min": {
+     "EQP-01": 35.0,
+     "MAT-01": 12.0
+    },
+    "availability_operational": {
+     "required_min": 450.0,
+     "d_eq_min": 35.0,
+     "ao": 0.9222222222222223
+    },
+    "calendar_min": 1440,
+    "loading": 0.3125,
+    "teep": 0.245,
+    "reason": null
+   },
+   {
+    "productive_day": "2026-10-12",
+    "shifts": [],
+    "pot_min": 0.0,
+    "pdot_min": 0.0,
+    "nodata_min": 0.0,
+    "pbt_min": 0.0,
+    "adot_min": 0.0,
+    "apt_min": 0.0,
+    "data_coverage": null,
+    "produced": 0.0,
+    "good": 0.0,
+    "scrap": 0.0,
+    "by_product": {},
+    "ideal_produced_min": 0.0,
+    "net_productive_min": 0.0,
+    "availability": null,
+    "performance": null,
+    "quality": null,
+    "oee": null,
+    "micro_stop_count": 0,
+    "micro_stop_min": 0.0,
+    "speed_loss_min": 0.0,
+    "quality_loss_min": 0.0,
+    "losses_by_reason_min": {},
+    "availability_operational": {
+     "required_min": 0.0,
+     "d_eq_min": 0.0,
+     "ao": null
+    },
+    "calendar_min": 1440,
+    "loading": 0.0,
+    "teep": 0.0,
+    "reason": "no_planned_time"
+   },
+   {
+    "productive_day": "2026-10-13",
+    "shifts": [
+     "S3",
+     "S4"
+    ],
+    "pot_min": 960.0,
+    "pdot_min": 75.0,
+    "nodata_min": 40.0,
+    "pbt_min": 845.0,
+    "adot_min": 66.0,
+    "apt_min": 779.0,
+    "data_coverage": 0.9583333333333334,
+    "produced": 790.0,
+    "good": 772.0,
+    "scrap": 18.0,
+    "by_product": {
+     "SUP-100": {
+      "produced": 300,
+      "good": 294,
+      "scrap": 6
+     },
+     "SUP-200": {
+      "produced": 490,
+      "good": 478,
+      "scrap": 12
+     }
+    },
+    "ideal_produced_min": 730.0,
+    "net_productive_min": 713.2,
+    "availability": 0.9218934911242603,
+    "performance": 0.9370988446726572,
+    "quality": 0.9769863013698631,
+    "oee": 0.8440236686390533,
+    "micro_stop_count": 7,
+    "micro_stop_min": 10.5,
+    "speed_loss_min": 38.5,
+    "quality_loss_min": 16.799999999999955,
+    "losses_by_reason_min": {
+     "EQP-02": 15.0,
+     "MAT-01": 15.0,
+     "SET-01": 30.0,
+     "UNK-01": 6.0
+    },
+    "availability_operational": {
+     "required_min": 845.0,
+     "d_eq_min": 15.0,
+     "ao": 0.9822485207100592
+    },
+    "calendar_min": 1440,
+    "loading": 0.5868055555555556,
+    "teep": 0.4952777777777778,
+    "reason": null
+   }
+  ],
+  "period": {
+   "pot_min": 1920.0,
+   "pdot_min": 135.0,
+   "nodata_min": 40.0,
+   "pbt_min": 1745.0,
+   "adot_min": 143.0,
+   "apt_min": 1602.0,
+   "data_coverage": 0.9791666666666666,
+   "produced": 1720.0,
+   "good": 1683.0,
+   "scrap": 37.0,
+   "by_product": {
+    "SUP-100": {
+     "produced": 1230,
+     "good": 1205,
+     "scrap": 25
+    },
+    "SUP-200": {
+     "produced": 490,
+     "good": 478,
+     "scrap": 12
+    }
+   },
+   "ideal_produced_min": 1474.0,
+   "net_productive_min": 1442.0,
+   "availability": 0.9180515759312321,
+   "performance": 0.920099875156055,
+   "quality": 0.9782903663500678,
+   "oee": 0.8263610315186246,
+   "micro_stop_count": 14,
+   "micro_stop_min": 21.0,
+   "speed_loss_min": 107.0,
+   "quality_loss_min": 32.0,
+   "losses_by_reason_min": {
+    "EQP-01": 35.0,
+    "EQP-02": 15.0,
+    "MAT-01": 47.0,
+    "OPR-01": 10.0,
+    "SET-01": 30.0,
+    "UNK-01": 6.0
+   },
+   "availability_operational": {
+    "required_min": 1745.0,
+    "d_eq_min": 50.0,
+    "ao": 0.9713467048710601
+   },
+   "calendar_min": 5760,
+   "loading": 0.3029513888888889,
+   "teep": 0.2503472222222222,
+   "loss_pareto": {
+    "total_loss_min": 303.0,
+    "items": [
+     [
+      "speed_loss",
+      107.0,
+      0.353135,
+      0.353135
+     ],
+     [
+      "MAT-01",
+      47.0,
+      0.155116,
+      0.508251
+     ],
+     [
+      "EQP-01",
+      35.0,
+      0.115512,
+      0.623762
+     ],
+     [
+      "quality_loss",
+      32.0,
+      0.105611,
+      0.729373
+     ],
+     [
+      "SET-01",
+      30.0,
+      0.09901,
+      0.828383
+     ],
+     [
+      "micro_stops",
+      21.0,
+      0.069307,
+      0.89769
+     ],
+     [
+      "EQP-02",
+      15.0,
+      0.049505,
+      0.947195
+     ],
+     [
+      "OPR-01",
+      10.0,
+      0.033003,
+      0.980198
+     ],
+     [
+      "UNK-01",
+      6.0,
+      0.019802,
+      1.0
+     ]
+    ]
+   },
+   "loss_pareto_by_category": [
+    [
+     "speed_loss",
+     107.0
+    ],
+    [
+     "EQP",
+     50.0
+    ],
+    [
+     "MAT",
+     47.0
+    ],
+    [
+     "quality_loss",
+     32.0
+    ],
+    [
+     "SET",
+     30.0
+    ],
+    [
+     "micro_stops",
+     21.0
+    ],
+    [
+     "OPR",
+     10.0
+    ],
+    [
+     "UNK",
+     6.0
+    ]
+   ]
+  },
+  "production_by_productive_day": {
+   "2026-10-10": {
+    "good": 470,
+    "scrap": 10,
+    "total": 480
+   },
+   "2026-10-11": {
+    "good": 441,
+    "scrap": 9,
+    "total": 450
+   },
+   "2026-10-13": {
+    "good": 772,
+    "scrap": 18,
+    "total": 790
+   }
+  },
+  "produced_outside_schedule": {
+   "good": 12,
+   "scrap": 0,
+   "total": 12,
+   "rule": "fora do POT: não entra em PQ/GQ do OEE nem no TEEP; reportado à parte (S3-7)"
+  },
+  "machine_scope_output": {
+   "pbt_min": 1745.0,
+   "apt_min": 1602.0,
+   "ideal_produced_min": 860.0,
+   "net_productive_min": 841.5,
+   "availability": 0.9180515759312321,
+   "performance": 0.5368289637952559,
+   "quality": 0.9784883720930233,
+   "oee": 0.4822349570200573
+  },
+  "variants": {
+   "declared_gap_stop": {
+    "description": "o supervisor declara parada manual UTL-01 19:00–19:40 sobre o buraco (D5): vira ADOT e conta como coberto",
+    "s4": {
+     "pdot_min": 45.0,
+     "nodata_min": 0.0,
+     "pbt_min": 435.0,
+     "adot_min": 61.0,
+     "apt_min": 374.0,
+     "data_coverage": 1.0,
+     "availability": 0.8597701149425288,
+     "performance": 0.9625668449197861,
+     "quality": 0.9777777777777777,
+     "oee": 0.8091954022988506
+    },
+    "period": {
+     "pbt_min": 1785.0,
+     "adot_min": 183.0,
+     "apt_min": 1602.0,
+     "data_coverage": 1.0,
+     "availability": 0.8974789915966387,
+     "performance": 0.920099875156055,
+     "oee": 0.807843137254902
+    }
+   }
+  },
+  "wrong_answers": {
+   "mean_of_shift_oee": {
+    "value": 0.8283403656821379,
+    "why": "média de porcentagens (§1.6)"
+   },
+   "mean_of_day_oee": {
+    "value": 0.8211930747315362,
+    "why": "média dos dias com OEE"
+   },
+   "output_machine_pri": {
+    "oee": 0.4822349570200573,
+    "performance": 0.5368289637952559,
+    "why": "PRI da máquina de saída (30 s) em vez do gargalo; é o certo só para scope=machine"
+   },
+   "bottleneck_downtime_added": {
+    "adot_min": 163.0,
+    "availability": 0.9065902578796562,
+    "why": "somou a falha do robô (20 min) além do MAT-01 que ela causou na saída"
+   },
+   "gap_as_running": {
+    "s4_pbt_min": 435.0,
+    "s4_availability": 0.9517241379310345,
+    "s4_oee": 0.8091954022988506,
+    "why": "buraco de dados tratado como operação"
+   },
+   "off_schedule_included": {
+    "period_oee": 0.8318624641833811,
+    "period_produced": 1732.0,
+    "why": "peças do teste no feriado (fora do POT) somadas ao OEE"
+   },
+   "by_local_calendar_day": {
+    "2026-10-10": {
+     "good": 470,
+     "scrap": 10,
+     "total": 480
+    },
+    "2026-10-11": {
+     "good": 114,
+     "scrap": 3,
+     "total": 117
+    },
+    "2026-10-12": {
+     "good": 339,
+     "scrap": 6,
+     "total": 345
+    },
+    "2026-10-13": {
+     "good": 772,
+     "scrap": 18,
+     "total": 790
+    }
+   },
+   "unweighted_quality_s3": {
+    "value": 0.9767441860465116,
+    "why": "GQ/PQ com mix de produtos; o certo pondera pelo PRI (§1.4)"
+   },
+   "holiday_teep_null": {
+    "value": null,
+    "why": "dia com POT = 0 tem OEE null, mas TEEP = 0 (S3-1)"
+   }
+  }
+ }
+}

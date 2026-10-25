@@ -1,0 +1,24 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { DOCS, docBySlug } from "../../lib/docs";
+
+const home = docBySlug("")!;
+const Content = home.Content as any;
+const pages = DOCS.filter((d) => d.slug);
+---
+<DocsLayout doc={home} title="Documentação — Manual do usuário" description="Manual do usuário do FactoryConnect: um guia por papel (operador, supervisor, PCM, técnico, gerente, administrador) e os indicadores em linguagem simples.">
+  <div slot="before" class="mb-10">
+    <p class="eyebrow">Documentação</p>
+    <ul class="mt-4 grid gap-3 sm:grid-cols-2">
+      {pages.map((d) => (
+        <li>
+          <a href={d.url} class="card block h-full !p-5 transition-colors hover:border-accent">
+            <span class="block font-semibold text-fg">{d.short}</span>
+            <span class="mt-1 block text-sm leading-relaxed text-muted">{d.description}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </div>
+  <Content />
+</DocsLayout>

@@ -1,0 +1,6 @@
+# Dependências de teste do edge (pytest com servidores Modbus/OPC UA em processo).
+# Mesmas versões de server/requirements-dev.txt (ambiente combinado sem conflito).
+# Uso: pip install -r edge/requirements-dev.txt
+-r requirements.txt
+pytest==8.3.5
+pytest-asyncio==0.23.8

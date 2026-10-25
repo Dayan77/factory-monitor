@@ -1,0 +1,437 @@
+{
+  "version": 1,
+  "description": "Linha de LED driver ueaPowerDriver (M1 hipot + M2 ATS2) lida pela API HTTP dos boxes (protocolo ueapd, edge/src/protocols/ueapd.py). tag_id preenchidos por python -m edge.src.provision --map edge/config/ueapd.example.json --out <mapa local>.",
+  "gateway_id": "gw-inventus-ledd-01",
+  "tenant_id": null,
+  "heartbeat_s": 10,
+  "pulse_poll_ms": 20,
+  "sources": [
+    {
+      "id": "ueapd-m1",
+      "protocol": "ueapd",
+      "line": "hipot",
+      "base_url": "${UEAPD_M1_URL:-http://192.168.1.15:8003}",
+      "poll_interval_s": 2,
+      "timeout_s": 5,
+      "timestamps": "${UEAPD_TIMESTAMPS:-gateway}",
+      "max_clock_skew_s": "${UEAPD_MAX_CLOCK_SKEW_S:-2}",
+      "backfill": "none",
+      "default_fault_code": 301,
+      "fault_codes": {
+        "ERRO_TRANSFERENCIA": 101,
+        "ERRO_STOP": 102,
+        "SAFETY_CONVEYOR": 103,
+        "ERRO_CLAMP": 401,
+        "GRAVADORA_ERRO": 501
+      }
+    },
+    {
+      "id": "ueapd-m2",
+      "protocol": "ueapd",
+      "line": "ats2",
+      "base_url": "${UEAPD_M2_URL:-http://192.168.1.16:8003}",
+      "poll_interval_s": 2,
+      "timeout_s": 5,
+      "timestamps": "${UEAPD_TIMESTAMPS:-gateway}",
+      "max_clock_skew_s": "${UEAPD_MAX_CLOCK_SKEW_S:-2}",
+      "backfill": "none",
+      "default_fault_code": 301,
+      "fault_codes": {
+        "ERRO_TRANSFERENCIA": 101,
+        "ERRO_STOP": 102,
+        "SAFETY_CONVEYOR": 103,
+        "ERRO_CLAMP": 401
+      }
+    }
+  ],
+  "assets": {
+    "plant": {
+      "name": "Inventus Power",
+      "timezone": "America/Manaus",
+      "address": "Manaus - AM (linha ueaPowerDriver)"
+    },
+    "products": [],
+    "lines": [
+      {
+        "name": "Linha LED Driver",
+        "output_machine": "M2 ATS2",
+        "machines": [
+          {
+            "name": "M1 Hipot",
+            "model": "ueaPowerDriver M1 (hipot)",
+            "serial_number": "UEAPD-M1",
+            "ideal_cycle_time_s": 18.0,
+            "fault_code_map": {
+              "101": "EQP-01",
+              "102": "EQP-01",
+              "103": "EQP-01",
+              "301": "EQP-04",
+              "302": "EQP-04",
+              "303": "EQP-04",
+              "401": "EQP-03",
+              "501": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Laser 1",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m1.laser_1.cycles"
+              },
+              {
+                "name": "Laser 2",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m1.laser_2.cycles"
+              },
+              {
+                "name": "Hipot 1",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m1.hipot_1.cycles"
+              },
+              {
+                "name": "Hipot 2 + Câmera",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m1.hipot_2.cycles"
+              }
+            ]
+          },
+          {
+            "name": "M2 ATS2",
+            "model": "ueaPowerDriver M2 (ATS2)",
+            "serial_number": "UEAPD-M2",
+            "ideal_cycle_time_s": 18.0,
+            "fault_code_map": {
+              "101": "EQP-01",
+              "102": "EQP-01",
+              "103": "EQP-01",
+              "301": "EQP-04",
+              "302": "EQP-04",
+              "303": "EQP-04",
+              "401": "EQP-03",
+              "501": "EQP-05"
+            },
+            "positions": [
+              {
+                "name": "Leitor DM (entrada)",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m2.leitura.cycles"
+              },
+              {
+                "name": "ATS2-1",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m2.ats2_1.cycles"
+              },
+              {
+                "name": "ATS2-2",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m2.ats2_2.cycles"
+              },
+              {
+                "name": "Funcional",
+                "component_type": "other",
+                "cycles_per_part": 1,
+                "counter_tag": "ledd.m2.funcional.cycles"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "tags": [
+    {
+      "key": "ledd.m1.run_state",
+      "tag_id": null,
+      "name": "Em operação (armado, gate OK, sem falha)",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:run",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.fault_state",
+      "tag_id": null,
+      "name": "Código de falha do CLP",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:fault",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.parts_good",
+      "tag_id": null,
+      "name": "Peças boas (veredito OK)",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "passes:good",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.parts_scrap",
+      "tag_id": null,
+      "name": "Peças refugadas (veredito NG)",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "passes:scrap",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.cadence",
+      "tag_id": null,
+      "name": "Cadência sustentada",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "pcs/h",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:cadence",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.laser_1.cycles",
+      "tag_id": null,
+      "name": "Ciclos Laser 1",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": "Laser 1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:laser_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.laser_2.cycles",
+      "tag_id": null,
+      "name": "Ciclos Laser 2",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": "Laser 2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:laser_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.hipot_1.cycles",
+      "tag_id": null,
+      "name": "Ciclos Hipot 1",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": "Hipot 1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:hipot_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.hipot_2.cycles",
+      "tag_id": null,
+      "name": "Ciclos Hipot 2 + Câmera",
+      "line": "Linha LED Driver",
+      "machine": "M1 Hipot",
+      "position": "Hipot 2 + Câmera",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:hipot_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.run_state",
+      "tag_id": null,
+      "name": "Em operação (armado, gate OK, sem falha)",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:run",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.fault_state",
+      "tag_id": null,
+      "name": "Código de falha do CLP",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:fault",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.parts_good",
+      "tag_id": null,
+      "name": "Peças boas (veredito OK)",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "passes:good",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.parts_scrap",
+      "tag_id": null,
+      "name": "Peças refugadas (veredito NG)",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "passes:scrap",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.cadence",
+      "tag_id": null,
+      "name": "Cadência sustentada",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "pcs/h",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:cadence",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.leitura.cycles",
+      "tag_id": null,
+      "name": "Ciclos Leitor DM (entrada)",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": "Leitor DM (entrada)",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:leitura",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.ats2_1.cycles",
+      "tag_id": null,
+      "name": "Ciclos ATS2-1",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": "ATS2-1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:ats2_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.ats2_2.cycles",
+      "tag_id": null,
+      "name": "Ciclos ATS2-2",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": "ATS2-2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:ats2_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.funcional.cycles",
+      "tag_id": null,
+      "name": "Ciclos Funcional",
+      "line": "Linha LED Driver",
+      "machine": "M2 ATS2",
+      "position": "Funcional",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:funcional",
+      "poll_interval_ms": 2000
+    }
+  ]
+}

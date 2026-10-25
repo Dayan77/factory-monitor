@@ -1,0 +1,6 @@
+# Vulnerabilidades de IMAGEM aceitas pelo Trivy (CI: .github/workflows/ci.yml job docker; release.yml).
+# Política: HIGH/CRITICAL com correção disponível reprovam (--ignore-unfixed: sem correção não bloqueia, mas aparece
+# no SBOM e no relatório). Só entra aqui o que tem correção mas não se aplica — um ID por linha, com comentário
+# (motivo, escopo, data de revisão). Dependências Python/npm: .github/security/audit-allowlist.toml.
+#
+# (vazio — nenhuma exceção aceita até agora)

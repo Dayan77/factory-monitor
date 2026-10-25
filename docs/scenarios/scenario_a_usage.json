@@ -1,0 +1,1730 @@
+{
+ "id": "scenario_a_usage",
+ "title": "Cenário A - Uso: contador de ciclos de cilindro (16 bits) e run_state de motor",
+ "spec_refs": [
+  "domain.md §3.3",
+  "domain.md §3.4",
+  "domain.md §3.5",
+  "kpis.md §4.1",
+  "kpis.md §4.2",
+  "kpis.md 'Esclarecimentos Sprint 2' C1-C18"
+ ],
+ "plant": {
+  "name": "Planta Manaus",
+  "timezone": "America/Manaus",
+  "utc_offset": "-04:00"
+ },
+ "config": {
+  "machine_offline_timeout_s": 60,
+  "run_state_debounce_s": 1.0
+ },
+ "evaluate_at": "2026-10-06T03:30:00Z",
+ "evaluate_at_local": "2026-10-05 23:30:00",
+ "today_plant": "2026-10-05",
+ "a1_cylinder": {
+  "asset": {
+   "line": "Linha de Montagem",
+   "machine": "Estação de Fixação",
+   "machine_ideal_cycle_time_s": 40,
+   "position": "Cilindro A1",
+   "component_type": "pneumatic_cylinder",
+   "cycles_per_part": 1,
+   "component_serial": "GS-A1-0003",
+   "installed_at": "2026-01-12T12:00:00Z"
+  },
+  "tag": {
+   "semantic_role": "cycle_counter",
+   "counter_max": 65535,
+   "max_rate_per_s": null,
+   "is_position_counter_tag": true
+  },
+  "derived": {
+   "max_rate_per_s": 0.05,
+   "max_rate_formula": "2 x cycles_per_part / ideal_cycle_time_s = 2 x 1 / 40"
+  },
+  "readings": [
+   {
+    "ts": "2026-10-05T10:00:00Z",
+    "local": "2026-10-05 06:00:00",
+    "value": 65470,
+    "expect_delta": 0,
+    "note": "primeira leitura = linha de base (delta 0)"
+   },
+   {
+    "ts": "2026-10-05T10:10:00Z",
+    "local": "2026-10-05 06:10:00",
+    "value": 65485,
+    "expect_delta": 15
+   },
+   {
+    "ts": "2026-10-05T10:20:00Z",
+    "local": "2026-10-05 06:20:00",
+    "value": 65499,
+    "expect_delta": 14
+   },
+   {
+    "ts": "2026-10-05T10:30:00Z",
+    "local": "2026-10-05 06:30:00",
+    "value": 65513,
+    "expect_delta": 14
+   },
+   {
+    "ts": "2026-10-05T10:40:00Z",
+    "local": "2026-10-05 06:40:00",
+    "value": 65528,
+    "expect_delta": 15
+   },
+   {
+    "ts": "2026-10-05T10:50:00Z",
+    "local": "2026-10-05 06:50:00",
+    "value": 7,
+    "expect_delta": 15,
+    "expect_event": "counter_rollover",
+    "note": "65 528 >= 0,9 x 65 535 -> (65 535 - 65 528) + 7 + 1 = 15"
+   },
+   {
+    "ts": "2026-10-05T11:00:00Z",
+    "local": "2026-10-05 07:00:00",
+    "value": 22,
+    "expect_delta": 15
+   },
+   {
+    "ts": "2026-10-05T11:00:00Z",
+    "local": "2026-10-05 07:00:00",
+    "value": 22,
+    "expect_delta": 0,
+    "expect_ignored": "duplicate",
+    "note": "mensagem repetida (QoS 1): mesmo ts e valor -> idempotente"
+   },
+   {
+    "ts": "2026-10-05T11:10:00Z",
+    "local": "2026-10-05 07:10:00",
+    "value": 36,
+    "expect_delta": 14
+   },
+   {
+    "ts": "2026-10-05T11:20:00Z",
+    "local": "2026-10-05 07:20:00",
+    "value": 32804,
+    "expect_delta": 0,
+    "expect_event": "counter_glitch",
+    "note": "bit 15 invertido (36 + 32 768): delta 32 768 > 0,05 x 600 x 1,5 + 10 = 55 -> descartado, prev continua 36 @ 07:10"
+   },
+   {
+    "ts": "2026-10-05T11:30:00Z",
+    "local": "2026-10-05 07:30:00",
+    "value": 65,
+    "expect_delta": 29,
+    "note": "delta contra o último aceito (36 @ 07:10): dt = 1 200 s, limite 100"
+   },
+   {
+    "ts": "2026-10-05T11:25:00Z",
+    "local": "2026-10-05 07:25:00",
+    "value": 50,
+    "expect_delta": 0,
+    "expect_ignored": "out_of_order",
+    "note": "ts anterior ao último aceito (07:30) -> ignorada"
+   },
+   {
+    "ts": "2026-10-05T11:40:00Z",
+    "local": "2026-10-05 07:40:00",
+    "value": 79,
+    "expect_delta": 14
+   },
+   {
+    "ts": "2026-10-05T11:50:00Z",
+    "local": "2026-10-05 07:50:00",
+    "value": 80,
+    "expect_delta": 1,
+    "note": "máquina parando"
+   },
+   {
+    "ts": "2026-10-05T12:00:00Z",
+    "local": "2026-10-05 08:00:00",
+    "value": 80,
+    "expect_delta": 0,
+    "note": "parada: mesmo valor, ts novo -> delta 0 (não é duplicata)"
+   },
+   {
+    "ts": "2026-10-05T12:10:00Z",
+    "local": "2026-10-05 08:10:00",
+    "value": 93,
+    "expect_delta": 13
+   },
+   {
+    "ts": "2026-10-05T12:20:00Z",
+    "local": "2026-10-05 08:20:00",
+    "value": 9,
+    "expect_delta": 9,
+    "expect_event": "counter_reset",
+    "note": "CLP zerado pelo operador ~08:19; 93 < 58 981,5 -> reset, delta = 9 (contagens 93->? antes do reset são perdidas)"
+   },
+   {
+    "ts": "2026-10-05T12:30:00Z",
+    "local": "2026-10-05 08:30:00",
+    "value": 24,
+    "expect_delta": 15
+   },
+   {
+    "ts": "2026-10-05T12:40:00Z",
+    "local": "2026-10-05 08:40:00",
+    "value": 38,
+    "expect_delta": 14
+   }
+  ],
+  "seed": {
+   "position_usage_total": {
+    "cycles": 7199803
+   },
+   "component_usage_since_install": {
+    "cycles": 3599803
+   }
+  },
+  "nominal_life": {
+   "cycles": 5000000
+  },
+  "window_14d_usage": {
+   "cycles": 280000
+  },
+  "expected": {
+   "cycles_delta": 197,
+   "events": [
+    {
+     "ts": "2026-10-05T10:50:00Z",
+     "event": "counter_rollover",
+     "delta": 15
+    },
+    {
+     "ts": "2026-10-05T11:20:00Z",
+     "event": "counter_glitch",
+     "delta": 0
+    },
+    {
+     "ts": "2026-10-05T12:20:00Z",
+     "event": "counter_reset",
+     "delta": 9
+    }
+   ],
+   "ignored": [
+    {
+     "ts": "2026-10-05T11:00:00Z",
+     "reason": "duplicate"
+    },
+    {
+     "ts": "2026-10-05T11:25:00Z",
+     "reason": "out_of_order"
+    }
+   ],
+   "cycles_by_hour_utc": {
+    "2026-10-05T10:00:00Z": 73,
+    "2026-10-05T11:00:00Z": 73,
+    "2026-10-05T12:00:00Z": 51
+   },
+   "cycles_by_hour_local": {
+    "06:00": 73,
+    "07:00": 73,
+    "08:00": 51
+   },
+   "last_accepted": {
+    "ts": "2026-10-05T12:40:00Z",
+    "value": 38
+   },
+   "position": {
+    "cycles_total": 7200000,
+    "hours_total": 0,
+    "starts_total": 0
+   },
+   "component": {
+    "usage_since_install": {
+     "cycles": 3600000,
+     "hours": 0,
+     "starts": 0
+    },
+    "life_consumed_pct": 0.72,
+    "life_measure": "cycles",
+    "rate_per_day": {
+     "cycles": 20000
+    },
+    "remaining": {
+     "cycles": 1400000
+    },
+    "rul_days": 70,
+    "rul_measure": "cycles",
+    "projected_end_date": "2026-12-14",
+    "low_confidence": false,
+    "overdue": false
+   },
+   "without_seed": {
+    "cycles_total": 197,
+    "life_consumed_pct": 3.94e-05
+   },
+   "wrong_answers": {
+    "rollover_modulo_counter_max": {
+     "cycles_delta": 196,
+     "why": "usou (65 535 - prev) + cur sem o +1"
+    },
+    "glitch_counted": {
+     "cycles_delta": 33001,
+     "why": "aceitou 32 804 (delta 32 768) e tratou 65 como reset (delta 65) em vez de 29"
+    },
+    "projection_with_utc_today": {
+     "projected_end_date": "2026-12-15",
+     "why": "usou a data UTC (2026-10-06) como hoje"
+    }
+   }
+  }
+ },
+ "a2_motor": {
+  "asset": {
+   "line": "Linha de Montagem",
+   "machine": "Transportador de Saída",
+   "position": "Motor do transportador",
+   "component_type": "electric_motor",
+   "component_serial": "WEG-W22-7781",
+   "installed_at": "2025-01-10T12:00:00Z"
+  },
+  "tag": {
+   "semantic_role": "run_state",
+   "is_position_tag": true
+  },
+  "heartbeat_s": 30,
+  "gap": {
+   "from": "2026-10-05T11:30:00Z",
+   "to": "2026-10-05T11:45:00Z",
+   "note": "nenhuma leitura entre 07:30:00 e 07:45:00 local (edge sem rede, sem buffer)"
+  },
+  "readings": [
+   {
+    "ts": "2026-10-05T10:00:00Z",
+    "local": "2026-10-05 06:00:00",
+    "value": 0,
+    "note": "primeira leitura = linha de base (sem partida)"
+   },
+   {
+    "ts": "2026-10-05T10:00:30Z",
+    "local": "2026-10-05 06:00:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:01:00Z",
+    "local": "2026-10-05 06:01:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:01:30Z",
+    "local": "2026-10-05 06:01:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:02:00Z",
+    "local": "2026-10-05 06:02:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:02:30Z",
+    "local": "2026-10-05 06:02:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:03:00Z",
+    "local": "2026-10-05 06:03:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:03:30Z",
+    "local": "2026-10-05 06:03:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:04:00Z",
+    "local": "2026-10-05 06:04:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:04:30Z",
+    "local": "2026-10-05 06:04:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:05:00Z",
+    "local": "2026-10-05 06:05:00",
+    "value": 1,
+    "note": "partida #1"
+   },
+   {
+    "ts": "2026-10-05T10:05:30Z",
+    "local": "2026-10-05 06:05:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:06:00Z",
+    "local": "2026-10-05 06:06:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:06:30Z",
+    "local": "2026-10-05 06:06:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:07:00Z",
+    "local": "2026-10-05 06:07:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:07:30Z",
+    "local": "2026-10-05 06:07:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:08:00Z",
+    "local": "2026-10-05 06:08:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:08:30Z",
+    "local": "2026-10-05 06:08:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:09:00Z",
+    "local": "2026-10-05 06:09:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:09:30Z",
+    "local": "2026-10-05 06:09:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:10:00Z",
+    "local": "2026-10-05 06:10:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:10:30Z",
+    "local": "2026-10-05 06:10:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:11:00Z",
+    "local": "2026-10-05 06:11:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:11:30Z",
+    "local": "2026-10-05 06:11:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:12:00Z",
+    "local": "2026-10-05 06:12:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:12:30Z",
+    "local": "2026-10-05 06:12:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:13:00Z",
+    "local": "2026-10-05 06:13:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:13:30Z",
+    "local": "2026-10-05 06:13:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:14:00Z",
+    "local": "2026-10-05 06:14:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:14:30Z",
+    "local": "2026-10-05 06:14:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:15:00Z",
+    "local": "2026-10-05 06:15:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:15:30Z",
+    "local": "2026-10-05 06:15:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:16:00Z",
+    "local": "2026-10-05 06:16:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:16:30Z",
+    "local": "2026-10-05 06:16:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:17:00Z",
+    "local": "2026-10-05 06:17:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:17:30Z",
+    "local": "2026-10-05 06:17:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:18:00Z",
+    "local": "2026-10-05 06:18:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:18:30Z",
+    "local": "2026-10-05 06:18:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:19:00Z",
+    "local": "2026-10-05 06:19:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:19:30Z",
+    "local": "2026-10-05 06:19:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:20:00Z",
+    "local": "2026-10-05 06:20:00",
+    "value": 0,
+    "note": "queda de 0,4 s"
+   },
+   {
+    "ts": "2026-10-05T10:20:00.400Z",
+    "local": "2026-10-05 06:20:00.400",
+    "value": 1,
+    "note": "volta apos 0,4 s < 1 s -> sem partida (debounce)"
+   },
+   {
+    "ts": "2026-10-05T10:20:30Z",
+    "local": "2026-10-05 06:20:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:21:00Z",
+    "local": "2026-10-05 06:21:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:21:30Z",
+    "local": "2026-10-05 06:21:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:22:00Z",
+    "local": "2026-10-05 06:22:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:22:30Z",
+    "local": "2026-10-05 06:22:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:23:00Z",
+    "local": "2026-10-05 06:23:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:23:30Z",
+    "local": "2026-10-05 06:23:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:24:00Z",
+    "local": "2026-10-05 06:24:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:24:30Z",
+    "local": "2026-10-05 06:24:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:25:00Z",
+    "local": "2026-10-05 06:25:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:25:30Z",
+    "local": "2026-10-05 06:25:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:26:00Z",
+    "local": "2026-10-05 06:26:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:26:30Z",
+    "local": "2026-10-05 06:26:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:27:00Z",
+    "local": "2026-10-05 06:27:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:27:30Z",
+    "local": "2026-10-05 06:27:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:28:00Z",
+    "local": "2026-10-05 06:28:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:28:30Z",
+    "local": "2026-10-05 06:28:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:29:00Z",
+    "local": "2026-10-05 06:29:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:29:30Z",
+    "local": "2026-10-05 06:29:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:30:00Z",
+    "local": "2026-10-05 06:30:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:30:30Z",
+    "local": "2026-10-05 06:30:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:31:00Z",
+    "local": "2026-10-05 06:31:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:31:30Z",
+    "local": "2026-10-05 06:31:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:32:00Z",
+    "local": "2026-10-05 06:32:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:32:30Z",
+    "local": "2026-10-05 06:32:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:33:00Z",
+    "local": "2026-10-05 06:33:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:33:30Z",
+    "local": "2026-10-05 06:33:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:34:00Z",
+    "local": "2026-10-05 06:34:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:34:30Z",
+    "local": "2026-10-05 06:34:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:35:00Z",
+    "local": "2026-10-05 06:35:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:35:30Z",
+    "local": "2026-10-05 06:35:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:36:00Z",
+    "local": "2026-10-05 06:36:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:36:30Z",
+    "local": "2026-10-05 06:36:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:37:00Z",
+    "local": "2026-10-05 06:37:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:37:30Z",
+    "local": "2026-10-05 06:37:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:38:00Z",
+    "local": "2026-10-05 06:38:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:38:30Z",
+    "local": "2026-10-05 06:38:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:39:00Z",
+    "local": "2026-10-05 06:39:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:39:30Z",
+    "local": "2026-10-05 06:39:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:40:00Z",
+    "local": "2026-10-05 06:40:00",
+    "value": 0,
+    "note": "queda de 0,9 s"
+   },
+   {
+    "ts": "2026-10-05T10:40:00.900Z",
+    "local": "2026-10-05 06:40:00.900",
+    "value": 1,
+    "note": "volta apos 0,9 s < 1 s -> sem partida (debounce)"
+   },
+   {
+    "ts": "2026-10-05T10:40:30Z",
+    "local": "2026-10-05 06:40:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:41:00Z",
+    "local": "2026-10-05 06:41:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:41:30Z",
+    "local": "2026-10-05 06:41:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:42:00Z",
+    "local": "2026-10-05 06:42:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:42:30Z",
+    "local": "2026-10-05 06:42:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:43:00Z",
+    "local": "2026-10-05 06:43:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:43:30Z",
+    "local": "2026-10-05 06:43:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:44:00Z",
+    "local": "2026-10-05 06:44:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:44:30Z",
+    "local": "2026-10-05 06:44:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:45:00Z",
+    "local": "2026-10-05 06:45:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:45:30Z",
+    "local": "2026-10-05 06:45:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:46:00Z",
+    "local": "2026-10-05 06:46:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:46:30Z",
+    "local": "2026-10-05 06:46:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:47:00Z",
+    "local": "2026-10-05 06:47:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:47:30Z",
+    "local": "2026-10-05 06:47:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:48:00Z",
+    "local": "2026-10-05 06:48:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:48:30Z",
+    "local": "2026-10-05 06:48:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:49:00Z",
+    "local": "2026-10-05 06:49:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:49:30Z",
+    "local": "2026-10-05 06:49:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:50:00Z",
+    "local": "2026-10-05 06:50:00",
+    "value": 0,
+    "note": "queda de exatamente 1,0 s"
+   },
+   {
+    "ts": "2026-10-05T10:50:01Z",
+    "local": "2026-10-05 06:50:01",
+    "value": 1,
+    "note": "1,0 s não é < 1 s -> partida #2"
+   },
+   {
+    "ts": "2026-10-05T10:50:30Z",
+    "local": "2026-10-05 06:50:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:51:00Z",
+    "local": "2026-10-05 06:51:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:51:30Z",
+    "local": "2026-10-05 06:51:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:52:00Z",
+    "local": "2026-10-05 06:52:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:52:30Z",
+    "local": "2026-10-05 06:52:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:53:00Z",
+    "local": "2026-10-05 06:53:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:53:30Z",
+    "local": "2026-10-05 06:53:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:54:00Z",
+    "local": "2026-10-05 06:54:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:54:30Z",
+    "local": "2026-10-05 06:54:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:55:00Z",
+    "local": "2026-10-05 06:55:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:55:30Z",
+    "local": "2026-10-05 06:55:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:56:00Z",
+    "local": "2026-10-05 06:56:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:56:30Z",
+    "local": "2026-10-05 06:56:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:57:00Z",
+    "local": "2026-10-05 06:57:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:57:30Z",
+    "local": "2026-10-05 06:57:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:58:00Z",
+    "local": "2026-10-05 06:58:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:58:30Z",
+    "local": "2026-10-05 06:58:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:59:00Z",
+    "local": "2026-10-05 06:59:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T10:59:30Z",
+    "local": "2026-10-05 06:59:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:00:00Z",
+    "local": "2026-10-05 07:00:00",
+    "value": 0,
+    "note": "parada de 10 min"
+   },
+   {
+    "ts": "2026-10-05T11:00:30Z",
+    "local": "2026-10-05 07:00:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:01:00Z",
+    "local": "2026-10-05 07:01:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:01:30Z",
+    "local": "2026-10-05 07:01:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:02:00Z",
+    "local": "2026-10-05 07:02:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:02:30Z",
+    "local": "2026-10-05 07:02:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:03:00Z",
+    "local": "2026-10-05 07:03:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:03:30Z",
+    "local": "2026-10-05 07:03:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:04:00Z",
+    "local": "2026-10-05 07:04:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:04:30Z",
+    "local": "2026-10-05 07:04:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:05:00Z",
+    "local": "2026-10-05 07:05:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:05:30Z",
+    "local": "2026-10-05 07:05:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:06:00Z",
+    "local": "2026-10-05 07:06:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:06:30Z",
+    "local": "2026-10-05 07:06:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:07:00Z",
+    "local": "2026-10-05 07:07:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:07:30Z",
+    "local": "2026-10-05 07:07:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:08:00Z",
+    "local": "2026-10-05 07:08:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:08:30Z",
+    "local": "2026-10-05 07:08:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:09:00Z",
+    "local": "2026-10-05 07:09:00",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:09:30Z",
+    "local": "2026-10-05 07:09:30",
+    "value": 0,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:10:00Z",
+    "local": "2026-10-05 07:10:00",
+    "value": 1,
+    "note": "partida #3"
+   },
+   {
+    "ts": "2026-10-05T11:10:30Z",
+    "local": "2026-10-05 07:10:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:11:00Z",
+    "local": "2026-10-05 07:11:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:11:30Z",
+    "local": "2026-10-05 07:11:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:12:00Z",
+    "local": "2026-10-05 07:12:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:12:30Z",
+    "local": "2026-10-05 07:12:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:13:00Z",
+    "local": "2026-10-05 07:13:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:13:30Z",
+    "local": "2026-10-05 07:13:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:14:00Z",
+    "local": "2026-10-05 07:14:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:14:30Z",
+    "local": "2026-10-05 07:14:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:15:00Z",
+    "local": "2026-10-05 07:15:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:15:30Z",
+    "local": "2026-10-05 07:15:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:16:00Z",
+    "local": "2026-10-05 07:16:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:16:30Z",
+    "local": "2026-10-05 07:16:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:17:00Z",
+    "local": "2026-10-05 07:17:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:17:30Z",
+    "local": "2026-10-05 07:17:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:18:00Z",
+    "local": "2026-10-05 07:18:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:18:30Z",
+    "local": "2026-10-05 07:18:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:19:00Z",
+    "local": "2026-10-05 07:19:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:19:30Z",
+    "local": "2026-10-05 07:19:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:20:00Z",
+    "local": "2026-10-05 07:20:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:20:30Z",
+    "local": "2026-10-05 07:20:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:21:00Z",
+    "local": "2026-10-05 07:21:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:21:30Z",
+    "local": "2026-10-05 07:21:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:22:00Z",
+    "local": "2026-10-05 07:22:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:22:30Z",
+    "local": "2026-10-05 07:22:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:23:00Z",
+    "local": "2026-10-05 07:23:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:23:30Z",
+    "local": "2026-10-05 07:23:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:24:00Z",
+    "local": "2026-10-05 07:24:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:24:30Z",
+    "local": "2026-10-05 07:24:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:25:00Z",
+    "local": "2026-10-05 07:25:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:25:30Z",
+    "local": "2026-10-05 07:25:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:26:00Z",
+    "local": "2026-10-05 07:26:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:26:30Z",
+    "local": "2026-10-05 07:26:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:27:00Z",
+    "local": "2026-10-05 07:27:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:27:30Z",
+    "local": "2026-10-05 07:27:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:28:00Z",
+    "local": "2026-10-05 07:28:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:28:30Z",
+    "local": "2026-10-05 07:28:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:29:00Z",
+    "local": "2026-10-05 07:29:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:29:30Z",
+    "local": "2026-10-05 07:29:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:30:00Z",
+    "local": "2026-10-05 07:30:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:45:00Z",
+    "local": "2026-10-05 07:45:00",
+    "value": 1,
+    "note": "dados voltam apos buraco 07:30:00-07:45:00 com valor 1 -> não é partida"
+   },
+   {
+    "ts": "2026-10-05T11:45:30Z",
+    "local": "2026-10-05 07:45:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:46:00Z",
+    "local": "2026-10-05 07:46:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:46:30Z",
+    "local": "2026-10-05 07:46:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:47:00Z",
+    "local": "2026-10-05 07:47:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:47:30Z",
+    "local": "2026-10-05 07:47:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:48:00Z",
+    "local": "2026-10-05 07:48:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:48:30Z",
+    "local": "2026-10-05 07:48:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:49:00Z",
+    "local": "2026-10-05 07:49:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:49:30Z",
+    "local": "2026-10-05 07:49:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:50:00Z",
+    "local": "2026-10-05 07:50:00",
+    "value": 0,
+    "note": "queda de 0,5 s"
+   },
+   {
+    "ts": "2026-10-05T11:50:00.500Z",
+    "local": "2026-10-05 07:50:00.500",
+    "value": 1,
+    "note": "volta apos 0,5 s -> sem partida (debounce)"
+   },
+   {
+    "ts": "2026-10-05T11:50:30Z",
+    "local": "2026-10-05 07:50:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:51:00Z",
+    "local": "2026-10-05 07:51:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:51:30Z",
+    "local": "2026-10-05 07:51:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:52:00Z",
+    "local": "2026-10-05 07:52:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:52:30Z",
+    "local": "2026-10-05 07:52:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:53:00Z",
+    "local": "2026-10-05 07:53:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:53:30Z",
+    "local": "2026-10-05 07:53:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:54:00Z",
+    "local": "2026-10-05 07:54:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:54:30Z",
+    "local": "2026-10-05 07:54:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:55:00Z",
+    "local": "2026-10-05 07:55:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:55:30Z",
+    "local": "2026-10-05 07:55:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:56:00Z",
+    "local": "2026-10-05 07:56:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:56:30Z",
+    "local": "2026-10-05 07:56:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:57:00Z",
+    "local": "2026-10-05 07:57:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:57:30Z",
+    "local": "2026-10-05 07:57:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:58:00Z",
+    "local": "2026-10-05 07:58:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:58:30Z",
+    "local": "2026-10-05 07:58:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:59:00Z",
+    "local": "2026-10-05 07:59:00",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T11:59:30Z",
+    "local": "2026-10-05 07:59:30",
+    "value": 1,
+    "heartbeat": true
+   },
+   {
+    "ts": "2026-10-05T12:00:00Z",
+    "local": "2026-10-05 08:00:00",
+    "value": 0,
+    "note": "fim: motor desligado (última leitura)"
+   }
+  ],
+  "seed": {
+   "position_usage_total": {
+    "hours": 11998.48411111111,
+    "starts": 129997
+   },
+   "component_usage_since_install": {
+    "hours": 11998.48411111111,
+    "starts": 129997
+   }
+  },
+  "nominal_life": {
+   "hours": 30000,
+   "starts": 200000
+  },
+  "window_14d_usage": {
+   "hours": 168,
+   "starts": 21000
+  },
+  "expected": {
+   "operating_seconds": 5457.2,
+   "hours_delta": 1.5158888888888888,
+   "starts_delta": 3,
+   "debounced_drops": 3,
+   "running_intervals_local": [
+    [
+     "06:05:00",
+     "06:20:00",
+     900
+    ],
+    [
+     "06:20:00.400",
+     "06:40:00",
+     1199.6
+    ],
+    [
+     "06:40:00.900",
+     "06:50:00",
+     599.1
+    ],
+    [
+     "06:50:01",
+     "07:00:00",
+     599
+    ],
+    [
+     "07:10:00",
+     "07:30:00",
+     1200
+    ],
+    [
+     "07:30:00",
+     "07:31:00",
+     60
+    ],
+    [
+     "07:45:00",
+     "07:50:00",
+     300
+    ],
+    [
+     "07:50:00.500",
+     "08:00:00",
+     599.5
+    ]
+   ],
+   "operating_seconds_by_hour_utc": {
+    "2026-10-05T10:00:00Z": 3297.7,
+    "2026-10-05T11:00:00Z": 2159.5
+   },
+   "starts_by_hour_utc": {
+    "2026-10-05T10:00:00Z": 2,
+    "2026-10-05T11:00:00Z": 1
+   },
+   "position": {
+    "cycles_total": 0,
+    "hours_total": 12000.0,
+    "starts_total": 130000
+   },
+   "component": {
+    "usage_since_install": {
+     "cycles": 0,
+     "hours": 12000.0,
+     "starts": 130000
+    },
+    "life_by_measure": {
+     "hours": 0.4,
+     "starts": 0.65
+    },
+    "life_consumed_pct": 0.65,
+    "life_measure": "starts",
+    "rate_per_day": {
+     "hours": 12,
+     "starts": 1500
+    },
+    "remaining": {
+     "hours": 18000,
+     "starts": 70000
+    },
+    "days_by_measure": {
+     "hours": 1500,
+     "starts": 47
+    },
+    "rul_days": 47,
+    "rul_measure": "starts",
+    "projected_end_date": "2026-11-21",
+    "low_confidence": false,
+    "overdue": false
+   },
+   "invariant_heartbeat_10s": "Reenviar o mesmo cenario com heartbeat de 10 s (padrao do edge) DEVE dar o mesmo resultado",
+   "wrong_answers": {
+    "no_debounce": {
+     "starts_delta": 6
+    },
+    "debounce_inclusive_le_1s": {
+     "starts_delta": 2
+    },
+    "gap_credited": {
+     "operating_seconds": 6297.2,
+     "why": "extrapolou operacao sobre o buraco 07:31-07:45 (840 s)"
+    },
+    "start_after_gap": {
+     "starts_delta": 4
+    }
+   }
+  }
+ },
+ "a3_no_nominal_life": {
+  "note": "Mesmo componente da A2 sem vida nominal cadastrada",
+  "nominal_life": {},
+  "expected": {
+   "life_consumed_pct": null,
+   "life_reason": "no_nominal_life",
+   "projected_end_date": null,
+   "rul_reason": "no_nominal_life"
+  }
+ }
+}
