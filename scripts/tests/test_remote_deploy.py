@@ -15,6 +15,13 @@ SCRIPT = Path(__file__).resolve().parent.parent / "remote_deploy.sh"
 
 DOCKER_STUB = """#!/usr/bin/env bash
 echo "docker $* [FM_VERSION=${FM_VERSION:-}]" >> "$CALLS"
+case "$*" in
+  *"config --format json"*)
+    def='{"name":"infra","services":{"server":{"container_name":"fm_server"},"postgres":{"container_name":"fm_postgres"}}}'
+    printf '%s' "${FAKE_COMPOSE_JSON:-$def}"
+    exit 0 ;;
+  "ps -a --format"*) printf '%b' "${FAKE_PS:-}"; exit 0 ;;
+esac
 if [ "$1" = "inspect" ] && [ "${FAKE_PG_RUNNING:-0}" = 1 ]; then echo true; exit 0; fi
 case "$*" in
   *"alembic upgrade head"*)
@@ -358,3 +365,30 @@ def test_demo_profile_pulls_the_edge_image_of_the_same_version(env):
     proc = _deploy(env, env["v2"])
     assert proc.returncode == 0, proc.stderr
     assert " pull server web site demo-plant [" in env["calls"].read_text()
+
+
+def test_foreign_container_in_the_compose_project_aborts_before_touching_anything(env):
+    """VPS compartilhado: um container de outro app no mesmo projeto compose seria removido por --remove-orphans."""
+    e = {**env, "env": {**env["env"], "FAKE_PS": "fm_server\\tinfra\\nprojetos_web\\tinfra\\nfm_postgres\\tinfra\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "projetos_web" in r.stderr and "nada foi alterado" in r.stderr
+    calls = env["calls"].read_text()
+    assert "build" not in calls and " up " not in calls and "alembic" not in calls and " pull " not in calls
+    assert _rev(env["app"]) == env["v1"]
+
+
+def test_container_name_owned_by_another_project_aborts(env):
+    e = {**env, "env": {**env["env"], "FAKE_PS": "fm_postgres\\toutroapp\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 1
+    assert "fm_postgres" in r.stderr and "outroapp" in r.stderr
+    assert " up " not in env["calls"].read_text()
+
+
+def test_other_apps_in_their_own_projects_do_not_block_the_deploy(env):
+    e = {**env, "env": {**env["env"],
+                        "FAKE_PS": "fm_server\\tinfra\\nfm_postgres\\tinfra\\nprojetos_web\\tprojetos\\ntraefik\\t\\n"}}
+    r = _run(e, "ok")
+    assert r.returncode == 0, r.stderr
+    assert "projeto=infra" in r.stdout

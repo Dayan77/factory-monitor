@@ -71,6 +71,43 @@ env_get() {
   printf '%s' "$line"
 }
 
+# O VPS é compartilhado com outros apps (ex.: Easypanel, projetos.factoryconnect.tech). `up --remove-orphans`
+# remove containers do MESMO projeto compose que não estão no arquivo, e os container_name fixos (fm_*) colidem
+# com containers de outro projeto. Roda ANTES de pull/build/migrations/up: se o projeto compose tiver container
+# que não é do FactoryConnect, ou se um nome fm_* pertencer a outro projeto, aborta sem tocar em nada.
+preflight_isolation() {
+  local cfg ps report
+  command -v python3 >/dev/null || { echo "✗ python3 ausente no VPS (necessário para a checagem de isolamento)" >&2; return 1; }
+  cfg="$("${COMPOSE[@]}" config --format json 2>/dev/null)" || { echo "✗ docker compose config falhou" >&2; return 1; }
+  ps="$(docker ps -a --format '{{.Names}}	{{.Label "com.docker.compose.project"}}')" \
+    || { echo "✗ docker ps falhou" >&2; return 1; }
+  report="$(CFG="$cfg" PS="$ps" PFX="$PFX" python3 -c '
+import json, os
+cfg = json.loads(os.environ["CFG"])
+project = cfg.get("name", "")
+ours = {s.get("container_name") for s in cfg.get("services", {}).values() if s.get("container_name")}
+errs = []
+for line in os.environ["PS"].splitlines():
+    if not line.strip():
+        continue
+    name, _, proj = line.partition("\t")
+    if proj == project and not name.startswith(os.environ["PFX"]):
+        errs.append(f"container {name} está no projeto compose {project!r} mas não é do FactoryConnect "
+                    "(up --remove-orphans o removeria)")
+    if name in ours and proj != project:
+        errs.append(f"o nome {name} já é usado pelo projeto {proj or chr(34)+chr(34)} (outro app ou deploy antigo)")
+print(f"projeto={project}")
+for e in errs:
+    print("ERRO " + e)
+')" || { echo "✗ checagem de isolamento falhou" >&2; return 1; }
+  echo "  ${report%%$'\n'*}"
+  if grep -q '^ERRO ' <<<"$report"; then
+    echo "✗ o deploy afetaria containers de outro app no VPS — nada foi alterado:" >&2
+    grep '^ERRO ' <<<"$report" | sed 's/^ERRO /  - /' >&2
+    return 1
+  fi
+}
+
 # Pré-requisitos do broker MQTT de produção (docs/operations.md §6.4). Roda ANTES de pull/build/migrations/up:
 # se faltar algo o deploy aborta com o código anterior no ar — nunca sobe um broker que recusaria os
 # gateways em campo (ingestão parada) nem um compose que não valida.
@@ -146,6 +183,8 @@ git reset -q --keep "$SHA"
 
 log "Pré-requisitos (MQTT, compose)"
 preflight_mqtt || abort_restore_code "deploy abortado antes de qualquer pull/build/migration"
+log "Isolamento dos outros apps do VPS (projeto compose, nomes fm_*)"
+preflight_isolation || abort_restore_code "deploy abortado antes de qualquer pull/build/migration"
 
 PREFIX="$(env_get FM_IMAGE_PREFIX)"
 IMAGE_SERVICES=("${SERVICES[@]}")
