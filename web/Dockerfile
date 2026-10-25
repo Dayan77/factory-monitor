@@ -1,5 +1,5 @@
 # Imagens com versão fixa — atualize de propósito (Dependabot: .github/dependabot.yml).
-FROM node:22.23.3-alpine AS dev
+FROM node:26.12.1-alpine AS dev
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -7,7 +7,7 @@ COPY . .
 EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host"]
 
-FROM node:22.23.3-alpine AS build
+FROM node:26.12.1-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
