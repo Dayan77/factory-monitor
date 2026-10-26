@@ -2,16 +2,16 @@
 # server e edge podem ser instalados no mesmo venv (verificado com `pip check`).
 
 # Web framework
-fastapi==0.136.3          # 0.137+ troca app.routes por _IncludedRouter (quebra a enumeração de rotas dos testes de authz)
-starlette==1.7.0          # fixado: 0.46.x tinha 9 CVEs (path/Range/multipart) — Sprint 7, pip-audit
-uvicorn[standard]==0.34.3
+fastapi==0.161.1          # 0.137+ troca app.routes por _IncludedRouter (quebra a enumeração de rotas dos testes de authz)
+starlette==1.9.0          # fixado: 0.46.x tinha 9 CVEs (path/Range/multipart) — Sprint 7, pip-audit
+uvicorn[standard]==0.54.0
 python-multipart==0.0.32   # CVE-2026-24486/40347/53538/53539/53540/42561 corrigidos
 
 # Database
-sqlalchemy[asyncio]==2.0.54
-asyncpg==0.30.0
-alembic==1.16.5
-influxdb-client[async]==1.49.0
+sqlalchemy[asyncio]==2.1.6
+asyncpg==0.32.0
+alembic==1.20.1
+influxdb-client[async]==1.50.0
 
 # Auth / Security
 python-jose[cryptography]==3.5.0
@@ -24,12 +24,12 @@ aiomqtt==2.5.1
 
 # Config
 tzdata==2025.2              # IANA zones for zoneinfo (plant timezone) in slim images
-pydantic[email]==2.11.10
-email-validator==2.2.0      # EmailStr (antes vinha implícito no fastapi 0.111)
-pydantic-settings==2.10.1
+pydantic[email]==2.14.1
+email-validator==2.3.0      # EmailStr (antes vinha implícito no fastapi 0.111)
+pydantic-settings==2.16.1
 
 # AI / LLM
-openai==3.24.0
+openai==3.37.0
 anthropic==1.11.0          # Claude adapter of the AI assistant (services/ai/providers.py); pulls httpx2
 
 # Notifications
