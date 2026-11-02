@@ -11,6 +11,7 @@ from ..schemas import MachineOut, MachineCreate, MachineUpdate
 from ..schemas_assets import MachineUsageOut, MachineUsagePosition, ProductionCounts
 from ...services.usage import queries as uq
 from ...services.usage.topology import load_topology
+from ..patching import apply_patch
 from ..tenant_refs import ensure_owned
 from ...services.validation import is_uuid
 
@@ -68,8 +69,8 @@ async def update_machine(machine_id: str, body: MachineUpdate, user: CurrentUser
     machine = await _get_machine_or_404(machine_id, user.tenant_id, db)
     if body.line_id is not None:
         body.line_id = await ensure_owned(db, Line, body.line_id, user.tenant_id, "line_id")
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(machine, field, value)
+    # explicit null clears the optional descriptive fields (the web form sends them); other nulls are ignored
+    apply_patch(machine, body, nullable=frozenset({"model", "serial_number", "ideal_cycle_time_s"}))
     await db.commit()
     await db.refresh(machine)
     return machine

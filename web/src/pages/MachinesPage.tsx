@@ -8,7 +8,11 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { useMachines, useLines } from "@/hooks/useQueries";
 import { useNow } from "@/hooks/useNow";
 import { formatSeenAgo, secondsSince } from "@/utils/time";
-import type { Machine, MachineStatus } from "@/services/types";
+import type { Line, Machine, MachineStatus } from "@/services/types";
+import Button from "@/components/ui/Button";
+import { MachineFormSheet } from "@/components/assets/AssetForms";
+import { useAuthStore } from "@/store/auth";
+import { can } from "@/utils/maintenance";
 
 const STATUS_FILTERS: { label: string; value: MachineStatus | "all" }[] = [
   { label: "Todas", value: "all" },
@@ -34,6 +38,8 @@ export default function MachinesPage() {
   const linesQ    = useLines();
   const machinesQ = useMachines();
   const lines = linesQ.data ?? [];
+  const admin = can(useAuthStore((s) => s.user), "assets.admin");
+  const [sheet, setSheet] = useState<{ machine: Machine | null } | null>(null);
   const lineNames = useMemo(() => new Map((linesQ.data ?? []).map((l) => [l.id, l.name])), [linesQ.data]);
 
   return (
@@ -69,6 +75,9 @@ export default function MachinesPage() {
             </button>
           ))}
         </div>
+        {admin && (
+          <Button variant="primary" className="ml-auto" onClick={() => setSheet({ machine: null })}>Nova máquina</Button>
+        )}
       </div>
 
       <QueryView
@@ -84,7 +93,8 @@ export default function MachinesPage() {
         isEmpty={(d) => d.length === 0}
         empty={
           <div className="rounded-xl border border-gray-800 bg-gray-900">
-            <EmptyState title="Nenhuma máquina cadastrada" description="Use o App Edge para cadastrar máquinas e sensores." />
+            <EmptyState title="Nenhuma máquina cadastrada"
+              description={admin ? "Use “Nova máquina” para cadastrar; os sensores chegam pelo gateway." : "Peça a um administrador para cadastrar as máquinas."} />
           </div>
         }
       >
@@ -104,7 +114,7 @@ export default function MachinesPage() {
               ) : (
                 <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   {filtered.map((m) => (
-                    <MachineCard key={m.id} machine={m} lineName={lineNames.get(m.line_id)} />
+                    <MachineCard key={m.id} machine={m} lineName={lineNames.get(m.line_id)} onEdit={admin ? () => setSheet({ machine: m }) : undefined} />
                   ))}
                 </ul>
               )}
@@ -112,11 +122,12 @@ export default function MachinesPage() {
           );
         }}
       </QueryView>
+      <MachineFormSheet open={!!sheet} machine={sheet?.machine} lines={lines as Line[]} onClose={() => setSheet(null)} />
     </div>
   );
 }
 
-function MachineCard({ machine: m, lineName }: { machine: Machine; lineName?: string }) {
+function MachineCard({ machine: m, lineName, onEdit }: { machine: Machine; lineName?: string; onEdit?: () => void }) {
   const now = useNow(1000);
   const age = secondsSince(m.last_seen_at, now);
   return (
@@ -134,7 +145,10 @@ function MachineCard({ machine: m, lineName }: { machine: Machine; lineName?: st
           <p className="truncate font-semibold text-gray-100">{m.name}</p>
           <p className="truncate text-xs text-fg-muted">{[m.model, lineName].filter(Boolean).join(" · ") || "—"}</p>
         </div>
-        <span className="shrink-0"><MachineStatusBadge status={m.status} /></span>
+        <span className="flex shrink-0 items-center gap-1">
+          {onEdit && <Button size="sm" variant="ghost" onClick={onEdit} aria-label={`Editar ${m.name}`}>Editar</Button>}
+          <MachineStatusBadge status={m.status} />
+        </span>
       </div>
 
       <p className="text-xs text-gray-400">{STATUS_HINT[m.status] ?? STATUS_HINT.unknown}</p>
