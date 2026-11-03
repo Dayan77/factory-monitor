@@ -25,7 +25,7 @@ import pytest
 uvicorn_proxy = pytest.importorskip("uvicorn.middleware.proxy_headers")
 
 IMAGES = ["traefik:v3.6.2", "traefik:v2.11.31"]
-NGINX = "nginx:1.30.5-alpine"
+NGINX = "nginx:1.30.6-alpine"
 SPOOF = "203.0.113.66"
 
 pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="precisa de docker")

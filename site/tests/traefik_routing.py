@@ -87,14 +87,14 @@ def test_compose(cfg: dict, image: str, ngx: Path) -> dict:
                 "networks": [NET],
             },
             "site": {
-                "image": "nginx:1.30.5-alpine",
+                "image": "nginx:1.30.6-alpine",
                 "volumes": [f"{ngx / 'default.conf'}:/etc/nginx/conf.d/default.conf:ro",
                             f"{ngx / 'security-headers.conf'}:/etc/nginx/snippets/security-headers.conf:ro",
                             f"{SITE / 'dist'}:/usr/share/nginx/html:ro"],
                 "labels": labels("site"), "networks": [NET],
             },
-            "web": {"image": "nginx:1.30.5-alpine", "command": stub("WEB"), "labels": labels("web"), "networks": [NET]},
-            "server": {"image": "nginx:1.30.5-alpine", "command": stub("API"), "labels": labels("server", True), "networks": [NET]},
+            "web": {"image": "nginx:1.30.6-alpine", "command": stub("WEB"), "labels": labels("web"), "networks": [NET]},
+            "server": {"image": "nginx:1.30.6-alpine", "command": stub("API"), "labels": labels("server", True), "networks": [NET]},
         },
         "networks": {NET: {"name": NET}},
     }

@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-NGINX = "nginx:1.30.5-alpine"
+NGINX = "nginx:1.30.6-alpine"
 BASE_PORT = int(os.environ.get("FM_TEST_HDR_PORT", "8150"))
 pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="precisa de docker")
 
