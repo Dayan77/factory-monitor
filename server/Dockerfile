@@ -16,6 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Correções de segurança do Debian publicadas depois da imagem base (mesma política do `apk upgrade` das imagens nginx).
+RUN apt-get update && apt-get -y --no-install-recommends upgrade && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --only-binary=:all: -r requirements.txt
 
