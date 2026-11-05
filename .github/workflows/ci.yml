@@ -25,7 +25,7 @@ jobs:
   server:
     name: server · pytest
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30              # suíte ~19 min no runner; 20 cortava no teardown
     services:
       postgres:
         image: postgres:16.15-alpine
