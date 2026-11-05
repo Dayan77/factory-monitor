@@ -447,7 +447,7 @@ services:
   # Sondas HTTP: saúde pública (app, site, staging; validade do TLS) e /health da planta da demo (rede fm-demo)
   blackbox-exporter:
     profiles: ["monitoring"]
-    image: prom/blackbox-exporter:v0.29.0
+    image: prom/blackbox-exporter:v0.29.1
     container_name: fm_blackbox
     restart: always
     logging: *logging
