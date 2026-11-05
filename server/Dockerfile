@@ -1,6 +1,6 @@
 # Wheels binários (manylinux) para todas as dependências: não precisa de gcc/apt.
 # Imagem base com versão fixa — atualize de propósito (Dependabot: .github/dependabot.yml).
-FROM python:3.12.15-slim
+FROM python:3.15.0-slim
 
 ARG FM_VERSION=dev
 LABEL org.opencontainers.image.title="factoryconnect-server" \
