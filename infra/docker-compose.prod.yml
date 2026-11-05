@@ -362,7 +362,7 @@ services:
   # Grafana só em 127.0.0.1:3001 do VPS (GRAFANA_HOST_PORT; a 3000 é do painel do Easypanel) → acesso por túnel SSH (docs/operations.md §Observabilidade).
   prometheus:
     profiles: ["monitoring"]
-    image: prom/prometheus:v3.5.0
+    image: prom/prometheus:v3.15.1
     container_name: fm_prometheus
     restart: always
     logging: *logging
