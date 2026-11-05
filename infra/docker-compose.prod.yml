@@ -429,7 +429,7 @@ services:
   # Consultas de negócio no Postgres (gateways sem contato, dead letters pendentes, demo) — monitoring/sql-exporter
   sql-exporter:
     profiles: ["monitoring"]
-    image: burningalchemist/sql_exporter:0.24.9
+    image: burningalchemist/sql_exporter:0.24.11
     container_name: fm_sql_exporter
     restart: always
     logging: *logging
