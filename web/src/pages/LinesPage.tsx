@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import { Link } from "react-router-dom";
 import MachineStatusBadge from "@/components/MachineStatusBadge";
@@ -8,12 +8,19 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { useLines, useMachines } from "@/hooks/useQueries";
 import { useNow } from "@/hooks/useNow";
 import { formatSeenAgo } from "@/utils/time";
-import type { Machine } from "@/services/types";
+import type { Line, Machine } from "@/services/types";
+import Button from "@/components/ui/Button";
+import { LineFormSheet, MachineFormSheet } from "@/components/assets/AssetForms";
+import { useAuthStore } from "@/store/auth";
+import { can } from "@/utils/maintenance";
 
 export default function LinesPage() {
   const linesQ    = useLines();
   const machinesQ = useMachines();
   const now = useNow(1000);
+  const admin = can(useAuthStore((s) => s.user), "assets.admin");
+  const [lineSheet, setLineSheet] = useState<{ line: Line | null } | null>(null);
+  const [machineFor, setMachineFor] = useState<string | null>(null);
 
   const byLine = useMemo(() => {
     const map = new Map<string, Machine[]>();
@@ -22,6 +29,12 @@ export default function LinesPage() {
   }, [machinesQ.data]);
 
   return (
+    <div className="space-y-4">
+      {admin && (
+        <div className="flex justify-end">
+          <Button variant="primary" onClick={() => setLineSheet({ line: null })}>Nova linha</Button>
+        </div>
+      )}
     <QueryView
       query={linesQ}
       errorTitle="Não foi possível carregar as linhas"
@@ -33,7 +46,8 @@ export default function LinesPage() {
       isEmpty={(d) => d.length === 0}
       empty={
         <div className="rounded-xl border border-gray-800 bg-gray-900">
-          <EmptyState title="Nenhuma linha de produção cadastrada" />
+          <EmptyState title="Nenhuma linha de produção cadastrada"
+            description={admin ? "Comece pela linha; depois cadastre as máquinas dela." : "Peça a um administrador para cadastrar as linhas."} />
         </div>
       }
     >
@@ -56,11 +70,19 @@ export default function LinesPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="shrink-0 text-right">
+                  <div className="flex shrink-0 items-center gap-4">
+                  {admin && (
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => setMachineFor(line.id)} aria-label={`Adicionar máquina à ${line.name}`}>+ Máquina</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setLineSheet({ line })} aria-label={`Editar ${line.name}`}>Editar</Button>
+                    </div>
+                  )}
+                  <div className="text-right">
                     <p className="text-xs text-fg-muted">Operando</p>
                     <p className="font-mono font-medium tabular-nums text-gray-200">
                       {machinesQ.data ? `${running}/${lineMachines.length}` : "—"}
                     </p>
+                  </div>
                   </div>
                 </div>
 
@@ -101,5 +123,8 @@ export default function LinesPage() {
         </div>
       )}
     </QueryView>
+      <LineFormSheet open={!!lineSheet} line={lineSheet?.line} onClose={() => setLineSheet(null)} />
+      <MachineFormSheet open={!!machineFor} defaultLineId={machineFor ?? undefined} lines={linesQ.data ?? []} onClose={() => setMachineFor(null)} />
+    </div>
   );
 }

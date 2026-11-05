@@ -48,6 +48,8 @@ export interface Machine {
   status: MachineStatus;
   /** Server receive time of the last reading for any tag of this machine. */
   last_seen_at?: string | null;
+  ideal_cycle_time_s?: number | null;
+  micro_stop_threshold_s?: number;
   created_at: string;
   updated_at: string;
 }
@@ -55,6 +57,8 @@ export interface Machine {
 export interface Line {
   id: string;
   tenant_id: string;
+  plant_id?: string;
+  output_machine_id?: string | null;
   name: string;
   description: string | null;
   location: string | null;
