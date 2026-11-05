@@ -25,7 +25,7 @@ x-logging: &logging
 services:
   # ── Databases ─────────────────────────────────────────────────────
   postgres:
-    image: postgres:16.15-alpine
+    image: postgres:18.6-alpine
     container_name: fm_postgres
     restart: always
     logging: *logging
