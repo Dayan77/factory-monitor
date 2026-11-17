@@ -19,12 +19,66 @@ MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
 MODBUS_BIT_TYPES = {"coil", "discrete"}
 _MODBUS_ADDR = re.compile(r"^unit=(\d+);(hr|ir|di|co)=(\d+)(?::(\w+))?$")
 _AREA = {"hr": "holding", "ir": "input", "di": "discrete", "co": "coil"}
+# box ueaPowerDriver (protocol `ueapd`): selector → accepted semantic roles (= edge UEAPD_SELECTOR_ROLES)
+UEAPD_SELECTOR_ROLES = {
+    "state:run": {"run_state"},
+    "state:fault": {"fault_state"},
+    "state:cadence": {"analog", "speed"},
+    "passes:good": {"part_counter_good"},
+    "passes:scrap": {"part_counter_scrap"},
+    "passes:total": {"part_counter_total"},
+    "cycles": {"cycle_counter"},
+    "measure": {"analog", "current", "speed"},
+}
+UEAPD_BACKFILL = {"none", "latest_day", "all"}
+_UEAPD_STAGE = re.compile(r"^[A-Za-z0-9_]+$")
+_UEAPD_POSTO = re.compile(r"^[Pp]([1-9][0-9]?)$")
+
+
+def parse_ueapd_selector(address) -> tuple[str, Optional[str], Optional[object]]:
+    """Replica of edge/src/plant_map.py parse_ueapd_selector (same results and messages — test_ueapd_rules.py).
+    Selector of a ueapd tag → (kind, stage, extra): `cycles:<stage>[:P<n>]` → extra = 0-based station index
+    (None = whole stage); `measure:<stage>:<path>` → extra = list of keys in the event `detail`."""
+    if not isinstance(address, str) or not address.strip():
+        raise ValueError(f"seletor ueapd deve ser texto ({address!r})")
+    a = address.strip()
+    if a in UEAPD_SELECTOR_ROLES:
+        return a, None, None
+    head, _, rest = a.partition(":")
+    if head == "cycles":
+        stage, _, posto = rest.partition(":")
+        if not _UEAPD_STAGE.match(stage or ""):
+            raise ValueError(f"seletor {a!r}: estágio inválido")
+        if not posto:
+            return "cycles", stage, None
+        m = _UEAPD_POSTO.match(posto)
+        if not m:
+            raise ValueError(f"seletor {a!r}: posto deve ser P1, P2, ...")
+        return "cycles", stage, int(m.group(1)) - 1
+    if head == "measure":
+        stage, _, path = rest.partition(":")
+        keys = [k for k in path.split(".") if k]
+        if not _UEAPD_STAGE.match(stage or "") or not keys:
+            raise ValueError(f"seletor {a!r}: use measure:<estágio>:<chave>[.<subchave>]")
+        return "measure", stage, keys
+    raise ValueError(f"seletor ueapd desconhecido {a!r} (use {', '.join(sorted(UEAPD_SELECTOR_ROLES))})")
+
+
+def ueapd_selector_error(address, role: str) -> Optional[str]:
+    """Message (without the `tag <key>: ` prefix) the edge raises for this selector/role pair, or None."""
+    try:
+        kind, _, _ = parse_ueapd_selector(address)
+    except ValueError as e:
+        return str(e)
+    if role not in UEAPD_SELECTOR_ROLES[kind]:
+        return f"seletor {address!r} exige semantic_role em {sorted(UEAPD_SELECTOR_ROLES[kind])} (não {role})"
+    return None
 
 
 def tag_error(raw: dict, sources: dict[str, str], keys_seen: Optional[set] = None) -> Optional[str]:
     """Error message the edge parser would raise for this map-v1 tag entry, or None.
 
-    `sources`: {source id: protocol ("opcua" | "modbus")}. `keys_seen`: keys of the previous tags of the same
+    `sources`: {source id: protocol ("opcua" | "modbus" | "ueapd")}. `keys_seen`: keys of the previous tags of the same
     map (duplicate key check); updated in place when given."""
     key = raw.get("key")
     if not key or (keys_seen is not None and key in keys_seen):
@@ -38,7 +92,11 @@ def tag_error(raw: dict, sources: dict[str, str], keys_seen: Optional[set] = Non
     if proto is None:
         return f"tag {key}: source desconhecida {raw.get('source')!r}"
     address = raw.get("address")
-    if proto == "opcua":
+    if proto == "ueapd":
+        msg = ueapd_selector_error(address, role)
+        if msg:
+            return f"tag {key}: {msg}"
+    elif proto == "opcua":
         if not isinstance(address, str) or not address.startswith("ns="):
             return f"tag {key}: endereço OPC UA deve ser um NodeId 'ns=..;s=..' ({address!r})"
         if role == "cycle_pulse":

@@ -80,11 +80,14 @@ services:
   # Nunca anônimo em produção (o dev continua anônimo em infra/mosquitto/mosquitto.conf).
   # Na partida, infra/mosquitto/prod/render.sh gera passwd/acl a partir de:
   #   MQTT_USERNAME / MQTT_PASSWORD (.env)  → usuário do backend (lê factory/#)
-  #   $MQTT_GATEWAYS_DIR/gateways.conf      → 1 usuário por gateway, restrito a factory/<tenant>/#
-  #                                           (make mqtt-gateway-add GATEWAY=... TENANT=...)
+  #   volume mqtt-app: gateways.app.conf    → GERADO pelo fm_server no cadastro/revogação de gateways (automático);
+  #                                           1 usuário por gateway, restrito a factory/<tenant>/#. Recarregado sem
+  #                                           restart em ~MQTT_RELOAD_POLL_S s (laço do entrypoint.sh).
+  #   $MQTT_GATEWAYS_DIR/gateways.conf      → gateways manuais/legados do operador, mesmo formato
+  #                                           (make mqtt-gateway-add GATEWAY=... TENANT=...); pode não existir.
   # 1883 fica na rede interna (fm_server) e no loopback do VPS; os gateways usam 8883 com TLS
   # (MQTT_TLS_ENABLED=true + certificado em $MQTT_TLS_CERT_DIR: fullchain.pem + privkey.pem — docs/operations.md §MQTT).
-  # PRÉ-REQUISITO do deploy (§6.4): credenciais no .env e gateways cadastrados — scripts/remote_deploy.sh
+  # PRÉ-REQUISITO do deploy (§6.4): credenciais do backend no .env (e certificado se TLS) — scripts/remote_deploy.sh
   # confere antes de tocar em qualquer serviço.
   mosquitto:
     image: eclipse-mosquitto:2.0.22
@@ -100,12 +103,15 @@ services:
       # fullchain.pem/privkey.pem o broker não sobe. Padrão desligado = compatível com o deploy anterior.
       MQTT_TLS_ENABLED: ${MQTT_TLS_ENABLED:-false}
       MQTT_TLS_PORT: "8883"
+      # credenciais dos gateways cadastrados no app (escritas pelo fm_server no volume mqtt-app; tolerante)
+      MQTT_APP_GATEWAYS_FILE: /mosquitto/app/gateways.app.conf
     volumes:
       - ./mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/prod:/fm:ro
       - ${MQTT_GATEWAYS_DIR:-../mqtt}:/mosquitto/gateways:ro
       - ${MQTT_TLS_CERT_DIR:-../mqtt/certs}:/mosquitto/certs:ro
       - mosquitto-data:/mosquitto/data
+      - mqtt-app:/mosquitto/app:ro
     ports:
       - "${MQTT_TLS_PUBLISH:-8883}:8883"
       # 1883 (autenticado, SEM TLS) só no loopback do VPS. Transição de gateways antigos sem TLS:
@@ -152,11 +158,15 @@ services:
       # Volume de arquivos dos tenants (plantas baixas do mapa, docs/operations.md §Arquivos): fora do container,
       # sobrevive a redeploy/recriação. Mesmo caminho do volume abaixo.
       FILES_DIR: /app/data/files
+      # Credenciais MQTT dos gateways para o broker (volume mqtt-app, lido pelo fm_mosquitto): refeito no
+      # cadastro/revogação/remoção de gateway. Mesmo caminho do volume abaixo.
+      MQTT_APP_GATEWAYS_FILE: /app/data/mqtt/gateways.app.conf
       # demo-bot → API de controle da planta virtual (profile demo, §10): sem o token ela responde 403
       DEMO_VIRTUAL_PLANT_CONTROL_URL: ${DEMO_VIRTUAL_PLANT_CONTROL_URL:-}
       DEMO_VIRTUAL_PLANT_CONTROL_TOKEN: ${DEMO_VIRTUAL_PLANT_CONTROL_TOKEN:-}
     volumes:
       - server-files:/app/data/files
+      - mqtt-app:/app/data/mqtt
     depends_on:
       postgres:
         condition: service_healthy
@@ -497,6 +507,7 @@ volumes:
   server-files:          # FILES_DIR do servidor (plantas baixas dos layouts) — dono uid 10001 (imagem)
   influxdb-data:
   mosquitto-data:
+  mqtt-app:              # gateways.app.conf: fm_server escreve (uid 10001, /app/data/mqtt), fm_mosquitto lê (ro)
   prometheus-data:
   alertmanager-data:     # silêncios e estado de notificação do Alertmanager
   grafana-data:

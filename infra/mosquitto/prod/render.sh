@@ -1,11 +1,18 @@
 #!/bin/sh
 # Gera password_file, acl_file e (opcional) o listener TLS do Mosquitto de produção.
 # Roda na partida (entrypoint.sh) e em `make mqtt-reload` (docker exec fm_mosquitto sh /fm/render.sh).
-# Falha fechado: qualquer entrada inválida aborta sem tocar nos arquivos em uso.
+# Também roda no laço de recarga do entrypoint.sh quando o app file muda.
+# Falha fechado: qualquer entrada inválida do OPERADOR aborta sem tocar nos arquivos em uso. O app file
+# (gerado pelo fm_server) é TOLERANTE: linha inválida → aviso no stderr e a linha é ignorada — um arquivo
+# gerado com defeito nunca impede o broker de subir nem derruba os demais usuários.
 #
 # Entradas (env do container):
 #   MQTT_SERVER_USERNAME, MQTT_SERVER_PASSWORD  backend — obrigatórios
-#   MQTT_GATEWAYS_FILE   (/mosquitto/gateways/gateways.conf) linhas "<usuário> <tenant_uuid> <hash $7$...>"
+#   MQTT_GATEWAYS_FILE   (/mosquitto/gateways/gateways.conf) arquivo do operador (make mqtt-gateway-add), estrito:
+#                        linhas "<usuário> <tenant_uuid> <hash $7$...>"
+#   MQTT_APP_GATEWAYS_FILE (/mosquitto/app/gateways.app.conf) gerado pelo fm_server no cadastro/revogação de
+#                        gateways, mesmo formato; tolerante. Usuário que colide com o operador/backend/fm-health
+#                        ou repete é ignorado (o do operador vale).
 #   MQTT_TLS_ENABLED     (false) true inclui o listener 8883; exige fullchain.pem e privkey.pem em MQTT_TLS_CERT_DIR
 #   MQTT_TLS_CERT_DIR    (/mosquitto/certs)
 #   MQTT_TLS_PORT        (8883)
@@ -13,6 +20,7 @@ set -eu
 
 RUN=/mosquitto/runtime
 GATEWAYS_FILE="${MQTT_GATEWAYS_FILE:-/mosquitto/gateways/gateways.conf}"
+APP_FILE="${MQTT_APP_GATEWAYS_FILE:-/mosquitto/app/gateways.app.conf}"
 TLS_ENABLED="${MQTT_TLS_ENABLED:-false}"
 CERT_DIR="${MQTT_TLS_CERT_DIR:-/mosquitto/certs}"
 TLS_PORT="${MQTT_TLS_PORT:-8883}"
@@ -52,32 +60,67 @@ user $HEALTH_USER
 topic write health/#
 ACL
 
-n=0
-if [ -f "$GATEWAYS_FILE" ]; then
-  set -f   # sem glob ao separar campos
-  seen=" $MQTT_SERVER_USERNAME $HEALTH_USER "
+UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+# operador: regra histórica; app file: formato exato do mosquitto_passwd ($7$<iter>$<b64>$<b64> ou $6$<b64>$<b64>)
+OP_HASH_RE='^\$[67]\$[A-Za-z0-9+/=$]+$'
+APP_HASH_RE='^\$(7\$[0-9]{1,7}|6)\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$'
+seen=" $MQTT_SERVER_USERNAME $HEALTH_USER "
+n_op=0
+n_app=0
+n_skip=0
+
+# Linha rejeitada: no arquivo do operador aborta (falha fechado); no app file avisa e segue.
+reject() {  # reject <modo> <mensagem>
+  if [ "$1" = strict ]; then die "$2"; fi
+  echo "fm-mqtt-render: AVISO: $2 — linha ignorada" >&2
+  n_skip=$((n_skip + 1))
+}
+
+# add_gateways <arquivo> <strict|lenient>: acrescenta passwd/acl de cada linha válida.
+add_gateways() {
+  file="$1"; mode="$2"
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno + 1))
     case "$line" in ''|'#'*) continue ;; esac
     # shellcheck disable=SC2086
     set -- $line
-    [ "$#" -eq 3 ] || die "$GATEWAYS_FILE:$lineno: esperado '<usuário> <tenant_uuid> <hash>'"
+    if [ "$#" -ne 3 ]; then reject "$mode" "$file:$lineno: esperado '<usuário> <tenant_uuid> <hash>'"; continue; fi
     user="$1"; tenant="$2"; hash="$3"
-    valid_user "$user" || die "$GATEWAYS_FILE:$lineno: usuário inválido '$user'"
-    printf '%s' "$tenant" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' \
-      || die "$GATEWAYS_FILE:$lineno: tenant_id não é UUID: '$tenant'"
-    printf '%s' "$hash" | grep -Eq '^\$[67]\$[A-Za-z0-9+/=$]+$' \
-      || die "$GATEWAYS_FILE:$lineno: hash inválido para '$user' (gere com make mqtt-gateway-add)"
-    case "$seen" in *" $user "*) die "$GATEWAYS_FILE:$lineno: usuário repetido '$user'" ;; esac
+    if ! valid_user "$user"; then reject "$mode" "$file:$lineno: usuário inválido '$user'"; continue; fi
+    if ! printf '%s' "$tenant" | grep -Eq "$UUID_RE"; then
+      reject "$mode" "$file:$lineno: tenant_id não é UUID: '$tenant'"; continue
+    fi
+    if [ "$mode" = strict ]; then hash_re="$OP_HASH_RE"; else hash_re="$APP_HASH_RE"; fi
+    if ! printf '%s' "$hash" | grep -Eq "$hash_re"; then
+      reject "$mode" "$file:$lineno: hash inválido para '$user' (gere com make mqtt-gateway-add)"; continue
+    fi
+    case "$seen" in *" $user "*)
+      reject "$mode" "$file:$lineno: usuário repetido '$user' (já definido pelo operador/backend ou antes neste arquivo)"
+      continue ;;
+    esac
     seen="$seen$user "
     printf '%s:%s\n' "$user" "$hash" >> "$TMP/passwd"
     printf '\n# gateway %s\nuser %s\ntopic readwrite factory/%s/#\n' "$user" "$user" "$tenant" >> "$TMP/acl"
-    n=$((n + 1))
-  done < "$GATEWAYS_FILE"
+    if [ "$mode" = strict ]; then n_op=$((n_op + 1)); else n_app=$((n_app + 1)); fi
+  done < "$file"
+}
+
+set -f   # sem glob ao separar campos
+if [ -f "$GATEWAYS_FILE" ]; then
+  add_gateways "$GATEWAYS_FILE" strict
 else
-  echo "fm-mqtt-render: $GATEWAYS_FILE não existe — nenhum gateway autorizado ainda" >&2
+  echo "fm-mqtt-render: $GATEWAYS_FILE não existe — nenhum gateway manual (do operador)" >&2
 fi
+if [ -f "$APP_FILE" ]; then
+  if [ -r "$APP_FILE" ]; then
+    add_gateways "$APP_FILE" lenient
+  else
+    echo "fm-mqtt-render: AVISO: $APP_FILE sem permissão de leitura — gateways do app ignorados" >&2
+  fi
+fi
+set +f
+n=$((n_op + n_app))
 
 if [ "$TLS_ENABLED" = "true" ]; then
   for f in fullchain.pem privkey.pem; do
@@ -102,4 +145,4 @@ if [ -f "$TMP/tls.conf" ]; then mv "$TMP/tls.conf" "$RUN/conf.d/tls.conf"; else 
 mv "$TMP/passwd" "$RUN/passwd"
 mv "$TMP/acl" "$RUN/acl"
 if [ "$(id -u)" = 0 ]; then chown -R mosquitto:mosquitto "$RUN"; fi
-echo "fm-mqtt-render: ok — $n gateway(s), TLS=$TLS_ENABLED"
+echo "fm-mqtt-render: ok — $n gateway(s) (operador: $n_op, app: $n_app, ignorados: $n_skip), TLS=$TLS_ENABLED"

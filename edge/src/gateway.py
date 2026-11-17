@@ -270,6 +270,8 @@ class EdgeGateway:
         if pm.skipped:
             log.warning("edge_gateway.tags_without_tag_id", count=len(pm.skipped),
                         hint="rode python -m edge.src.provision para preencher os tag_id")
+        for msg in pm.rejected:          # mapa do servidor (modo tolerante): o resto do mapa roda
+            log.error("edge_gateway.config_item_rejected", reason=msg)
 
         aggregates: dict[str, WindowAggregator] = {}
         for t in pm.tags:
@@ -438,6 +440,8 @@ class EdgeGateway:
                 errs.append(f"fonte {sid} desconectada")
         if not self.publisher.is_connected:
             errs.append("broker MQTT desconectado")
+        if self.plant_map is not None:   # fonte/tag recusada do mapa em uso: reportada até o servidor corrigir
+            errs += [f"configuração: {m}" for m in self.plant_map.rejected]
         return errs + list(self._errors)
 
     def command_source(self, source_id: str) -> Optional[tuple[str, str]]:

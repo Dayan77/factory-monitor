@@ -279,3 +279,28 @@ export function canOpenStep(steps: StepStateLike[], n: number): boolean {
   if (s && s.state !== "pending") return true;
   return steps.filter((x) => x.step < n).every((x) => x.state === "done");
 }
+
+// ── ueapd boxes (line templates, gateway devices) ─────────────────
+
+const HOST = String.raw`(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])`;
+const BASE_URL_RE = new RegExp(String.raw`^https?://(${HOST})(?::(\d{1,5}))?/?$`);
+const ENV_VAR_RE = /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$/;
+
+/**
+ * Error of a ueapd box URL (null = valid): `http://` or `https://` host[:porta], no user/password, no path besides an
+ * optional `/` — the same rule as the server (C2). `allowEnv` also accepts `${VAR}` / `${VAR:-padrão}` (gateway devices).
+ */
+export function baseUrlError(raw: string, opts: { allowEnv?: boolean } = {}): string | null {
+  const v = raw.trim();
+  if (!v) return "informe a URL do box";
+  if (opts.allowEnv && ENV_VAR_RE.test(v)) return null;
+  if (!/^https?:\/\//.test(v)) return "use http:// ou https://";
+  if (v.includes("@")) return "sem usuário/senha na URL";
+  const m = BASE_URL_RE.exec(v);
+  if (!m) return "formato: http://host[:porta], sem caminho";
+  if (m[2] !== undefined) {
+    const port = Number(m[2]);
+    if (port < 1 || port > 65535) return "porta entre 1 e 65535";
+  }
+  return null;
+}
