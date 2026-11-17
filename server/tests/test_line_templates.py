@@ -231,3 +231,23 @@ async def test_apply_tenant_isolation_and_limits(client):
     r = await client.post(URL, headers=hc, json={"plant_id": pc["id"]})
     assert r.status_code == 422 and "Limite de máquinas" in r.text
     assert await _counts(c.id) == {"lines": 1, "machines": 2, "positions": 0, "tags": 0}
+
+
+async def test_template_keys_survive_a_later_manual_assignment(client):
+    """Applied without a gateway, then assigned by PUT /api/gateways/{id}/tags without `key`: the map keeps the
+    template keys (ledd.m1.parts_good, ...) — the edge keys its counter state by them."""
+    pm = edge_plant_map()
+    t = await _tenant("LTK")
+    h = t.headers("admin")
+    plant = await api(client, "POST", "/api/plants/", h, 201, json={"name": "Planta LTK"})
+    out = await api(client, "POST", URL, h, json={"plant_id": plant["id"]})
+    gw = await api(client, "POST", "/api/gateways/", h, 201, json={"name": "gw", "plant_id": plant["id"], "devices": [
+        {"id": "ueapd-m1", "protocol": "ueapd", "base_url": "http://10.0.0.15:8003"},
+        {"id": "ueapd-m2", "protocol": "ueapd", "base_url": "http://10.0.0.16:8003"}]})
+    ids = [x["id"] for m in out["machines"] for x in await api(client, "GET", "/api/tags/", h,
+                                                                params={"machine_id": m["id"]})]
+    await api(client, "PUT", f"/api/gateways/{gw['id']}/tags", h, json={"tags": [{"tag_id": i} for i in ids]})
+    prev = await api(client, "GET", f"/api/gateways/{gw['id']}/config-preview", h)
+    ex = json.loads(EXAMPLE.read_text(encoding="utf-8"))
+    assert {x["key"]: x["source"] for x in prev["plant_map"]["tags"]} == {t_["key"]: t_["source"] for t_ in ex["tags"]}
+    assert len(pm.parse_plant_map(prev["plant_map"], env={}).tags) == 18

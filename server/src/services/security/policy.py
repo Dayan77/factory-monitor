@@ -264,6 +264,8 @@ POLICY: dict[str, str] = {
     "GET /api/onboarding/readiness": "admin",
     "POST /api/onboarding/tags/import": "admin",
     "GET /api/onboarding/templates/{name}": "admin",
+    "GET /api/onboarding/line-templates": "admin",
+    "POST /api/onboarding/line-templates/{key}/apply": "admin",
     # overview
     "GET /api/overview": "user",
     # plants

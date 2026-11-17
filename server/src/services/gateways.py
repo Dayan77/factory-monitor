@@ -128,9 +128,8 @@ def mqtt_managed() -> bool:
 def mqtt_revoke_action(gw: Gateway) -> str:
     if mqtt_managed():
         return (f"A credencial MQTT do usuário {gw.mqtt_username} foi retirada automaticamente do broker: em até "
-                f"~10 s ele recusa novas conexões deste gateway. Uma sessão MQTT já aberta só cai quando o broker "
-                f"reinicia; até lá o servidor descarta as leituras das tags deste gateway. Nenhum comando no broker "
-                f"é necessário.")
+                f"~10 s ele recusa novas conexões deste gateway e derruba a sessão já aberta. Nenhum comando no "
+                f"broker é necessário; o servidor já descarta as leituras das tags deste gateway.")
     return (f"Remova a linha do usuário {gw.mqtt_username} do gateways.conf do broker e recarregue-o "
             f"(make mqtt-gateway-remove GATEWAY={gw.mqtt_username} && make mqtt-reload). Até lá o broker ainda "
             f"aceita a conexão, mas o servidor descarta as leituras das tags deste gateway.")
