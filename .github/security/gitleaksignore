@@ -55,3 +55,20 @@ c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-
 c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:341
 c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:373
 c1bb99df3f44c01f25634cf5b95435f7d48e7db9:edge/config/ueapd.example.json:generic-api-key:389
+
+# server/src/asset_templates/ueapd_led_driver.json: "key" das tags do modelo de linha (cópia de edge/config/ueapd.example.json, ex.: ledd.m1.parts_scrap) — identificador, não segredo (generic-api-key falso positivo)
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:179
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:221
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:235
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:249
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:305
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:333
+c2a82262eb6f9f85cba65f55c3c7780dbf6f23a4:server/src/asset_templates/ueapd_led_driver.json:generic-api-key:347
+# edge/tests/test_ueapd_remote.py: valor FICTÍCIO usado para provar que segredos do ambiente nunca saem em logs/heartbeat (revisão I3)
+746bf43326eda83b33209de738c01cf25fde9089:edge/tests/test_ueapd_remote.py:generic-api-key:406
+# Senhas de DESENVOLVIMENTO documentadas (seed local/e2e, mesmas das linhas acima) nas versões do commit 9a7f2a0
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/tenant_isolation_assets.py:fm-secret-env-default:41
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/virtual_plant_real_path.py:fm-secret-env-default:83
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:e2e/virtual_plant_real_path.py:fm-secret-env-default:189
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/seed_dev.py:fm-secret-env-default:40
+9a7f2a02fdb6ca2b59426c36d21be7a1e21ecd70:scripts/seed_dev.py:fm-secret-env-default:45
