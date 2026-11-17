@@ -39,6 +39,7 @@ from .websocket.relay import run_listener as ws_relay_listener
 from .api.routes import account as account_routes
 from .services.security import http as security_http
 from .services.security.privacy import run_privacy_janitor
+from .services.mqtt_app_file import run_mqtt_app_sync
 
 # LOG_LEVEL (default INFO): structlog printed every level, i.e. one DEBUG line per MQTT reading.
 _level = logging.getLevelName(settings.log_level.upper())
@@ -106,6 +107,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(run_offline_sweeper(), name="machine_offline_sweeper"),
         asyncio.create_task(run_webhook_worker(), name="webhook_worker"),
         asyncio.create_task(run_privacy_janitor(), name="privacy_janitor"),
+        # broker app file with the gateways' MQTT credentials (MQTT_APP_GATEWAYS_FILE; no-op when unset)
+        asyncio.create_task(run_mqtt_app_sync(), name="mqtt_app_sync"),
     ]
     if settings.reports_enabled:
         tasks.append(asyncio.create_task(run_report_engine(), name="report_engine"))

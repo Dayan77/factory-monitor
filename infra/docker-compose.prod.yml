@@ -105,6 +105,8 @@ services:
       MQTT_TLS_PORT: "8883"
       # credenciais dos gateways cadastrados no app (escritas pelo fm_server no volume mqtt-app; tolerante)
       MQTT_APP_GATEWAYS_FILE: /mosquitto/app/gateways.app.conf
+      # intervalo (s) do laço que re-renderiza passwd/acl e recarrega (SIGHUP) quando um dos arquivos de gateways muda
+      MQTT_RELOAD_POLL_S: ${MQTT_RELOAD_POLL_S:-5}
     volumes:
       - ./mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto/prod:/fm:ro

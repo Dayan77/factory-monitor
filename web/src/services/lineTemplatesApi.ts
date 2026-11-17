@@ -15,8 +15,11 @@ export interface LineTemplate {
   key: string;
   name: string;
   description?: string | null;
+  /** default line name of the template */
+  line_name?: string;
   machines: string[];
   devices: LineTemplateDevice[];
+  tag_count?: number;
 }
 
 export interface ApplyLineTemplateBody {
@@ -27,11 +30,15 @@ export interface ApplyLineTemplateBody {
 }
 
 export interface ApplyLineTemplateResult {
+  template?: string;
   line_id: string;
-  machines: { id: string; name: string }[];
+  line_name?: string;
+  line_created?: boolean;
+  machines: { id: string; name: string; created?: boolean }[];
   tags_created: number;
   tags_updated: number;
-  gateway: { id: string; devices: number | unknown[]; tags_assigned: number } | null;
+  tags_unchanged?: number;
+  gateway: { id: string; devices: number | unknown[]; tags_assigned: number; config_version?: number } | null;
   warnings: string[];
 }
 

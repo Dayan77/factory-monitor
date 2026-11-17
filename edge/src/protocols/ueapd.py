@@ -170,6 +170,7 @@ class UeapdDriver:
         self._fault_value: Optional[int] = None             # último código publicado
         self._fault_last_ts = 0.0                           # instante (box) do último código publicado por borda
         self._loaded = False
+        self._pending: set[asyncio.Future] = set()        # commits no SQLite em voo (ver _commit)
         self._running = False
         self.connected = False
         self._warned_line = False
@@ -201,6 +202,15 @@ class UeapdDriver:
             except (ValueError, TypeError, AttributeError):
                 log.warning("ueapd.fault_state_corrupt", source=self.sid)
         self._loaded = True
+
+    async def _commit(self, inc: dict, kv: Optional[dict], seen: Optional[dict]) -> dict:
+        """store.commit numa thread; a transação em voo é rastreada para `stop()` esperar por ela — na recarga
+        a quente (edge/src/gateway.py apply_plant_map) o driver novo da MESMA fonte só lê offsets/totais depois
+        que o antigo terminou de gravar (senão publicaria um acumulado menor = reset falso no servidor)."""
+        fut = asyncio.ensure_future(asyncio.to_thread(self.store.commit, inc, kv, seen))
+        self._pending.add(fut)
+        fut.add_done_callback(self._pending.discard)
+        return await asyncio.shield(fut)
 
     def _faults_kv(self) -> dict[str, str]:
         return {self._prefix + "faults": json.dumps({"active": self._faults, "value": self._fault_value,
@@ -271,7 +281,7 @@ class UeapdDriver:
             offsets = self._initial_offsets(listed)
             kv = {off_prefix + n: str(o) for n, o in offsets.items()}
             kv[self._prefix + "init"] = self.source.backfill
-            await asyncio.to_thread(self.store.commit, {}, kv, None)
+            await self._commit({}, kv, None)
             log.info("ueapd.first_contact", source=self.sid, backfill=self.source.backfill, files=len(listed))
         counted = 0
         chunks = 0
@@ -397,7 +407,7 @@ class UeapdDriver:
             if changed:
                 kv.update(self._faults_kv())
 
-        totals = await asyncio.to_thread(self.store.commit, inc, kv, seen_new)   # persiste ANTES de publicar
+        totals = await self._commit(inc, kv, seen_new)   # persiste ANTES de publicar
         for k, v in totals.items():
             running[k] = v
         self._totals.update({k: running[k] for k in inc})
@@ -462,7 +472,7 @@ class UeapdDriver:
             self._fault_value = code
             changed = True
         if changed:
-            await asyncio.to_thread(self.store.commit, {}, self._faults_kv(), None)
+            await self._commit({}, self._faults_kv(), None)
         for b in self._of("state:fault"):
             await self.on_reading(b.tag.tag_id, float(code))
         run = run_state_of(state, bool(self._faults))
@@ -508,5 +518,7 @@ class UeapdDriver:
     async def stop(self) -> None:
         self._running = False
         self.connected = False
+        if self._pending:                                   # termina a gravação em voo (offsets + totais juntos)
+            await asyncio.wait(list(self._pending), timeout=10.0)
         if self._own_session and self._session is not None and not self._session.closed:
             await self._session.close()

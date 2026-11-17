@@ -24,8 +24,9 @@ RUN pip install --only-binary=:all: -r requirements.txt
 
 COPY . .
 
-# data/files = FILES_DIR (volume server-files no compose de produção): existe na imagem com dono app, então o
-# volume nomeado novo nasce gravável pelo uid 10001.
+# data/files = FILES_DIR (volume server-files no compose de produção) e data/mqtt = MQTT_APP_GATEWAYS_FILE (volume
+# mqtt-app, lido pelo fm_mosquitto): existem na imagem com dono app, então o volume nomeado novo nasce gravável
+# pelo uid 10001.
 RUN useradd --system --uid 10001 --no-create-home app && mkdir -p /app/data/files /app/data/mqtt && chown -R app /app
 USER app
 

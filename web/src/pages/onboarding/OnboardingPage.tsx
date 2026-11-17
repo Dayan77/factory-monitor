@@ -19,6 +19,7 @@ import { LoadingRegion, Skeleton } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import ImportPanel from "@/components/onboarding/ImportPanel";
 import BrowsePanel from "@/components/onboarding/BrowsePanel";
+import LineTemplatePanel from "@/components/onboarding/LineTemplatePanel";
 import { EnrollmentInfo, GatewayStatusBadge } from "@/pages/settings/GatewaysPage";
 import { apiErrorMessage } from "@/utils/errors";
 import { formatDateTime } from "@/utils/format";
@@ -218,8 +219,9 @@ function Step2({ plant, onDone, common }: { plant: TreePlant | null; onDone: (d?
     onSuccess: () => void qc.invalidateQueries({ queryKey: queryKeys.tree }),
   });
   return (
-    <StepShell n={2} title="Linhas e máquinas" intro="Cadastre pelo formulário (Linhas / Máquinas) ou importe o CSV de ativos. Toda linha precisa da máquina de saída (a que conta as peças da linha)."
+    <StepShell n={2} title="Linhas e máquinas" intro="Use um modelo de linha pronto, cadastre pelo formulário (Linhas / Máquinas) ou importe o CSV de ativos. Toda linha precisa da máquina de saída (a que conta as peças da linha)."
       onDone={() => onDone({ plant_id: plant?.id })} clientErrors={errs} {...common}>
+      {plant && <LineTemplatePanel plant={plant} />}
       <div className="flex flex-wrap gap-2">
         <Link to="/lines" className="inline-flex min-h-10 items-center rounded-lg border border-line-strong px-4 text-body font-medium text-fg hover:bg-surface-2">Cadastrar linhas</Link>
         <Link to="/machines" className="inline-flex min-h-10 items-center rounded-lg border border-line-strong px-4 text-body font-medium text-fg hover:bg-surface-2">Cadastrar máquinas</Link>

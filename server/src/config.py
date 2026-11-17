@@ -67,6 +67,10 @@ class ServerSettings(BaseSettings):
     gateway_offline_after_s: float = 90.0
     gateway_degraded_buffer: int = 1000
     gateway_enroll_ttl_h: float = 24.0
+    # Broker "app file" with the MQTT credentials of the enrolled gateways (services/mqtt_app_file.py, docs/gateways.md):
+    # path of the file read by the production Mosquitto (prod: /app/data/mqtt/gateways.app.conf). Empty = disabled.
+    mqtt_app_gateways_file: str = ""
+    mqtt_app_sync_s: float = 60.0               # periodic re-sync (besides enroll / revoke / delete and startup)
 
     # Machine status derived from data: a machine with no reading for longer than
     # this is marked 'unknown' (offline). The sweeper runs every N seconds.

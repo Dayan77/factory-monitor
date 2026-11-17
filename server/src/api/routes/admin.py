@@ -162,6 +162,9 @@ async def update_tenant(tenant_id: str, body: TenantUpdate, me: SuperAdmin, db: 
     if body.is_active is True and tenant.suspended_reason and body.suspended_reason is None:
         tenant.suspended_reason = None
     await db.commit()
+    if "is_active" in changes:
+        from ...services import mqtt_app_file          # suspended tenant: its gateways leave the broker file
+        await mqtt_app_file.sync_quietly("tenant.updated")
     await db.refresh(tenant)
     return tenant
 
@@ -177,6 +180,8 @@ async def delete_tenant(tenant_id: str, me: SuperAdmin, db: DB, request: Request
                 request=request)
     await db.delete(tenant)
     await db.commit()
+    from ...services import mqtt_app_file
+    await mqtt_app_file.sync_quietly("tenant.deleted")
 
 
 # ── usuários de um tenant ─────────────────────────────────────────

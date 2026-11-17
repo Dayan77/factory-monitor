@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TreePlant } from "@/services/types";
 import sprint6Doc from "../../../docs/sprint6.md?raw";
 import {
-  buildTree, canOpenStep, csvField, detectDelimiter, isIanaZone, selectionToCsv, shiftTemplate, shiftsOverlap, suggestKey,
+  baseUrlError, buildTree, canOpenStep, csvField, detectDelimiter, isIanaZone, selectionToCsv, shiftTemplate, shiftsOverlap, suggestKey,
   suggestRole, UF_TIMEZONE, validateStep1, validateStep2, validateStep3,
 } from "./onboarding";
 
@@ -117,5 +117,27 @@ describe("resumable navigation", () => {
     expect(canOpenStep(s, 4)).toBe(false);
     expect(canOpenStep(s, 5)).toBe(true);
     expect(canOpenStep(s, 1)).toBe(true);
+  });
+});
+
+describe("baseUrlError (ueapd box URL)", () => {
+  it.each([
+    "http://192.168.1.15:8003", "https://box-m1.fabrica.local", "http://192.168.1.16:8003/", "http://[fe80::1]:8003", "http://localhost",
+  ])("accepts %s", (u) => expect(baseUrlError(u)).toBeNull());
+  it.each([
+    ["", "informe a URL do box"],
+    ["192.168.1.15:8003", "use http:// ou https://"],
+    ["ftp://192.168.1.15", "use http:// ou https://"],
+    ["http://user:pw@192.168.1.15:8003", "sem usuário/senha na URL"],
+    ["http://192.168.1.15:8003/api", "formato: http://host[:porta], sem caminho"],
+    ["http://192.168.1.15:abc", "formato: http://host[:porta], sem caminho"],
+    ["http://192.168.1.15:70000", "porta entre 1 e 65535"],
+    ["http://192.168.1.15:0", "porta entre 1 e 65535"],
+    ["http://", "formato: http://host[:porta], sem caminho"],
+  ])("rejects %s", (u, msg) => expect(baseUrlError(u)).toBe(msg));
+  it("accepts ${VAR} / ${VAR:-default} only when allowed (gateway devices)", () => {
+    expect(baseUrlError("${UEAPD_M1_URL}")).toBe("use http:// ou https://");
+    expect(baseUrlError("${UEAPD_M1_URL}", { allowEnv: true })).toBeNull();
+    expect(baseUrlError("${UEAPD_M1_URL:-http://192.168.1.15:8003}", { allowEnv: true })).toBeNull();
   });
 });

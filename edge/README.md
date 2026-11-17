@@ -183,6 +183,13 @@ cadastro na frota (abaixo) — o gateway busca `GET {url}/api/gateways/{GATEWAY_
 `GATEWAY_CONFIG_CACHE` (atômica, 0600, sem o token, com o `config_version`). Sem servidor, 401/403, 5xx ou mapa
 inválido → cópia local; sem cópia → `PLANT_MAP_PATH`; nada disso → não sobe. Resposta:
 `{"gateway_id": "...", "revision": "7", "config_version": 7, "plant_map": {mapa v1}}` (contrato em docs/gateways.md).
+O mapa remoto aceita as mesmas fontes do arquivo — `opcua`, `modbus` e `ueapd` (boxes ueaPowerDriver, abaixo) — e
+`${VAR}` / `${VAR:-padrão}` é expandido **no gateway** (a cópia local guarda o texto sem expandir). Validação
+tolerante: uma fonte ou tag inválida vinda do servidor (seletor `ueapd` errado, papel que não casa com o seletor,
+`base_url` com usuário/senha ou com `${VAR}` sem valor) sai do mapa com aviso (`remote_config.item_rejected` /
+`edge_gateway.config_item_rejected` no log e `configuração: tag … recusada: …` nos `errors` do heartbeat) e o resto
+roda; erro de estrutura (versão, protocolo desconhecido, `key`/`tag_id` repetidos) recusa o mapa inteiro e fica o atual.
+O arquivo `PLANT_MAP_PATH` continua estrito (erro de digitação = não sobe).
 
 ## Gateway na frota (Sprint 5): cadastro, heartbeat e recarga a quente
 
@@ -309,6 +316,28 @@ precisa escutar na LAN: `PLC_HTTP_HOST=0.0.0.0` (o espelho cruzado entre os boxe
 de integração do box promete ao cliente que "nada sai da planta" — ligar o FactoryConnect precisa do aceite da TI do
 cliente.
 
+**Instalação (caminho normal: tudo pelo app, nenhum arquivo no PC da fábrica).** No FactoryConnect, **Implantação →
+modelo de linha "Linha ueaPowerDriver (M1 Hipot + M2 ATS2)"**: informe os IPs dos boxes e crie (ou escolha) o
+gateway. O servidor cria linha, máquinas, posições e tags e grava no gateway os dispositivos `ueapd` (`ueapd-m1`,
+`ueapd-m2`) com as tags atribuídas. No PC da fábrica basta **o comando de cadastro** mostrado pelo app
+(`docker run … -e SERVER_URL=… -e ENROLL_CODE=…`, sem `PLANT_MAP_PATH`): o gateway se cadastra, baixa a configuração
+(`GET /api/gateways/{id}/config`) com as fontes `ueapd` e começa a publicar. Mudou o IP de um box ou uma tag no app →
+o heartbeat traz `config_changed` e o gateway recarrega a quente: o estado de cada box (offsets por arquivo, passes já
+contados, totais e falhas ativas no `COUNTER_DB_PATH`) é guardado pelo **id da fonte** (`ueapd-m1`/`ueapd-m2`) e pela
+`key` da tag, então IP novo com o mesmo id continua de onde parou, sem contar de novo; tag nova começa do zero com os
+passes que vierem depois; tag removida para de publicar. Não troque o id da fonte nem a `key` de uma tag contadora de
+um box em produção (id novo = 1º contato de novo; `key` nova = acumulado recomeça do zero).
+
+Dispositivo `ueapd` no servidor (`gateways.devices[]`, mesmos campos de `sources[]` do mapa):
+`{"id": "ueapd-m1", "protocol": "ueapd", "base_url": "http://192.168.1.15:8003", "line": "hipot", "poll_interval_s": 2,
+"timeout_s": 5, "timestamps": "gateway", "max_clock_skew_s": 2, "backfill": "none", "default_fault_code": 301,
+"fault_codes": {"ERRO_TRANSFERENCIA": 101}}` — obrigatórios `id`, `protocol`, `base_url` (`http(s)://host[:porta]`,
+sem usuário/senha; `${VAR:-padrão}` permitido); os demais têm os padrões acima (`poll_interval_s` 0,2–300,
+`timeout_s` 0,5–120, `backfill` `none|latest_day|all`, `timestamps` `gateway|source`, `fault_codes` = inteiros > 0).
+Tag: `{"key", "tag_id", "source": "ueapd-m1", "semantic_role", "address": "<seletor>"}` (seletores da tabela acima).
+
+**Plano B — mapa em arquivo** (sem servidor de configuração, bancada, demonstração): continua funcionando igual.
+
 ```bash
 python -m edge.src.provision --map edge/config/ueapd.example.json --out edge/config/ueapd.local.json
 UEAPD_M1_URL=http://192.168.1.15:8003 UEAPD_M2_URL=http://192.168.1.16:8003 \
@@ -328,9 +357,9 @@ UEAPD_M1_URL=http://127.0.0.1:18003 UEAPD_M2_URL=http://127.0.0.1:18004 UEAPD_TI
   PLANT_MAP_PATH=edge/config/ueapd.local.json python -m edge.src.gateway
 ```
 
-Limites conhecidos: a configuração remota do servidor (`/api/gateways/{id}/config`, docs/gateways.md) ainda só
-conhece fontes OPC UA/Modbus — o mapa `ueapd` vai por arquivo (`PLANT_MAP_PATH`); eventos de manutenção que não são
-falha do CLP (leitor, pontes, transporte preso) ainda não viram tag.
+Limites conhecidos: eventos de manutenção que não são falha do CLP (leitor, pontes, transporte preso) ainda não viram
+tag. Testes: `edge/tests/test_ueapd.py` (driver) e `edge/tests/test_ueapd_remote.py` (configuração remota, recarga
+com IP novo sem contagem dupla, seletor inválido vindo do servidor).
 
 ## Preditiva — o que o edge entrega (docs/predictive.md P-1)
 

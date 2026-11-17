@@ -9,8 +9,11 @@ são mosquitto_pub/mosquitto_sub em containers na mesma rede.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import secrets
 import re
 import shutil
 import subprocess
@@ -69,6 +72,10 @@ class Broker:
         self.gw_dir = tmp / "gw"
         self.gw_dir.mkdir()
         self.gw_file = self.gw_dir / "gateways.conf"
+        # volume nomeado mqtt-app (fm_server escreve, broker lê) → diretório do host no teste
+        self.app_dir = tmp / "app"
+        self.app_dir.mkdir()
+        self.app_file = self.app_dir / "gateways.app.conf"
         self.env_file = tmp / "prod.env"
         self.tls = "true"
 
@@ -94,15 +101,17 @@ class Broker:
         for v in svc["volumes"]:
             if v["type"] == "bind":
                 args += ["-v", f"{v['source']}:{v['target']}" + (":ro" if v.get("read_only") else "")]
-            # volumes nomeados (data) ficam efêmeros no teste
+            elif v["type"] == "volume" and v["source"] == "mqtt-app":
+                args += ["-v", f"{self.app_dir}:{v['target']}" + (":ro" if v.get("read_only") else "")]
+            # demais volumes nomeados (data) ficam efêmeros no teste
         args += ["--entrypoint", svc["entrypoint"][0], IMAGE, *svc["entrypoint"][1:], *svc["command"]]
         return args
 
-    def start(self) -> dict:
+    def start(self, extra_env: dict | None = None) -> dict:
         svc = self.service()
         assert svc["image"] == IMAGE
         sh("docker", "network", "create", self.net)
-        sh(*self.run_args(svc, self.name))
+        sh(*self.run_args(svc, self.name, extra_env))
         health = svc["healthcheck"]["test"]
         assert health[0] == "CMD-SHELL"
         cmd = health[1].replace("$$", "$")   # `config --format json` mantém o "$$" de escape do compose
@@ -252,18 +261,24 @@ def test_gateway_script_rejects_bad_input(tmp_path, user, tenant):
     assert not (tmp_path / "g.conf").exists() or "evil" not in (tmp_path / "g.conf").read_text()
 
 
-def _render_fails(broker, tmp_path, env: dict, gateways: str | None = None, certs: bool = True):
+def _render_fails(broker, tmp_path, env: dict, gateways: str | None = None, certs: bool = True,
+                  app: str | bytes | None = None):
     """Roda o entrypoint de produção num container avulso e espera que ele recuse subir."""
     gw = tmp_path / "gw"
     gw.mkdir(exist_ok=True)
     if gateways is not None:
         (gw / "gateways.conf").write_text(gateways)
+    app_dir = tmp_path / "app"
+    app_dir.mkdir(exist_ok=True)
+    if app is not None:
+        (app_dir / "gateways.app.conf").write_bytes(app if isinstance(app, bytes) else app.encode())
     certs_dir = broker.certs if certs else tmp_path / "nocerts"
     certs_dir.mkdir(exist_ok=True)
     base = {"MQTT_SERVER_USERNAME": SERVER_USER, "MQTT_SERVER_PASSWORD": SERVER_PW, "MQTT_TLS_ENABLED": "true"}
     args = ["docker", "run", "--rm", "-v", f"{ROOT}/infra/mosquitto/prod:/fm:ro",
             "-v", f"{ROOT}/infra/mosquitto/prod/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro",
-            "-v", f"{gw}:/mosquitto/gateways:ro", "-v", f"{certs_dir}:/mosquitto/certs:ro"]
+            "-v", f"{gw}:/mosquitto/gateways:ro", "-v", f"{certs_dir}:/mosquitto/certs:ro",
+            "-v", f"{app_dir}:/mosquitto/app:ro"]
     for k, v in {**base, **env}.items():
         args += ["-e", f"{k}={v}"]
     args += ["--entrypoint", "/bin/sh", IMAGE, "/fm/entrypoint.sh", "true"]
@@ -372,3 +387,222 @@ def test_inflight_window_matches_server():
         m = re.search(r"^max_inflight_messages\s+(\d+)\s*$", (ROOT / conf).read_text(), re.M)
         assert m, conf
         assert int(m.group(1)) >= server_window >= 2000, conf
+
+
+
+# ── Credenciais sincronizadas pelo servidor (app file, volume mqtt-app) — sprint C1 ─────────────────────────────
+
+APP_HEADER = "# GERADO pelo fm_server (MQTT_APP_GATEWAYS_FILE) — não edite; refeito a cada mudança de gateway\n"
+POLL_S = 1
+
+
+def server_hash(password: str, iterations: int = 101) -> str:
+    """Mesmo formato de server/src/services/gateways.py mosquitto_hash (sha512-pbkdf2, $7$<iter>$<salt>$<hash>)."""
+    salt = secrets.token_bytes(12)
+    dk = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, iterations, dklen=64)
+    return f"$7${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}"
+
+
+def write_app_file(b: Broker, lines: list[str] | bytes) -> None:
+    """Escrita atômica como o servidor faz (tmp no mesmo diretório + os.replace), modo 0644."""
+    tmp = b.app_dir / ".gateways.app.conf.tmp"
+    tmp.write_bytes(lines if isinstance(lines, bytes) else (APP_HEADER + "".join(f"{x}\n" for x in lines)).encode())
+    tmp.chmod(0o644)
+    os.replace(tmp, b.app_file)
+
+
+def wait_for(pred, timeout: float = 15.0, step: float = 0.5) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(step)
+    return False
+
+
+def logs(b: Broker) -> str:
+    r = sh("docker", "logs", b.name, check=False)
+    return r.stdout + r.stderr
+
+
+@pytest.fixture(scope="module")
+def app_broker(tmp_path_factory):
+    """Broker de produção com um gateway do operador (gw-op, tenant A) e app file inicialmente AUSENTE,
+    recarga a cada 1 s."""
+    tmp = tmp_path_factory.mktemp("mqttapp")
+    b = Broker(tmp)
+    make_certs(b.certs)
+    b.pw_op = add_gateway(b.gw_file, "gw-op", TENANT_A)
+    b.pw_app = secrets.token_urlsafe(24)
+    b.pw_app2 = secrets.token_urlsafe(24)
+    try:
+        b.svc = b.start({"MQTT_RELOAD_POLL_S": str(POLL_S)})
+        yield b
+    finally:
+        b.stop()
+
+
+def test_compose_shares_the_app_gateways_volume_between_server_and_broker(tmp_path):
+    b = Broker(tmp_path)
+    b.service()
+    cfg = json.loads(sh("docker", "compose", "--env-file", str(b.env_file), "-f",
+                        str(ROOT / "infra/docker-compose.prod.yml"), "config", "--format", "json").stdout)
+    assert "mqtt-app" in cfg["volumes"]
+    mosq, server = cfg["services"]["mosquitto"], cfg["services"]["server"]
+    (mv,) = [v for v in mosq["volumes"] if v.get("source") == "mqtt-app"]
+    (sv,) = [v for v in server["volumes"] if v.get("source") == "mqtt-app"]
+    assert (mv["type"], mv["target"], mv.get("read_only")) == ("volume", "/mosquitto/app", True)
+    assert (sv["type"], sv["target"]) == ("volume", "/app/data/mqtt") and not sv.get("read_only")
+    assert mosq["environment"]["MQTT_APP_GATEWAYS_FILE"] == "/mosquitto/app/gateways.app.conf"
+    assert server["environment"]["MQTT_APP_GATEWAYS_FILE"] == "/app/data/mqtt/gateways.app.conf"
+    # o servidor (uid 10001) precisa poder escrever no volume novo: o diretório nasce na imagem com dono app
+    dockerfile = (ROOT / "server/Dockerfile").read_text()
+    assert re.search(r"mkdir -p [^&\n]*/app/data/mqtt[^&\n]*&& chown -R app /app", dockerfile)
+
+
+def test_broker_starts_without_app_file(app_broker):
+    assert not app_broker.app_file.exists()
+    assert app_broker.pub("gw-op", app_broker.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+    assert "operador: 1, app: 0" in logs(app_broker)
+
+
+def test_app_file_gateway_is_picked_up_without_restart_and_confined_to_its_tenant(app_broker):
+    b = app_broker
+    started = sh("docker", "inspect", "-f", "{{.State.StartedAt}}", b.name).stdout
+    write_app_file(b, [f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}"])
+    assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+    assert sh("docker", "inspect", "-f", "{{.State.StartedAt}}", b.name).stdout == started, "não pode reiniciar"
+    acl = sh("docker", "exec", b.name, "cat", "/mosquitto/runtime/acl").stdout
+    assert f"user gw-app-1\ntopic readwrite factory/{TENANT_B}/#" in acl
+
+    sub = b.subscribe(SERVER_USER, SERVER_PW, "factory/#", count=2)
+    own = b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/tag-1", "app-own")
+    cross = b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_A}/sensors/tag-1", "app-cross")
+    op = b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/tag-1", "op-own")
+    out, _ = sub.communicate(timeout=30)
+    assert own.returncode == 0 and cross.returncode == 0 and op.returncode == 0
+    assert "app-own" in out and "op-own" in out
+    assert "app-cross" not in out
+
+    # não lê outro tenant
+    sub_app = b.subscribe("gw-app-1", b.pw_app, "factory/#", count=1, tls=True)
+    b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/secret", "a-secret")
+    b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/mine", "b-mine")
+    out, _ = sub_app.communicate(timeout=30)
+    assert "b-mine" in out and "a-secret" not in out
+
+
+def test_watcher_is_quiet_while_nothing_changes(app_broker):
+    before = logs(app_broker).count("fm-mqtt-render:")
+    time.sleep(4 * POLL_S + 1)
+    assert logs(app_broker).count("fm-mqtt-render:") == before
+
+
+def _open_session(b: Broker, user: str, pw: str, topic: str) -> subprocess.Popen:
+    """Sessão aberta (TLS, como um gateway em campo) que fica assinando até ser derrubada."""
+    p = subprocess.Popen(["docker", "run", "--rm", "--network", b.net, "-v", f"{b.certs}:/certs:ro",
+                          "--entrypoint", "mosquitto_sub", IMAGE, "-h", HOST, "-p", "8883", "--cafile", "/certs/ca.pem",
+                          "-u", user, "-P", pw, "-t", topic, "-v", "-W", "60"],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(1.5)
+    assert p.poll() is None, p.communicate()
+    return p
+
+
+def test_removed_app_gateway_is_refused_and_its_open_session_dropped(app_broker):
+    """Revogação: a linha sai do app file → no próximo reload o mosquitto 2.0 recheca os clientes conectados e
+    derruba a sessão aberta do usuário removido; novas conexões são recusadas. As sessões dos demais usuários
+    (operador, outros gateways do app) atravessam o reload sem cair."""
+    b = app_broker
+    s_revoked = _open_session(b, "gw-app-1", b.pw_app, f"factory/{TENANT_B}/#")
+    s_op = _open_session(b, "gw-op", b.pw_op, f"factory/{TENANT_A}/#")
+    try:
+        write_app_file(b, [f"gw-app-2 {TENANT_A} {server_hash(b.pw_app2)}"])   # gw-app-1 revogado, gw-app-2 novo
+        assert wait_for(lambda: b.pub("gw-app-2", b.pw_app2, f"factory/{TENANT_A}/sensors/t").returncode == 0,
+                        timeout=10 * POLL_S + 10), logs(b)
+        assert b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode != 0
+        assert wait_for(lambda: s_revoked.poll() is not None, timeout=10), "sessão revogada continuou aberta"
+        assert s_op.poll() is None, "o reload derrubou a sessão de um usuário válido"
+        b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/after-reload", "still-here")
+        time.sleep(1)
+    finally:
+        for p in (s_revoked, s_op):
+            if p.poll() is None:
+                p.terminate()
+    out, _ = s_op.communicate(timeout=30)
+    assert "still-here" in out
+    # app file apagado (sincronização desligada/volume novo): os gateways do app saem, o do operador fica
+    b.app_file.unlink()
+    assert wait_for(lambda: b.pub("gw-app-2", b.pw_app2, f"factory/{TENANT_A}/sensors/t").returncode != 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+    assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+
+
+def test_garbage_app_file_never_stops_the_broker_nor_drops_valid_users(app_broker):
+    b = app_broker
+    pw_bad_override = secrets.token_urlsafe(24)
+    write_app_file(b, [
+        "lixo",
+        f"gw-x not-a-uuid {server_hash('x')}",
+        f"gw-y {TENANT_A}/# {server_hash('x')}",
+        f"gw-z {TENANT_A} plaintextpassword",
+        f"gw-w {TENANT_A} $7$101$abc$def ; rm -rf /",
+        f"gw-op {TENANT_B} {server_hash(pw_bad_override)}",          # colide com o operador: o do operador vale
+        f"{SERVER_USER} {TENANT_A} {server_hash(pw_bad_override)}",  # colide com o backend
+        f"fm-health {TENANT_A} {server_hash(pw_bad_override)}",
+        f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}",               # a única linha válida
+        f"gw-app-1 {TENANT_A} {server_hash(pw_bad_override)}",       # repetida
+    ])
+    assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+    text = logs(b)
+    assert "AVISO" in text and "não é UUID" in text and "repetido 'gw-op'" in text
+    assert "app: 1, ignorados: 9" in text
+    acl = sh("docker", "exec", b.name, "cat", "/mosquitto/runtime/acl").stdout
+    assert acl.count("user gw-op\n") == 1 and f"user gw-op\ntopic readwrite factory/{TENANT_A}/#" in acl
+    assert "rm -rf" not in acl and "gw-app-1\ntopic readwrite factory/" + TENANT_A not in acl
+    assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+    assert b.pub("gw-op", pw_bad_override, f"factory/{TENANT_B}/sensors/t").returncode != 0
+    assert b.pub(SERVER_USER, pw_bad_override, f"factory/{TENANT_A}/sensors/t", tls=False).returncode != 0
+
+    # binário/vazio: só as linhas do app somem; broker saudável, operador e backend seguem
+    write_app_file(b, os.urandom(4096) + b"\n\x00\xff")
+    assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode != 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+    assert sh("docker", "inspect", "-f", "{{.State.Running}}", b.name).stdout.strip() == "true"
+    assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+    assert b.pub(SERVER_USER, SERVER_PW, "health/x", tls=False).returncode == 0   # autentica (ACL nega a escrita)
+
+
+def test_invalid_operator_file_at_runtime_keeps_the_config_in_use(app_broker):
+    b = app_broker
+    write_app_file(b, [f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}"])
+    assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+    good = b.gw_file.read_text()
+    try:
+        b.gw_file.write_text(good + "gw-broken not-a-uuid $7$1$a$b\n")
+        assert wait_for(lambda: "render falhou" in logs(b), timeout=10 * POLL_S + 10), logs(b)
+        # nada mudou: operador e app continuam valendo
+        assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+        assert b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0
+        n_fail = logs(b).count("render falhou")
+        time.sleep(3 * POLL_S + 1)
+        assert logs(b).count("render falhou") == n_fail, "não repete o erro enquanto o arquivo não muda"
+    finally:
+        b.gw_file.write_text(good)
+    # corrigido → volta a recarregar sozinho
+    pw_new = secrets.token_urlsafe(24)
+    write_app_file(b, [f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}", f"gw-app-3 {TENANT_A} {server_hash(pw_new)}"])
+    assert wait_for(lambda: b.pub("gw-app-3", pw_new, f"factory/{TENANT_A}/sensors/t").returncode == 0,
+                    timeout=10 * POLL_S + 10), logs(b)
+
+
+def test_entrypoint_starts_with_garbage_app_file_but_operator_file_stays_strict(broker, tmp_path):
+    ok = _render_fails(broker, tmp_path, {}, gateways="", app=b"garb\xff\xfeage\nfoo bar\n")
+    assert ok.returncode == 0, ok.stderr
+    assert "AVISO" in ok.stderr and "app: 0, ignorados: 2" in ok.stdout
+    r = _render_fails(broker, tmp_path, {}, gateways=f"gw-x {TENANT_A} plaintextpassword\n",
+                      app=f"gw-app {TENANT_A} {server_hash('x')}\n")
+    assert r.returncode != 0 and "hash inválido" in r.stderr

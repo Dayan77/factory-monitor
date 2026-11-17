@@ -63,6 +63,7 @@ ACL
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 # operador: regra histórica; app file: formato exato do mosquitto_passwd ($7$<iter>$<b64>$<b64> ou $6$<b64>$<b64>)
 OP_HASH_RE='^\$[67]\$[A-Za-z0-9+/=$]+$'
+# shellcheck disable=SC2016  # $ literal na regex
 APP_HASH_RE='^\$(7\$[0-9]{1,7}|6)\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$'
 seen=" $MQTT_SERVER_USERNAME $HEALTH_USER "
 n_op=0

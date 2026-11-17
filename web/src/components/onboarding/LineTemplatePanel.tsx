@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import Badge from "@/components/ui/Badge";
@@ -37,28 +37,32 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
   const [gwChoice, setGwChoice] = useState("");
   const [newGwName, setNewGwName] = useState("Gateway da linha");
   const [touched, setTouched] = useState(false);
+  const [nameEdited, setNameEdited] = useState(false);
   const [applied, setApplied] = useState<Applied | null>(null);
   const [createdGw, setCreatedGw] = useState<Gateway | null>(null);
-  const phase = useRef<"gateway" | "apply">("apply");
+  const [failedAt, setFailedAt] = useState<"gateway" | "apply">("apply");
 
   // URLs start at the template defaults (kept when the user switches back and forth between templates)
   useEffect(() => {
     if (!tpl) return;
+    if (!nameEdited) setLineName(tpl.line_name || DEFAULT_LINE_NAME);
     setUrls((u) => {
       const next = { ...u };
       for (const d of tpl.devices) if (next[d.id] === undefined) next[d.id] = d.default_base_url;
       return next;
     });
-  }, [tpl]);
+  }, [tpl]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const withGateway = gwChoice !== "";
   const urlErrors = useMemo(() => {
     const out: Record<string, string> = {};
+    if (!withGateway) return out; // the URLs only go to a gateway
     for (const d of tpl?.devices ?? []) {
       const e = baseUrlError(urls[d.id] ?? d.default_base_url);
       if (e) out[d.id] = e;
     }
     return out;
-  }, [tpl, urls]);
+  }, [tpl, urls, withGateway]);
   const nameError = lineName.trim() ? null : "informe o nome da linha";
   const gwNameError = gwChoice === NEW_GW && !newGwName.trim() ? "informe o nome do gateway" : null;
   const valid = !!tpl && !nameError && !gwNameError && Object.keys(urlErrors).length === 0;
@@ -68,16 +72,21 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
       const t = tpl as LineTemplate;
       let gateway: Gateway | null = (gws.data ?? []).find((g) => g.id === gwChoice) ?? (createdGw?.id === gwChoice ? createdGw : null);
       if (gwChoice === NEW_GW) {
-        phase.current = "gateway";
-        gateway = (await gatewaysApi.create({ name: newGwName.trim(), plant_id: plant.id })).data;
+        try {
+          gateway = (await gatewaysApi.create({ name: newGwName.trim(), plant_id: plant.id })).data;
+        } catch (e) {
+          setFailedAt("gateway");
+          throw e;
+        }
         // a retry after a failed apply reuses this gateway instead of creating another one
         setCreatedGw(gateway);
         setGwChoice(gateway.id);
       }
-      phase.current = "apply";
-      const devices = Object.fromEntries(t.devices.map((d) => [d.id, { base_url: (urls[d.id] ?? d.default_base_url).trim() }]));
+      setFailedAt("apply");
+      // the box URLs are written into the gateway's devices: without a gateway there is nowhere to keep them
+      const devices = gateway ? Object.fromEntries(t.devices.map((d) => [d.id, { base_url: (urls[d.id] ?? d.default_base_url).trim() }])) : {};
       const r = await lineTemplatesApi.apply(t.key, { plant_id: plant.id, line_name: lineName.trim(), gateway_id: gateway?.id ?? null, devices });
-      return { result: r.data, lineName: lineName.trim(), template: t, gateway };
+      return { result: r.data, lineName: r.data.line_name ?? lineName.trim(), template: t, gateway };
     },
     onSuccess: (a) => {
       setApplied(a);
@@ -113,7 +122,7 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
         <>
           <fieldset className="space-y-2">
             <legend className="mb-1 text-caption font-medium text-fg-muted">Modelo</legend>
-            <div className="grid gap-2 md:grid-cols-2">
+            <div className={clsx("grid gap-2", (templates.data ?? []).length > 1 && "md:grid-cols-2")}>
               {(templates.data ?? []).map((t) => (
                 <label key={t.key} className={clsx("flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border bg-surface p-3 transition-colors",
                   t.key === tpl.key ? "border-accent ring-2 ring-accent/30" : "border-line hover:border-line-strong")}>
@@ -130,7 +139,7 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nome da linha" htmlFor="ob-tpl-line" error={touched ? nameError : undefined}>
-              <input id="ob-tpl-line" value={lineName} onChange={(e) => setLineName(e.target.value)} className={inputClass} autoComplete="off" />
+              <input id="ob-tpl-line" value={lineName} onChange={(e) => { setLineName(e.target.value); setNameEdited(true); }} className={inputClass} autoComplete="off" />
             </Field>
             <Field label="Gateway que lê os boxes (opcional)" htmlFor="ob-tpl-gw"
               hint={gwChoice ? "Os dispositivos e as tags vão para este gateway: a configuração chega sozinha a ele." : "Sem gateway: só o cadastro; atribua as tags depois em Gateways."}>
@@ -151,6 +160,7 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
 
           <fieldset className="space-y-2">
             <legend className="mb-1 text-caption font-medium text-fg-muted">Endereço dos boxes na rede da fábrica</legend>
+            {!withGateway && <p className="text-caption text-warn" data-testid="tpl-urls-need-gw">As URLs ficam gravadas no gateway que lê os boxes: escolha ou crie um gateway acima para usá-las.</p>}
             <div className="grid gap-4 sm:grid-cols-2">
               {tpl.devices.map((d) => {
                 const v = urls[d.id] ?? d.default_base_url;
@@ -158,7 +168,7 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
                 return (
                   <Field key={d.id} label={`${d.label} — URL`} htmlFor={`ob-tpl-url-${d.id}`} error={err && (touched || v !== d.default_base_url) ? err : undefined}
                     hint={`Ex.: ${d.default_base_url} (dispositivo ${d.id})`}>
-                    <input id={`ob-tpl-url-${d.id}`} value={v} inputMode="url" autoComplete="off" spellCheck={false} aria-invalid={!!err}
+                    <input id={`ob-tpl-url-${d.id}`} value={v} disabled={!withGateway} inputMode="url" autoComplete="off" spellCheck={false} aria-invalid={!!err}
                       onChange={(e) => setUrls((u) => ({ ...u, [d.id]: e.target.value }))} className={clsx(inputClass, "font-mono")} />
                   </Field>
                 );
@@ -170,12 +180,12 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
             <Button variant="primary" onClick={submit} loading={apply.isPending} disabled={touched && !valid} data-testid="tpl-apply">
               {applied ? "Aplicar de novo" : "Aplicar modelo"}
             </Button>
-            <span className="text-caption text-fg-subtle">{tpl.machines.length} máquina(s) · {tpl.devices.length} box(es)</span>
+            <span className="text-caption text-fg-subtle">{tpl.machines.length} máquina(s){tpl.tag_count != null ? ` · ${tpl.tag_count} tag(s)` : ""} · {tpl.devices.length} box(es)</span>
           </div>
 
           {apply.isError && (
             <p role="alert" className="rounded-lg border border-danger-solid/40 bg-danger-solid/10 p-3 text-caption text-danger" data-testid="tpl-error">
-              {phase.current === "gateway"
+              {failedAt === "gateway"
                 ? apiErrorMessage(apply.error, "Não foi possível criar o gateway.")
                 : apiErrorMessage(apply.error, "Não foi possível aplicar o modelo de linha.")}
             </p>
@@ -196,13 +206,13 @@ function AppliedResult({ a, gateways }: { a: Applied; gateways: Gateway[] | unde
     onSuccess: setToken,
   });
   return (
-    <div role="status" className="space-y-3 rounded-lg border border-ok-solid/40 bg-ok-solid/10 p-3 text-body text-fg" data-testid="tpl-result">
-      <p className="font-semibold text-ok">Modelo aplicado: {a.lineName}</p>
+    <div className="space-y-3 rounded-lg border border-ok-solid/40 bg-ok-solid/10 p-3 text-body text-fg" data-testid="tpl-result">
+      <p role="status" className="font-semibold text-ok">Modelo aplicado: {a.lineName}{r.line_created === true ? " (linha criada)" : r.line_created === false ? " (linha existente atualizada)" : ""}</p>
       <ul className="space-y-1 text-caption text-fg-muted">
-        <li>Máquinas: {r.machines.length > 0 ? r.machines.map((m) => m.name).join(", ") : "nenhuma"}</li>
-        <li>Tags: {formatInt(r.tags_created)} criada(s), {formatInt(r.tags_updated)} atualizada(s)</li>
+        <li>Máquinas: {r.machines.length > 0 ? r.machines.map((m) => `${m.name}${m.created === true ? " (nova)" : ""}`).join(", ") : "nenhuma"}</li>
+        <li>Tags: {formatInt(r.tags_created)} criada(s), {formatInt(r.tags_updated)} atualizada(s){r.tags_unchanged != null ? `, ${formatInt(r.tags_unchanged)} sem mudança` : ""}</li>
         {r.gateway
-          ? <li>Gateway {gw?.name ?? ""}: {formatInt(deviceCount(r.gateway.devices))} dispositivo(s) configurado(s), {formatInt(r.gateway.tags_assigned)} tag(s) atribuída(s)</li>
+          ? <li>Gateway{gw ? ` ${gw.name}` : ""} — {formatInt(deviceCount(r.gateway.devices))} dispositivo(s) configurado(s), {formatInt(r.gateway.tags_assigned)} tag(s) atribuída(s){r.gateway.config_version != null ? ` · configuração v${r.gateway.config_version}` : ""}</li>
           : <li>Sem gateway: atribua as tags a um gateway em Configurações → Gateways.</li>}
       </ul>
       {r.warnings.length > 0 && (

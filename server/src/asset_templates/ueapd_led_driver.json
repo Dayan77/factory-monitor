@@ -1,0 +1,389 @@
+{
+  "key": "ueapd-led-driver",
+  "name": "Linha ueaPowerDriver (M1 Hipot + M2 ATS2)",
+  "description": "Linha de LED driver ueaPowerDriver: M1 (laser, hipot e câmera) e M2 (leitor DM, ATS2 e funcional), lidas pela API HTTP dos boxes (fonte ueapd do gateway). Cria a linha, as 2 máquinas com o mapa de códigos de falha, as 8 posições ligadas aos contadores de ciclos e as 18 tags; com um gateway, grava os boxes como dispositivos e atribui as tags a ele.",
+  "source_of_truth": "edge/config/ueapd.example.json (teste server/tests/test_line_templates.py garante paridade)",
+  "line_name": "Linha LED Driver",
+  "output_machine": "M2 ATS2",
+  "machines": [
+    {
+      "name": "M1 Hipot",
+      "model": "ueaPowerDriver M1 (hipot)",
+      "serial_number": "UEAPD-M1",
+      "ideal_cycle_time_s": 18.0,
+      "fault_code_map": {
+        "101": "EQP-01",
+        "102": "EQP-01",
+        "103": "EQP-01",
+        "301": "EQP-04",
+        "302": "EQP-04",
+        "303": "EQP-04",
+        "401": "EQP-03",
+        "501": "EQP-05"
+      },
+      "positions": [
+        {
+          "name": "Laser 1",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m1.laser_1.cycles"
+        },
+        {
+          "name": "Laser 2",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m1.laser_2.cycles"
+        },
+        {
+          "name": "Hipot 1",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m1.hipot_1.cycles"
+        },
+        {
+          "name": "Hipot 2 + Câmera",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m1.hipot_2.cycles"
+        }
+      ]
+    },
+    {
+      "name": "M2 ATS2",
+      "model": "ueaPowerDriver M2 (ATS2)",
+      "serial_number": "UEAPD-M2",
+      "ideal_cycle_time_s": 18.0,
+      "fault_code_map": {
+        "101": "EQP-01",
+        "102": "EQP-01",
+        "103": "EQP-01",
+        "301": "EQP-04",
+        "302": "EQP-04",
+        "303": "EQP-04",
+        "401": "EQP-03",
+        "501": "EQP-05"
+      },
+      "positions": [
+        {
+          "name": "Leitor DM (entrada)",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m2.leitura.cycles"
+        },
+        {
+          "name": "ATS2-1",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m2.ats2_1.cycles"
+        },
+        {
+          "name": "ATS2-2",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m2.ats2_2.cycles"
+        },
+        {
+          "name": "Funcional",
+          "component_type": "other",
+          "cycles_per_part": 1,
+          "counter_tag": "ledd.m2.funcional.cycles"
+        }
+      ]
+    }
+  ],
+  "devices": [
+    {
+      "id": "ueapd-m1",
+      "label": "Box M1 (hipot)",
+      "default_base_url": "http://192.168.1.15:8003",
+      "protocol": "ueapd",
+      "line": "hipot",
+      "poll_interval_s": 2,
+      "timeout_s": 5,
+      "timestamps": "gateway",
+      "max_clock_skew_s": 2.0,
+      "backfill": "none",
+      "default_fault_code": 301,
+      "fault_codes": {
+        "ERRO_TRANSFERENCIA": 101,
+        "ERRO_STOP": 102,
+        "SAFETY_CONVEYOR": 103,
+        "ERRO_CLAMP": 401,
+        "GRAVADORA_ERRO": 501
+      }
+    },
+    {
+      "id": "ueapd-m2",
+      "label": "Box M2 (ATS2)",
+      "default_base_url": "http://192.168.1.16:8003",
+      "protocol": "ueapd",
+      "line": "ats2",
+      "poll_interval_s": 2,
+      "timeout_s": 5,
+      "timestamps": "gateway",
+      "max_clock_skew_s": 2.0,
+      "backfill": "none",
+      "default_fault_code": 301,
+      "fault_codes": {
+        "ERRO_TRANSFERENCIA": 101,
+        "ERRO_STOP": 102,
+        "SAFETY_CONVEYOR": 103,
+        "ERRO_CLAMP": 401
+      }
+    }
+  ],
+  "tags": [
+    {
+      "key": "ledd.m1.run_state",
+      "name": "Em operação (armado, gate OK, sem falha)",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:run",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.fault_state",
+      "name": "Código de falha do CLP",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:fault",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.parts_good",
+      "name": "Peças boas (veredito OK)",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "passes:good",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.parts_scrap",
+      "name": "Peças refugadas (veredito NG)",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "passes:scrap",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.cadence",
+      "name": "Cadência sustentada",
+      "machine": "M1 Hipot",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "pcs/h",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "state:cadence",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.laser_1.cycles",
+      "name": "Ciclos Laser 1",
+      "machine": "M1 Hipot",
+      "position": "Laser 1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:laser_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.laser_2.cycles",
+      "name": "Ciclos Laser 2",
+      "machine": "M1 Hipot",
+      "position": "Laser 2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:laser_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.hipot_1.cycles",
+      "name": "Ciclos Hipot 1",
+      "machine": "M1 Hipot",
+      "position": "Hipot 1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:hipot_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m1.hipot_2.cycles",
+      "name": "Ciclos Hipot 2 + Câmera",
+      "machine": "M1 Hipot",
+      "position": "Hipot 2 + Câmera",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m1",
+      "address": "cycles:hipot_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.run_state",
+      "name": "Em operação (armado, gate OK, sem falha)",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "run_state",
+      "data_type": "bool",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:run",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.fault_state",
+      "name": "Código de falha do CLP",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "fault_state",
+      "data_type": "int",
+      "unit": "",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:fault",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.parts_good",
+      "name": "Peças boas (veredito OK)",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "part_counter_good",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "passes:good",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.parts_scrap",
+      "name": "Peças refugadas (veredito NG)",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "part_counter_scrap",
+      "data_type": "int",
+      "unit": "pcs",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "passes:scrap",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.cadence",
+      "name": "Cadência sustentada",
+      "machine": "M2 ATS2",
+      "position": null,
+      "semantic_role": "analog",
+      "data_type": "float",
+      "unit": "pcs/h",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "state:cadence",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.leitura.cycles",
+      "name": "Ciclos Leitor DM (entrada)",
+      "machine": "M2 ATS2",
+      "position": "Leitor DM (entrada)",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:leitura",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.ats2_1.cycles",
+      "name": "Ciclos ATS2-1",
+      "machine": "M2 ATS2",
+      "position": "ATS2-1",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:ats2_1",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.ats2_2.cycles",
+      "name": "Ciclos ATS2-2",
+      "machine": "M2 ATS2",
+      "position": "ATS2-2",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:ats2_2",
+      "poll_interval_ms": 2000
+    },
+    {
+      "key": "ledd.m2.funcional.cycles",
+      "name": "Ciclos Funcional",
+      "machine": "M2 ATS2",
+      "position": "Funcional",
+      "semantic_role": "cycle_counter",
+      "data_type": "int",
+      "unit": "ciclos",
+      "counter_max": null,
+      "max_rate_per_s": null,
+      "source": "ueapd-m2",
+      "address": "cycles:funcional",
+      "poll_interval_ms": 2000
+    }
+  ]
+}
