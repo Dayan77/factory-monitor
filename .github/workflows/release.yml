@@ -166,8 +166,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Só as notas e os SBOMs: o docker/build-push-action também sobe registros de build (*.dockerbuild) que não
+      # são zip — baixar "tudo" quebrava este job.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: release-notes
+          path: artifacts/release-notes
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: sbom-*
           path: artifacts
       - name: Criar a release com notas do CHANGELOG e SBOMs
         env:
@@ -177,7 +184,14 @@ jobs:
         run: |
           pre=""
           case "$VERSION" in *-*) pre="--prerelease" ;; esac
-          # shellcheck disable=SC2086
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "FactoryConnect $VERSION" \
-            --notes-file artifacts/release-notes/release-notes.md $pre --verify-tag \
-            artifacts/sbom-*/*.cdx.json
+          # Release já criada à mão na interface do GitHub (que também cria a tag): atualiza notas e anexos.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "FactoryConnect $VERSION" \
+              --notes-file artifacts/release-notes/release-notes.md
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber artifacts/sbom-*/*.cdx.json
+          else
+            # shellcheck disable=SC2086
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "FactoryConnect $VERSION" \
+              --notes-file artifacts/release-notes/release-notes.md $pre --verify-tag \
+              artifacts/sbom-*/*.cdx.json
+          fi
