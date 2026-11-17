@@ -94,7 +94,7 @@ services:
   # Portas publicadas só em 127.0.0.1 para o backend rodando fora do Docker
   # (MEDIAMTX_API_URL=http://localhost:9997, MEDIAMTX_HLS_URL=http://localhost:8888).
   mediamtx:
-    image: bluenviron/mediamtx:1.21.1
+    image: bluenviron/mediamtx:1.21.2
     container_name: fm_mediamtx
     restart: unless-stopped
     volumes:

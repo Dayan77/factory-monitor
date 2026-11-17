@@ -105,7 +105,7 @@ services:
     networks: [fm-stg-net]
 
   mediamtx:
-    image: bluenviron/mediamtx:1.21.1
+    image: bluenviron/mediamtx:1.21.2
     container_name: fm_stg_mediamtx
     restart: unless-stopped
     logging: *logging
