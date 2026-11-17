@@ -201,6 +201,11 @@ O arquivo `PLANT_MAP_PATH` continua estrito (erro de digitação = não sobe).
 | recarga a quente | `EdgeGateway.apply_plant_map` | para os drivers do mapa antigo, carrega o novo e sobe os drivers — **sem** reiniciar o processo: buffer SQLite, conexão MQTT, contadores de borda (`cycle_pulse`, SQLite por `key`), deadband, timestamps monotônicos e relógios dos dispositivos continuam. Mapa novo inválido → fica o atual (erro no próximo heartbeat). |
 | MQTT | `edge/src/protocols/mqtt_publisher.py` | usuário/senha por gateway: `MQTT_USERNAME`/`MQTT_PASSWORD` do ambiente, senão os do cadastro. TLS: `MQTT_TLS=true`, `MQTT_CA_CERT` (PEM; vazio = CAs do sistema), TLS mútuo opcional `MQTT_CLIENT_CERT` + `MQTT_CLIENT_KEY`; `MQTT_BROKER_PORT` vazio = 8883 com TLS / 1883 sem. Certificado e nome do host sempre verificados, TLS ≥ 1.2; arquivo ausente → o gateway não sobe (código 2). |
 
+Estado em disco: `BUFFER_DB_PATH`, `COUNTER_DB_PATH`, `GATEWAY_CONFIG_CACHE` e `GATEWAY_CREDENTIALS_PATH` (imagem:
+tudo em `/data`). Na partida, antes de abrir o SQLite e de qualquer acesso à rede, o gateway cria os diretórios pais
+que faltarem (modo 0700); se não der (caminho passa por um arquivo, sem permissão) sai com código 2 e uma linha
+`edge_gateway.state_dir_unusable` dizendo qual variável e qual diretório.
+
 Compatibilidade: sem `SERVER_URL`/`ENROLL_CODE`/`GATEWAY_CREDENTIALS_PATH` nada disso roda — `PLANT_MAP_PATH` (mapa em
 arquivo) e `GATEWAY_CONFIG_URL` + `GATEWAY_TOKEN` (Sprint 4) funcionam como antes. O mapa aceita o endereço Modbus no
 formato do servidor (`"unit=2;hr=10:uint16"`) além do inteiro.
