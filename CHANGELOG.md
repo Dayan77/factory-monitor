@@ -16,6 +16,36 @@ processo de release; não há tag nem imagem publicada delas).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
+
+Implantação sem passos manuais (PR #33 e #36).
+
+### Adicionado
+- Implantação → passo 2 → **"Usar um modelo de linha"**: `GET /api/onboarding/line-templates` e
+  `POST /api/onboarding/line-templates/{key}/apply` criam (idempotente) a linha ueaPowerDriver com M1 Hipot + M2 ATS2,
+  8 posições com tag contadora, 18 tags, máquina de saída e mapa de códigos de falha; com um gateway, já grava os boxes
+  nele e atribui as tags (docs/gateways.md).
+- Credencial MQTT dos gateways **automática**: o servidor escreve o *app file* do broker (volume `mqtt-app`) no
+  cadastro/revogação; o Mosquitto de produção recarrega sozinho (sem comando no VPS) e, na revogação, derruba a sessão
+  aberta. `GET /api/gateways/{id}/mqtt` com `managed`/`sync_ok`/`sync_at`/`sync_error` e métricas
+  `fm_mqtt_app_file_*` (docs/operations.md §6).
+- Configuração remota do gateway com fonte `ueapd` (boxes ueaPowerDriver): o gateway roda os boxes só com o código de
+  cadastro, sem mapa local; editor de dispositivos "Box ueaPowerDriver" e atribuição de tags HTTP por box na tela de
+  Gateways.
+- Cadastro e edição de linhas e máquinas pelo app (telas Linhas e Máquinas).
+- `make mqtt-gateway-overlap`: usuários presentes no `gateways.conf` manual e no app.
+
+### Alterado
+- Edge **0.7.0**: mapa remoto validado por item (fonte/tag inválida fica de fora e aparece no heartbeat; o mapa local
+  continua estrito); valores de `${VAR}` mascarados em logs e heartbeat; diretórios de estado criados (0700) ou erro
+  claro; recarga quente sem total menor nem dupla contagem.
+- `${VAR}` no `base_url` de um box só como URL inteira, host inteiro ou porta inteira.
+- Deploy: o preflight não exige mais gateways no `gateways.conf` nem `MQTT_ALLOW_NO_GATEWAYS`.
+- Comando de instalação do gateway usa `ghcr.io/dayan77/factoryconnect-edge:0.7.0` (`VITE_EDGE_IMAGE`).
+- `PATCH /api/machines/{id}`: `null` explícito limpa modelo, nº de série e tempo de ciclo ideal.
+- Imagens: nginx 1.30.6 e atualizações de segurança do Debian no server/edge; dependências npm com advisories
+  corrigidas; `picomatch` GHSA-fc5q-39xc-vjpf aceito (sem versão corrigida, só build/testes).
+
 Sprint 7b — Fase 6 (conclusão): auditoria de KPIs, detectores, escala e gate completo do Sprint 7.
 
 ### Adicionado
@@ -58,9 +88,7 @@ Sprint 7b — Fase 6 (conclusão): auditoria de KPIs, detectores, escala e gate 
   antes 3,8:1), o hover dos botões de perigo vai para `red-700` e o cartão de chamado de emergência usa fundo de
   superfície com borda vermelha.
 
-## [0.7.0] - 2026-10-07
-
-Sprint 7 — Fase 6: endurecimento e prontidão para produção.
+Sprint 7 — Fase 6: endurecimento e prontidão para produção (antes registrado em 2026-10-07, não publicado):
 
 ### Adicionado
 - Autenticação endurecida: rotação de chaves JWT (`kid`), sessões revogáveis, MFA TOTP opcional, redefinição de
