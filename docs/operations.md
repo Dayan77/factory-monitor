@@ -219,12 +219,20 @@ Depois de qualquer rotação: `dc ps` saudável, login no app, mensagens MQTT ch
   compara o cksum do `gateways.app.conf` e do `gateways.conf` do operador; mudou → re-renderiza e manda `SIGHUP`
   ao mosquitto. O gateway recém-cadastrado conecta em ~5 s. As sessões abertas dos demais usuários não caem.
 - **Dois arquivos, duas regras.** `mqtt/gateways.conf` (do operador, §6.2) continua valendo para gateways
-  manuais/legados e é **estrito**: linha inválida impede o broker de subir (ou, num reload, mantém a config em uso).
+  manuais/legados e é **estrito**: linha inválida impede o broker de subir e faz o `make mqtt-reload` falhar
+  (a config em uso fica). Na **recarga automática** um `gateways.conf` inválido não congela o app: o broker mantém
+  os gateways manuais da última config válida, aplica o `gateways.app.conf` mesmo assim (cadastros e revogações
+  feitos no app continuam valendo) e loga, uma vez por mudança, `AVISO: … gateways.conf inválido — mantidos os
+  gateways manuais da última config válida`. Corrija o arquivo: a próxima volta do laço volta ao normal.
   O `gateways.app.conf` é **tolerante**: linha inválida, tenant que não é UUID, hash inválido ou usuário repetido
-  (ou igual a um do operador, ao backend ou a `fm-health`) gera um `AVISO` no log e só aquela linha é ignorada —
-  um arquivo do app com defeito nunca derruba o broker nem os outros usuários. Mesmo usuário nos dois arquivos:
-  **vale o do operador** (para passar um gateway manual para o automático, remova a linha manual). O log de cada
-  render resume: `fm-mqtt-render: ok — N gateway(s) (operador: X, app: Y, ignorados: Z)`.
+  (ou igual ao backend ou a `fm-health`) gera um `AVISO` no log e só aquela linha é ignorada — um arquivo do app
+  com defeito nunca derruba o broker nem os outros usuários. Symlink ou algo que não seja arquivo regular no lugar
+  do `gateways.app.conf` → aviso e nenhum gateway do app. O log nunca repete o conteúdo de uma linha inválida
+  (só o usuário, filtrado). O resumo de cada render: `fm-mqtt-render: ok — N gateway(s) (operador: X, app: Y, ignorados: Z)`.
+- **Mesmo usuário nos dois arquivos: vale a linha manual** e o broker avisa
+  `usuário <X> do app sombreado pelo gateways.conf manual — revogar no app não terá efeito`. Ou seja, **enquanto a
+  linha manual existir, revogar ou remover aquele gateway no app não o desconecta.** Veja o passo de migração
+  em §6.4 (`make mqtt-gateway-overlap`).
 - **TLS** em `8883` para os gateways quando `MQTT_TLS_ENABLED=true` (padrão `false`; certificado em
   `MQTT_TLS_CERT_DIR`, padrão `/opt/factory-monitor/mqtt/certs`: `fullchain.pem` + `privkey.pem`). O gateway liga
   TLS com `MQTT_TLS=true` (+ `MQTT_CA_CERT` = caminho de uma CA PEM; vazio = CAs do sistema; certificado e nome do
@@ -242,8 +250,9 @@ coberto por teste). Se por qualquer motivo a sessão continuar ativa (ex.: reloa
 log), `docker restart fm_mosquitto` derruba todas as sessões e os gateways válidos reconectam sozinhos. Até lá o
 servidor já descarta as leituras das tags do gateway revogado.
 
-Diagnóstico: `docker logs fm_mosquitto | grep -E "fm-mqtt-(render|reload)"` (avisos, resumo de cada recarga) e
-`docker exec fm_server cat /app/data/mqtt/gateways.app.conf` (usuários e tenants; só hashes).
+Diagnóstico: `docker logs fm_mosquitto | grep -E "fm-mqtt-(render|reload)"` (avisos, resumo de cada recarga),
+`docker exec fm_server cat /app/data/mqtt/gateways.app.conf` (usuários e tenants; só hashes) e
+`make mqtt-gateway-overlap` (usuários sombreados pelo arquivo manual).
 
 ### 6.2 Gateway manual (legado / fora do fluxo de cadastro)
 O caminho normal é cadastrar o gateway no app (Implantação → Gateways): a credencial MQTT vem no cadastro e o
@@ -301,6 +310,17 @@ anterior no ar se faltar algum (mensagem `pré-requisitos do MQTT de produção 
    para cada um (um tenant por gateway) e o bloco impresso no `.env` de cada gateway (`MQTT_USERNAME`/`MQTT_PASSWORD`).
    Gateways cadastrados pelo app não precisam de nada aqui. O deploy **não** exige mais gateways no
    `gateways.conf` (o arquivo pode nem existir) e `MQTT_ALLOW_NO_GATEWAYS` deixou de ser lido — pode sair do `.env`.
+   **Migração para as credenciais automáticas: remova do `mqtt/gateways.conf` toda linha cujo usuário também
+   exista no app (os `gw-*` cadastrados pelo app). Enquanto a linha manual existir ela vale no lugar da do app e
+   revogar o gateway no app não tem efeito.** Depois do deploy, com o servidor no ar:
+   ```bash
+   make mqtt-gateway-overlap            # lista os usuários nos dois arquivos (lê o app file via docker exec fm_mosquitto)
+   make mqtt-gateway-remove GATEWAY=<cada usuário listado>
+   make mqtt-gateway-overlap            # deve dizer "nenhum usuário … ao mesmo tempo"
+   ```
+   Atenção: o gateway em campo passa a precisar da senha **do cadastro no app** (a que ele recebeu ao se cadastrar),
+   não da manual. Se ele ainda usa a senha manual no `.env`, remova `MQTT_USERNAME`/`MQTT_PASSWORD` de lá (ou
+   recadastre o gateway) antes de remover a linha.
 3. Transição sem TLS: `MQTT_PLAIN_BIND=0.0.0.0` (padrão do `.env.prod.example`) publica `1883` **com senha, sem
    TLS** — os gateways continuam em `MQTT_BROKER_PORT=1883`.
 4. TLS (opcional no primeiro deploy): certificado em `mqtt/certs/` (§6.3) → `MQTT_TLS_ENABLED=true` → gateways com
