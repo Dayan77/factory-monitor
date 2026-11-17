@@ -112,8 +112,12 @@ class OpcUaDriver:
         queue_size: int = 4096,
         notify_on_timestamp: bool = False,
         max_pending: int = 50000,
+        redact: Optional[Callable[[str], str]] = None,
     ) -> None:
         self._endpoint = endpoint
+        # logs never carry values expanded from ${VAR} (credentials in the endpoint): plant_map SourceConfig.redact
+        self._redact = redact or (lambda text: text)
+        self._log_endpoint = self._redact(endpoint)
         # Server-side queue per monitored item: every change between two publishes is delivered
         # (with its own SourceTimestamp) instead of only the last one — a short stop that starts
         # and ends within one publishing interval is not lost.
@@ -146,7 +150,7 @@ class OpcUaDriver:
             self.dropped += 1
             now = time.monotonic()
             if now - self._drop_log_at >= 10.0:
-                log.warning("opcua.readings_dropped", endpoint=self._endpoint, total=self.dropped,
+                log.warning("opcua.readings_dropped", endpoint=self._log_endpoint, total=self.dropped,
                             since_last=self.dropped - self._dropped_logged, max_pending=self._max_pending,
                             hint="o gateway não acompanha a taxa de leituras (CPU/uplink)")
                 self._drop_log_at, self._dropped_logged = now, self.dropped
@@ -174,11 +178,11 @@ class OpcUaDriver:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001 — one bad reading never stops the consumer
-                    log.warning("opcua.reading_failed", tag_id=item[0], error=str(e)[:200])
+                    log.warning("opcua.reading_failed", tag_id=item[0], error=self._redact(str(e))[:200])
 
     async def run(self) -> None:
         self._running = True
-        log.info("opcua.starting", endpoint=self._endpoint, tags=len(self._tags), queue_size=self._queue_size)
+        log.info("opcua.starting", endpoint=self._log_endpoint, tags=len(self._tags), queue_size=self._queue_size)
         self._pending_evt = asyncio.Event()
         if self._pending:
             self._pending_evt.set()
@@ -197,7 +201,7 @@ class OpcUaDriver:
         while self._running:
             try:
                 async with Client(url=self._endpoint) as client:
-                    log.info("opcua.connected", endpoint=self._endpoint)
+                    log.info("opcua.connected", endpoint=self._log_endpoint)
 
                     tag_map: dict[ua.NodeId, OpcTagConfig] = {}
                     nodes: list[Node] = []
@@ -223,7 +227,7 @@ class OpcUaDriver:
                         await client.check_connection()   # raises when the session is gone for good
 
             except Exception as e:
-                log.warning("opcua.error", error=str(e))
+                log.warning("opcua.error", error=self._redact(str(e)))
             finally:
                 self.connected = False
                 if self._running:

@@ -96,6 +96,7 @@ class LineTemplateApplyOut(BaseModel):
     tags_created: int
     tags_updated: int
     tags_unchanged: int
+    tags_skipped: int = 0
     gateway: Optional[AppliedGatewayOut]
     warnings: list[str]
 

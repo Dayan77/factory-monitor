@@ -135,6 +135,20 @@ describe("baseUrlError (ueapd box URL)", () => {
     ["http://192.168.1.15:0", "porta entre 1 e 65535"],
     ["http://", "formato: http://host[:porta], sem caminho"],
   ])("rejects %s", (u, msg) => expect(baseUrlError(u)).toBe(msg));
+  it.each([
+    "${UEAPD_M1_URL}", "${UEAPD_M1_URL:-http://192.168.1.15:8003}", "http://${BOX_HOST}:8003", "http://${BOX_HOST:-192.168.1.15}:8003",
+    "http://10.0.0.5:${PORT}", "https://${H}:${P:-8443}/", "http://${H}",
+  ])("allowEnv accepts the variable as whole URL / host / port: %s", (u) => expect(baseUrlError(u, { allowEnv: true })).toBeNull());
+  it.each([
+    ["http://box-${N}.local:8003", "variável ${…} só como URL inteira, host inteiro ou porta inteira"],
+    ["http://10.0.0.5:80${N}", "variável ${…} só como URL inteira, host inteiro ou porta inteira"],
+    ["http://10.0.0.5:8003/${PATH}", "variável ${…} só como URL inteira, host inteiro ou porta inteira"],
+    ["${SCHEME}://10.0.0.5", "variável ${…} só como URL inteira, host inteiro ou porta inteira"],
+    ["http://${U}@10.0.0.5", "sem usuário/senha na URL"],
+    ["http://${H:-bad host}:8003", "padrão do host inválido"],
+    ["http://${H}:${P:-99999}", "porta entre 1 e 65535"],
+    ["${URL:-ftp://x}", "use http:// ou https://"],
+  ])("allowEnv rejects %s", (u, msg) => expect(baseUrlError(u, { allowEnv: true })).toBe(msg));
   it("accepts ${VAR} / ${VAR:-default} only when allowed (gateway devices)", () => {
     expect(baseUrlError("${UEAPD_M1_URL}")).toBe("use http:// ou https://");
     expect(baseUrlError("${UEAPD_M1_URL}", { allowEnv: true })).toBeNull();

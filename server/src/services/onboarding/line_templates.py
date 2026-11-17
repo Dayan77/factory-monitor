@@ -7,8 +7,10 @@ them. `ueapd_led_driver.json` is derived from edge/config/ueapd.example.json (pa
 
 Apply is idempotent and matches by name like provision.py: line by name in the plant, machine by name in the line,
 position by name in the machine, tag by name in the machine. Structural fields follow the template (tag role /
-address / unit / position, counter tag of each position, output machine of the line, template keys of the
-fault_code_map); descriptive machine fields (model, serial, ideal cycle time) are only filled when empty.
+address / unit / position, counter tag of each position, output machine of the line); fault_code_map only gains
+the missing codes (a code mapped differently is kept, with a warning); an existing tags.edge.key is kept (counter
+continuity on the edge, warning if it differs); a same-name tag of another protocol read by another gateway is not
+converted (warning, skipped); descriptive machine fields (model, serial, ideal cycle time) are only filled when empty.
 With a gateway (same tenant and plant) the ueapd devices are merged into `gateway.devices` by id (base_url from the
 request, else the current one, else the template default) and the tags are assigned to it (tags.gateway_id,
 tags.edge = {source, key}); config_version is bumped through the same content hash as PUT /api/gateways/{id}/tags.
@@ -168,9 +170,16 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
             m.serial_number = m.serial_number or tm.get("serial_number")
             if m.ideal_cycle_time_s is None:
                 m.ideal_cycle_time_s = tm.get("ideal_cycle_time_s")
-            fmap = {**(m.fault_code_map or {}), **(tm.get("fault_code_map") or {})}
-            if fmap != (m.fault_code_map or {}):
-                m.fault_code_map = fmap
+            # only add the template's missing codes: a code the user mapped differently is kept (warning)
+            cur = dict(m.fault_code_map or {})
+            for code, reason in (tm.get("fault_code_map") or {}).items():
+                if code not in cur:
+                    cur[code] = reason
+                elif cur[code] != reason:
+                    warnings.append(f"máquina {m.name}: código de falha {code} mantido como {cur[code]} "
+                                    f"(o modelo usa {reason})")
+            if cur != (m.fault_code_map or {}):
+                m.fault_code_map = cur
         machines[tm["name"]] = m
         machines_out.append({"id": m.id, "name": m.name, "created": created})
         current = {csvutil.norm(p.name): p for p in (await db.execute(select(Position).where(
@@ -198,7 +207,8 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
                                .order_by(Tag.created_at, Tag.id))).scalars():
         existing_t.setdefault((t.machine_id, t.name), t)
     created_n = updated_n = unchanged_n = 0
-    by_key: dict[str, Tag] = {}
+    by_key: dict[str, Tag] = {}              # template key → tag (skipped tags absent)
+    map_key: dict[str, str] = {}             # template key → map key (an existing tags.edge.key wins)
     for tt in tpl["tags"]:
         m = machines[tt["machine"]]
         pos = positions[(tt["machine"], tt["position"])] if tt.get("position") else None
@@ -208,6 +218,12 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
                 "max_rate_per_s": tt.get("max_rate_per_s"), "poll_interval_ms": int(tt.get("poll_interval_ms", 1000)),
                 "is_active": True}
         t = existing_t.get((m.id, tt["name"]))
+        if (t is not None and t.protocol != ProtocolType.http and t.gateway_id is not None
+                and (gw is None or t.gateway_id != gw.id)):
+            # a same-name tag read by another gateway with another protocol: never converted behind its back
+            warnings.append(f"tag {m.name} / {t.name}: já existe com protocolo {t.protocol.value} em outro gateway "
+                            f"— não convertida (renomeie-a ou remova-a e aplique de novo)")
+            continue
         if t is None:
             t = Tag(tenant_id=tenant_id, machine_id=m.id, name=tt["name"], scale_factor=1.0, offset=0.0, **want)
             db.add(t)
@@ -222,6 +238,11 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
             else:
                 unchanged_n += 1
         by_key[tt["key"]] = t
+        old_key = (t.edge or {}).get("key")
+        map_key[tt["key"]] = old_key or tt["key"]
+        if old_key and old_key != tt["key"]:
+            # the edge keys counter state by the map key: keep it (counter continuity)
+            warnings.append(f"tag {m.name} / {t.name}: chave do mapa {old_key!r} mantida (o modelo usa {tt['key']!r})")
     await db.flush()
 
     for tm in tpl["machines"]:
@@ -229,7 +250,10 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
             ck = tp.get("counter_tag")
             if not ck:
                 continue
-            p, tag = positions[(tm["name"], tp["name"])], by_key[ck]
+            p, tag = positions[(tm["name"], tp["name"])], by_key.get(ck)
+            if tag is None:
+                warnings.append(f"posição {tm['name']} / {tp['name']}: contador do modelo não aplicado (tag ignorada)")
+                continue
             if p.counter_tag_id != tag.id:
                 if p.counter_tag_id is not None:
                     warnings.append(f"posição {tm['name']} / {tp['name']}: contador trocado para {tag.name} (modelo)")
@@ -240,10 +264,14 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
         devs = _merge_devices(gw, tpl, devices)
         gw.devices = devs
         errors = []
+        assigned = 0
         for tt in tpl["tags"]:
-            t = by_key[tt["key"]]
+            t = by_key.get(tt["key"])
+            if t is None:
+                continue
+            assigned += 1
             try:
-                new_edge = gs.validate_tag_edge(t, {"source": tt["source"], "key": tt["key"]}, devs)
+                new_edge = gs.validate_tag_edge(t, {"source": tt["source"], "key": map_key[tt["key"]]}, devs)
             except gs.ConfigError as e:
                 errors.append(str(e))
                 continue
@@ -254,13 +282,15 @@ async def apply(db: AsyncSession, tenant_id: str, key: str, plant_id: str, line_
         await db.flush()
         body, _, cfg_warnings = await gs.config_document(db, gw)      # bumps config_version when the map changed
         warnings.extend(cfg_warnings)
-        gw_out = {"id": gw.id, "devices": devs, "tags_assigned": len(tpl["tags"]),
+        gw_out = {"id": gw.id, "devices": devs, "tags_assigned": assigned,
                   "config_version": body["config_version"]}
     else:
-        for tt in tpl["tags"]:          # edge fields ready for a later assignment (key = the template's map key)
-            t = by_key[tt["key"]]
-            if t.gateway_id is None:
-                t.edge = {"source": tt["source"], "key": tt["key"]}
+        for tt in tpl["tags"]:          # edge fields ready for a later assignment (existing map key kept)
+            t = by_key.get(tt["key"])
+            if t is not None and t.gateway_id is None:
+                new_edge = {"source": tt["source"], "key": map_key[tt["key"]]}
+                if t.edge != new_edge:
+                    t.edge = new_edge
     return {"template": tpl["key"], "line_id": line.id, "line_name": line.name, "line_created": line_created,
             "machines": machines_out, "tags_created": created_n, "tags_updated": updated_n,
-            "tags_unchanged": unchanged_n, "gateway": gw_out, "warnings": warnings}
+            "tags_unchanged": unchanged_n, "tags_skipped": len(tpl["tags"]) - len(by_key), "gateway": gw_out, "warnings": warnings}

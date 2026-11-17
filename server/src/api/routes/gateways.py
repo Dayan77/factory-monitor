@@ -359,13 +359,17 @@ async def mqtt_credentials(gateway_id: str, user: CurrentUser, db: DB):
     if not gw.mqtt_username:
         raise HTTPException(status_code=409, detail="Gateway ainda não cadastrado (sem credencial MQTT).")
     managed = gs.mqtt_managed()
+    # managed = configured; sync_ok / sync_at / sync_error = what really happened at the last attempt of this
+    # process (null = never ran / disabled)
+    st = mqtt_app_file.status() if managed else {"ok": None, "at": None, "error": None}
+    sync = {"managed": managed, "sync_ok": st["ok"], "sync_at": st["at"], "sync_error": st["error"]}
     if gs.mqtt_revoked(gw):
         return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/", "revoked": True,
-                "acl": None, "gateways_conf_line": None, "action": gs.mqtt_revoke_action(gw), "managed": managed}
+                "acl": None, "gateways_conf_line": None, "action": gs.mqtt_revoke_action(gw), **sync}
     return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/",
             "acl": f"topic readwrite factory/{gw.tenant_id}/#",
             "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}", "revoked": False,
-            "managed": managed}
+            **sync}
 
 
 @router.post("/{gateway_id}/browse", status_code=202, dependencies=ADMIN)

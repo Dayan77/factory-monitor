@@ -38,7 +38,7 @@ reload_loop() {
     cur="$(files_sig)"
     [ "$cur" = "$last" ] && continue
     last="$cur"
-    if sh /fm/render.sh; then
+    if FM_RENDER_MODE=reload sh /fm/render.sh; then
       kill -HUP "$MAIN_PID" || echo "fm-mqtt-reload: falha ao enviar SIGHUP ao mosquitto" >&2
     else
       echo "fm-mqtt-reload: render falhou — mantida a configuração em uso (corrija o arquivo de gateways)" >&2

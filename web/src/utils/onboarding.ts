@@ -282,9 +282,21 @@ export function canOpenStep(steps: StepStateLike[], n: number): boolean {
 
 // ── ueapd boxes (line templates, gateway devices) ─────────────────
 
-const HOST = String.raw`(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])`;
-const BASE_URL_RE = new RegExp(String.raw`^https?://(${HOST})(?::(\d{1,5}))?/?$`);
-const ENV_VAR_RE = /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$/;
+const HOST_RE_SRC = String.raw`(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*|\[[0-9A-Fa-f:.]+\])`;
+const HOST_RE = new RegExp(`^${HOST_RE_SRC}$`);
+const BASE_URL_RE = new RegExp(String.raw`^https?://(${HOST_RE_SRC})(?::(\d{1,5}))?/?$`);
+/** `${VAR}` / `${VAR:-padrão}` (group 1 = the default, when present) */
+const ENV_TOKEN = String.raw`\$\{[A-Za-z_][A-Za-z0-9_]*(?::-([^}]*))?\}`;
+const ENV_VAR_RE = new RegExp(`^${ENV_TOKEN}$`);
+// with variables: http(s)://<host | ${VAR}>[:<porta | ${VAR}>][/]
+const ENV_URL_RE = new RegExp(String.raw`^https?://(${ENV_TOKEN}|[^/:@\[\]]+|\[[0-9A-Fa-f:.]+\])(?::(${ENV_TOKEN}|[^/]*))?/?$`);
+const ENV_PLACEMENT = "variável ${…} só como URL inteira, host inteiro ou porta inteira";
+
+function portError(p: string): string | null {
+  if (!/^\d{1,5}$/.test(p)) return "formato: http://host[:porta], sem caminho";
+  const port = Number(p);
+  return port < 1 || port > 65535 ? "porta entre 1 e 65535" : null;
+}
 
 /**
  * Error of a ueapd box URL (null = valid): `http://` or `https://` host[:porta], no user/password, no path besides an
@@ -293,7 +305,7 @@ const ENV_VAR_RE = /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$/;
 export function baseUrlError(raw: string, opts: { allowEnv?: boolean } = {}): string | null {
   const v = raw.trim();
   if (!v) return "informe a URL do box";
-  if (opts.allowEnv && ENV_VAR_RE.test(v)) return null;
+  if (opts.allowEnv && v.includes("${")) return envUrlError(v);
   if (!/^https?:\/\//.test(v)) return "use http:// ou https://";
   if (v.includes("@")) return "sem usuário/senha na URL";
   const m = BASE_URL_RE.exec(v);
@@ -301,6 +313,28 @@ export function baseUrlError(raw: string, opts: { allowEnv?: boolean } = {}): st
   if (m[2] !== undefined) {
     const port = Number(m[2]);
     if (port < 1 || port > 65535) return "porta entre 1 e 65535";
+  }
+  return null;
+}
+
+/** URL with `${VAR}`: the variable may be the whole URL, the whole host or the whole port (same rule as the server). */
+function envUrlError(v: string): string | null {
+  const whole = ENV_VAR_RE.exec(v);
+  if (whole) return whole[1] !== undefined ? baseUrlError(whole[1]) : null;
+  if (!/^https?:\/\//.test(v)) return ENV_PLACEMENT;
+  if (v.includes("@")) return "sem usuário/senha na URL";
+  const m = ENV_URL_RE.exec(v);
+  if (!m) return v.includes("${") ? ENV_PLACEMENT : "formato: http://host[:porta], sem caminho";
+  const [, host, hostDefault, port, portDefault] = m;
+  const hostIsVar = ENV_VAR_RE.test(host);
+  if (!hostIsVar && host.includes("$")) return ENV_PLACEMENT;
+  if (!hostIsVar && !HOST_RE.test(host)) return "formato: http://host[:porta], sem caminho";
+  if (hostIsVar && hostDefault !== undefined && !HOST_RE.test(hostDefault)) return "padrão do host inválido";
+  if (port !== undefined) {
+    const portIsVar = ENV_VAR_RE.test(port);
+    if (!portIsVar && port.includes("$")) return ENV_PLACEMENT;
+    if (!portIsVar) return portError(port);
+    if (portDefault !== undefined) return portError(portDefault);
   }
   return null;
 }

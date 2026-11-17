@@ -493,7 +493,7 @@ class UeapdDriver:
 
     async def run(self) -> None:
         self._running = True
-        log.info("ueapd.starting", source=self.sid, base_url=self.base, tags=len(self._binds),
+        log.info("ueapd.starting", source=self.sid, base_url=self.source.redact(self.base), tags=len(self._binds),
                  poll_interval_s=self.poll_interval_s, backfill=self.source.backfill)
         wait = self.poll_interval_s
         while self._running:
@@ -501,7 +501,7 @@ class UeapdDriver:
             try:
                 await self.poll_once()
                 if not self.connected:
-                    log.info("ueapd.connected", source=self.sid, base_url=self.base)
+                    log.info("ueapd.connected", source=self.sid, base_url=self.source.redact(self.base))
                 self.connected = True
                 wait = self.poll_interval_s
             except asyncio.CancelledError:
@@ -509,8 +509,8 @@ class UeapdDriver:
             except Exception as e:  # noqa: BLE001 — box fora / resposta ruim: tenta de novo, nunca derruba o gateway
                 self.stats["errors"] += 1
                 if self.connected or self.stats["errors"] == 1:
-                    log.warning("ueapd.unreachable", source=self.sid, base_url=self.base,
-                                error=f"{type(e).__name__}: {e}"[:200])
+                    log.warning("ueapd.unreachable", source=self.sid, base_url=self.source.redact(self.base),
+                                error=self.source.redact(f"{type(e).__name__}: {e}")[:200])
                 self.connected = False
                 wait = min(max(wait, self.poll_interval_s) * 2, self.max_backoff_s)
             await asyncio.sleep(max(0.0, wait - (time.monotonic() - t0)))
@@ -518,7 +518,12 @@ class UeapdDriver:
     async def stop(self) -> None:
         self._running = False
         self.connected = False
-        if self._pending:                                   # termina a gravação em voo (offsets + totais juntos)
-            await asyncio.wait(list(self._pending), timeout=10.0)
+        # termina as gravações em voo (offsets + dedupe + totais numa transação) — até esvaziar: quem para o driver
+        # (gateway._stop_drivers) cancela a tarefa run() ANTES, então nenhuma gravação nova começa daqui em diante
+        deadline = time.monotonic() + 30.0
+        while self._pending and time.monotonic() < deadline:
+            await asyncio.wait(list(self._pending), timeout=max(0.1, deadline - time.monotonic()))
+        if self._pending:
+            log.error("ueapd.commit_stuck", source=self.sid, pending=len(self._pending))
         if self._own_session and self._session is not None and not self._session.closed:
             await self._session.close()

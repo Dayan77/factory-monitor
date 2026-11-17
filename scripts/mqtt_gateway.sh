@@ -6,15 +6,18 @@
 #   scripts/mqtt_gateway.sh remove <usuário>              revoga
 #   scripts/mqtt_gateway.sh list                          lista usuário + tenant (sem hashes)
 #   scripts/mqtt_gateway.sh reload                        re-renderiza passwd/acl no container e envia SIGHUP
+#   scripts/mqtt_gateway.sh overlap                       usuários que estão AQUI e também no app file do servidor
 #
 # Atalhos: make mqtt-gateway-add GATEWAY=gw-x TENANT=<uuid> · mqtt-gateway-remove · mqtt-gateway-list · mqtt-reload
+#          · mqtt-gateway-overlap
 #
 # Guarda só o HASH (PBKDF2, mosquitto_passwd) em $MQTT_GATEWAYS_FILE; a senha é impressa UMA vez.
 # O ACL gerado restringe o gateway a factory/<tenant_uuid>/#.
 #
 # Env: MQTT_GATEWAYS_FILE (padrão ./mqtt/gateways.conf, = /opt/factory-monitor/mqtt/gateways.conf no VPS),
 #      MQTT_CONTAINER (fm_mosquitto), MQTT_IMAGE (eclipse-mosquitto:2.0.22), MQTT_NO_RELOAD=1 (não recarrega),
-#      MQTT_PUBLIC_HOST (host mostrado no resumo, padrão mqtt.factoryconnect.tech), MQTT_TLS_PORT (8883).
+#      MQTT_PUBLIC_HOST (host mostrado no resumo, padrão mqtt.factoryconnect.tech), MQTT_TLS_PORT (8883),
+#      MQTT_APP_FILE (overlap: caminho local do app file; vazio = lê do container via docker exec).
 # =============================================================
 set -euo pipefail
 
@@ -28,7 +31,7 @@ USER_RE='^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$'
 UUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 die() { echo "✗ $*" >&2; exit 1; }
-usage() { sed -n '3,9p' "$0" >&2; exit 2; }
+usage() { sed -n '3,10p' "$0" >&2; exit 2; }
 
 running() { docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; }
 
@@ -108,7 +111,7 @@ MSG
     remove_line "$1"
     echo "✓ gateway '$1' revogado"
     reload
-    echo "  Conexões já abertas continuam até reconectar: para derrubar agora, docker restart $CONTAINER"
+    echo "  Novas conexões são recusadas e a sessão aberta deste usuário cai no reload (SIGHUP)."
     ;;
   list)
     [ -f "$FILE" ] || { echo "(nenhum gateway: $FILE não existe)"; exit 0; }
@@ -116,6 +119,26 @@ MSG
     ;;
   reload)
     reload
+    ;;
+  overlap)
+    # Gateway nos dois arquivos: vale a linha MANUAL (render.sh), então revogar no app não tem efeito.
+    # Saída: um usuário por linha; código 0 sempre que a leitura funcionou (vazio = nada a migrar).
+    [ -f "$FILE" ] || { echo "(nenhum gateway manual: $FILE não existe)" >&2; exit 0; }
+    if [ -n "${MQTT_APP_FILE:-}" ]; then
+      app="$(cat "$MQTT_APP_FILE")" || die "não consegui ler $MQTT_APP_FILE"
+    else
+      app="$(docker exec "$CONTAINER" cat /mosquitto/app/gateways.app.conf 2>/dev/null)" \
+        || die "não consegui ler /mosquitto/app/gateways.app.conf em $CONTAINER (broker no ar? servidor já sincronizou?)"
+    fi
+    both="$(awk 'NR == FNR { if ($0 !~ /^[[:space:]]*(#|$)/) app[$1] = 1; next }
+                 $0 !~ /^[[:space:]]*(#|$)/ && ($1 in app) { print $1 }' <(printf '%s\n' "$app") "$FILE")"
+    if [ -z "$both" ]; then
+      echo "✓ nenhum usuário em $FILE e no app ao mesmo tempo" >&2
+    else
+      echo "! usuários no $FILE (manual) E no app — a linha manual sombreia o app (revogar no app não tem efeito)." >&2
+      echo "  Remova cada um com: make mqtt-gateway-remove GATEWAY=<usuário>" >&2
+      printf '%s\n' "$both"
+    fi
     ;;
   *) usage ;;
 esac

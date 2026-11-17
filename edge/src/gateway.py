@@ -28,7 +28,7 @@ edge counter SQLite, run/fault state from /auto/state).
 
 Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
-  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.6.0",
+  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.7.0",
            "config_version": 7, "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true},
            "clocks": {"opcua-plc": {"policy": "source", "configured": "source", "max_skew_s": 2.0,
                                     "skew_s": -0.12}}}
@@ -303,7 +303,7 @@ class EdgeGateway:
                 drv = OpcUaDriver(src.endpoint, tags, on_reading=self._handle_reading,
                                   publishing_interval_ms=src.publishing_interval_ms, source_timestamps=True,
                                   notify_on_timestamp=src.device_heartbeat, queue_size=settings.opcua_queue_size,
-                                  max_pending=settings.opcua_max_pending)
+                                  max_pending=settings.opcua_max_pending, redact=src.redact)
                 for t in tags:
                     if t.tag_id not in self._stroke and t.tag_id not in self._aggregates:
                         self._refresh_tags[t.tag_id] = drv
@@ -347,16 +347,23 @@ class EdgeGateway:
                  aggregates=len(self._aggregates))
 
     async def _stop_drivers(self) -> None:
+        """Order matters for the hot reload: first the run tasks are cancelled and AWAITED (no poll of the old
+        map can start a new SQLite commit after this point), then `stop()` drains what is still in flight (ueapd:
+        offsets + dedupe + totals of the source; pulse poller: queued counts). Only then the new map's drivers read
+        that state — a driver of the same source never sees stale offsets/totals (false reset or double count)."""
         for d in self.drivers:
-            try:
-                await d.stop()
-            except Exception as e:  # noqa: BLE001
-                log.warning("edge_gateway.driver_stop_failed", error=str(e))
+            if hasattr(d, "_running"):
+                d._running = False
         for t in self._driver_tasks:
             t.cancel()
         if self._driver_tasks:
             await asyncio.gather(*self._driver_tasks, return_exceptions=True)
         self._driver_tasks = []
+        for d in self.drivers:
+            try:
+                await d.stop()
+            except Exception as e:  # noqa: BLE001
+                log.warning("edge_gateway.driver_stop_failed", error=str(e))
 
     def _start_drivers(self) -> None:
         self._driver_tasks = [asyncio.create_task(d.run()) for d in self.drivers]

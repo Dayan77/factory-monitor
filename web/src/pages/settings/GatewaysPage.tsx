@@ -58,10 +58,26 @@ export function deviceError(d: GatewayDevice): string | null {
   return null;
 }
 
-function protocolPatch(p: string): Partial<GatewayDevice> {
-  if (p === "opcua") return { protocol: "opcua", host: undefined, port: undefined, base_url: undefined, line: undefined, endpoint: "opc.tcp://" };
-  if (p === "ueapd") return { protocol: "ueapd", host: undefined, port: undefined, endpoint: undefined, base_url: "http://" };
-  return { protocol: "modbus", endpoint: undefined, base_url: undefined, line: undefined, host: "", port: 502 };
+// keys the server accepts per protocol (server/src/services/gateways.py DEVICE_KEYS / UEAPD_DEVICE_KEYS)
+const PLC_KEYS = ["id", "protocol", "endpoint", "host", "port", "publishing_interval_ms", "timestamps", "device_heartbeat", "max_clock_skew_s"];
+const UEAPD_KEYS = ["id", "protocol", "base_url", "line", "poll_interval_s", "timeout_s", "timestamps", "max_clock_skew_s",
+  "backfill", "default_fault_code", "fault_codes"];
+
+/**
+ * Device after a protocol switch: only the keys valid for the new protocol survive (the server rejects unknown
+ * ones with 422), the address fields of the old protocol are dropped and the new ones start empty.
+ */
+export function switchProtocol(d: GatewayDevice, p: string): GatewayDevice {
+  const proto: GatewayDevice["protocol"] = p === "opcua" || p === "ueapd" ? p : "modbus";
+  const allowed = new Set(proto === "ueapd" ? UEAPD_KEYS : PLC_KEYS);
+  const keep = new Set(["id", "timestamps", "max_clock_skew_s"]);
+  const out: GatewayDevice = { id: d.id, protocol: proto };
+  for (const [k, v] of Object.entries(d)) if (keep.has(k) && allowed.has(k) && k !== "id") out[k] = v;
+  if (proto === "modbus" && out.timestamps === "source") delete out.timestamps; // Modbus has no PLC timestamp
+  if (proto === "opcua") out.endpoint = "opc.tcp://";
+  else if (proto === "ueapd") out.base_url = "http://";
+  else { out.host = ""; out.port = 502; }
+  return out;
 }
 
 function uptimeText(s: number | null | undefined) {
@@ -167,7 +183,7 @@ function DevicesEditor({ gw }: { gw: Gateway }) {
         <div key={i} className="grid gap-2 rounded-xl border border-line p-3 sm:grid-cols-[8rem_9rem_1fr_auto] sm:items-end" data-testid="gw-device" data-protocol={d.protocol}>
           <Field label="Id" htmlFor={`dev-id-${i}`}><input id={`dev-id-${i}`} value={d.id} onChange={(e) => upd(i, { id: e.target.value })} className={inputClass} /></Field>
           <Field label="Protocolo" htmlFor={`dev-p-${i}`}>
-            <select id={`dev-p-${i}`} value={d.protocol} onChange={(e) => upd(i, protocolPatch(e.target.value))} className={inputClass}>
+            <select id={`dev-p-${i}`} value={d.protocol} onChange={(e) => setDevices((all) => all.map((x, j) => (j === i ? switchProtocol(x, e.target.value) : x)))} className={inputClass}>
               <option value="modbus">Modbus TCP</option>
               <option value="opcua">OPC UA</option>
               <option value="ueapd">Box ueaPowerDriver</option>
@@ -309,14 +325,35 @@ function DeviceSummary({ devices }: { devices: GatewayDevice[] }) {
   );
 }
 
+/** Broker sync state of a managed credential: ok | failing | pending (no sync yet). Older servers send no sync_ok. */
+function syncState(info: MqttInfo | undefined): "ok" | "failing" | "pending" | null {
+  if (!info?.managed) return null;
+  if (info.sync_ok === false) return "failing";
+  if (info.sync_ok === null) return "pending";
+  return "ok";
+}
+
+/** Visible alarm when the server cannot write the broker's credential file (the broker keeps the old credentials). */
+function SyncFailing({ info }: { info: MqttInfo }) {
+  return (
+    <p role="alert" className="rounded-xl border border-danger-solid/40 bg-danger-solid/10 px-3 py-2 text-body text-danger" data-testid="gw-mqtt-sync-failing">
+      A sincronização da credencial com o broker está falhando{info.sync_at ? ` desde ${formatDateTime(info.sync_at)}` : ""}: {info.sync_error || "erro desconhecido"}. O gateway pode ser recusado.
+    </p>
+  );
+}
+
 /** MQTT credential of the gateway: synced to the broker by the server (managed) or a line for the operator's gateways.conf. */
 function MqttCredential({ info }: { info: MqttInfo }) {
-  if (info.revoked) return null; // the revoked banner above says what to do
+  const sync = syncState(info);
+  if (info.revoked) return sync === "failing" ? <SyncFailing info={info} /> : null; // the revoked banner above says what to do
   return (
-    <div className="space-y-2" data-testid="gw-mqtt" data-managed={info.managed ? "true" : "false"}>
+    <div className="space-y-2" data-testid="gw-mqtt" data-managed={info.managed ? "true" : "false"} data-sync={sync ?? undefined}>
       <p className="text-caption text-fg-subtle">Usuário <span className="font-mono text-fg">{info.username}</span> · tópicos <span className="font-mono text-fg">{info.topic_prefix}#</span></p>
-      {info.managed ? (
-        <p className="rounded-xl bg-ok-solid/10 px-3 py-2 text-body text-ok">Credencial sincronizada automaticamente com o broker MQTT — nenhum comando no servidor é necessário.</p>
+      {sync === "failing" ? <SyncFailing info={info} />
+      : sync === "pending" ? (
+        <p role="status" className="rounded-xl bg-surface-2/60 px-3 py-2 text-body text-fg-muted">Credencial gerenciada pelo servidor — aguardando a primeira sincronização com o broker.</p>
+      ) : sync === "ok" ? (
+        <p className="rounded-xl bg-ok-solid/10 px-3 py-2 text-body text-ok">Credencial sincronizada automaticamente com o broker MQTT{info.sync_at ? ` (última vez ${formatDateTime(info.sync_at)})` : ""} — nenhum comando no servidor é necessário.</p>
       ) : info.gateways_conf_line ? (
         <CodeBlock label="Adicione esta linha ao gateways.conf do broker e recarregue-o (sincronização automática desligada neste servidor)" code={info.gateways_conf_line} testId="gw-mqtt-line" />
       ) : null}
@@ -324,11 +361,26 @@ function MqttCredential({ info }: { info: MqttInfo }) {
   );
 }
 
-function revokeConfirmText(managed: boolean | undefined) {
+const MANUAL_LINE_TOO = "Se este gateway também foi colocado à mão no gateways.conf do broker, remova a linha de lá.";
+
+export function revokeConfirmText(info: MqttInfo | undefined): string {
   const base = "Revogar o gateway? O token e a credencial MQTT deixam de valer e o servidor descarta as leituras dele até um novo cadastro.";
-  if (managed === true) return `${base} O broker passa a recusar a credencial sozinho em poucos segundos e derruba uma conexão que já estava aberta.`;
-  if (managed === false) return `${base} Depois remova a linha dele do gateways.conf do broker e recarregue-o.`;
+  const sync = syncState(info);
+  if (sync === "failing") {
+    return `${base} Atenção: a sincronização com o broker está falhando — o broker só deixa de aceitar a credencial quando ela voltar a funcionar. ${MANUAL_LINE_TOO}`;
+  }
+  if (sync) return `${base} O broker passa a recusar a credencial sozinho em poucos segundos e derruba uma conexão que já estava aberta. ${MANUAL_LINE_TOO}`;
+  if (info?.managed === false) return `${base} Depois remova a linha dele do gateways.conf do broker e recarregue-o.`;
   return base;
+}
+
+export function removeConfirmText(gw: Gateway, info: MqttInfo | undefined): string {
+  const base = `Remover o gateway ${gw.name}? As tags perdem a atribuição.`;
+  if (!gw.mqtt_revoked) return base;
+  const sync = syncState(info);
+  if (sync === "failing") return `${base} A sincronização com o broker está falhando: confira se a credencial dele já saiu do broker. ${MANUAL_LINE_TOO}`;
+  if (sync) return base;
+  return `${base} Remova também a linha dele do gateways.conf do broker.`;
 }
 
 function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | undefined; admin: boolean }) {
@@ -357,7 +409,6 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
     queryFn: () => gatewaysApi.mqtt(gw.id).then((r) => r.data),
     enabled: admin && !!gw.mqtt_username,
   });
-  const managed = mqtt.data?.managed;
   const stale = hb?.config_version != null && hb.config_version !== gw.config_version;
   return (
     <div className="space-y-6">
@@ -408,7 +459,7 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
           {token ? <EnrollmentInfo gw={gw} token={token} /> : (
             <div className="flex flex-wrap gap-2">
               <Button variant={gw.enrolled ? "secondary" : "primary"} loading={enroll.isPending} onClick={() => { setErr(""); enroll.mutate(); }}>{gw.enrolled ? "Gerar novo código (reinstalação)" : "Gerar código de cadastro"}</Button>
-              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm(revokeConfirmText(managed))) revoke.mutate(); }}>Revogar gateway</Button>}
+              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm(revokeConfirmText(mqtt.data))) revoke.mutate(); }}>Revogar gateway</Button>}
             </div>
           )}
           {mqtt.data && <MqttCredential info={mqtt.data} />}
@@ -435,7 +486,7 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
         <div className="border-t border-line pt-4">
           {gw.enrolled
             ? <p className="text-caption text-fg-subtle" data-testid="gw-remove-hint">Para remover, revogue o gateway antes (a credencial MQTT dele ainda está ativa).</p>
-            : <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(`Remover o gateway ${gw.name}? As tags perdem a atribuição.${gw.mqtt_revoked && managed !== true ? " Remova também a linha dele do gateways.conf do broker." : ""}`)) remove.mutate(); }}>Remover gateway</Button>}
+            : <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(removeConfirmText(gw, mqtt.data))) remove.mutate(); }}>Remover gateway</Button>}
         </div>
       )}
     </div>

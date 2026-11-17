@@ -108,6 +108,10 @@ export interface MqttInfo {
   action?: string;
   /** true = the server syncs the credential to the broker by itself (MQTT_APP_GATEWAYS_FILE): no manual line */
   managed?: boolean;
+  /** last sync of the broker app file (managed only): true ok, false failing, null not synced yet */
+  sync_ok?: boolean | null;
+  sync_at?: string | null;
+  sync_error?: string | null;
 }
 
 export const gatewaysApi = {
@@ -124,7 +128,7 @@ export const gatewaysApi = {
 };
 
 /** Default edge image (published by the CI to GHCR) — the same tag as infra/gateway/docker-compose.yml and edge/README.md. */
-export const DEFAULT_EDGE_IMAGE = "ghcr.io/dayan77/factoryconnect-edge:0.6.0";
+export const DEFAULT_EDGE_IMAGE = "ghcr.io/dayan77/factoryconnect-edge:0.7.0";
 
 /** Edge image of the install command: `VITE_EDGE_IMAGE` at build time (e.g. a private registry), else the default. */
 export function edgeImage(env: string | undefined = import.meta.env.VITE_EDGE_IMAGE): string {

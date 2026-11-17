@@ -400,3 +400,98 @@ async def test_remote_loader_without_server_uses_cache_with_ueapd(tmp_path, monk
     loaded = await load_gateway_config(f"http://127.0.0.1:{free_port()}", GW, TOKEN, cache, timeout_s=1,
                                        env={"UEAPD_M1_URL": "http://10.1.1.1:8003"})
     assert loaded.origin == "cache" and loaded.plant_map.sources["ueapd-m1"].base_url == "http://10.1.1.1:8003"
+
+
+# ── segredos do ambiente nunca saem em mensagens (revisão I3) ──────────────
+SECRET = "s3cr3t-T0KEN-9f8e7d"
+
+
+async def test_env_secret_never_in_rejected_heartbeat_or_logs(started, tmp_path, monkeypatch):
+    add, gws = started
+    box = await add(FakeBox(tmp_path / "m1"))
+    monkeypatch.setenv("FM_TEST_SECRET", SECRET)
+    monkeypatch.setenv("FM_TEST_SECRET_URL", f"ftp://{SECRET}@box")
+    dead = f"http://127.0.0.1:{free_port()}"
+    v1 = plant_map([
+        ueapd_source("ueapd-m1", box.url),
+        ueapd_source("bad-port", "http://box-x:${FM_TEST_SECRET}"),                 # porta inválida
+        ueapd_source("bad-scheme", "${FM_TEST_SECRET_URL}"),                         # http(s) obrigatório
+        ueapd_source("bad-backfill", "http://box-y:8003", backfill="${FM_TEST_SECRET}"),
+        ueapd_source("dead-box", dead + "/${FM_TEST_SECRET}"),                       # válida, box fora do ar
+    ], m1_tags(["run"]) + [ueapd_tag("ledd.dead.run", "dead-box", "run_state", "state:run")])
+    fleet = await add(FleetServer({1: v1}))
+    _settings(monkeypatch, tmp_path, fleet.url)
+    g = gw_mod.EdgeGateway()
+    gws.append(g)
+    with capture_logs() as logs:
+        broker = await _boot(g)
+        await until(lambda: broker.last("ledd.m1.run") == 1, msg="fonte válida roda")
+        dead_drv = _ueapd(g, "dead-box")
+        await until(lambda: dead_drv.stats["errors"] >= 1, msg="box fora do ar logado")
+        assert await g.fleet_heartbeat_once() is False
+    assert set(g.plant_map.sources) == {"ueapd-m1", "dead-box"}
+    assert len(g.plant_map.rejected) == 3 and all("***" in m for m in g.plant_map.rejected)
+    assert g.plant_map.sources["dead-box"].base_url.endswith(SECRET)     # o driver usa o valor real
+    texts = [json.dumps(e, default=str) for e in logs] + g.plant_map.rejected + g.current_errors() \
+        + [json.dumps(h) for h in fleet.heartbeats]
+    assert any("ueapd.unreachable" in t for t in texts) and any("recusada" in t for t in fleet.heartbeats[-1]["errors"])
+    leaked = [t for t in texts if SECRET in t]
+    assert not leaked, leaked
+    # mapa local (estrito): a exceção também sai sem o segredo
+    with pytest.raises(PlantMapError) as e:
+        parse_plant_map(plant_map([ueapd_source("x", "http://h:${FM_TEST_SECRET}")], []))
+    assert SECRET not in str(e.value) and "***" in str(e.value)
+
+
+# ── corrida da recarga a quente (revisão I4) ──────────────────────────────
+@pytest.mark.parametrize("slow", ["commit", "seen"])
+async def test_hot_reload_during_slow_commit_never_lowers_or_double_counts(started, tmp_path, monkeypatch, slow):
+    """A recarga chega com uma volta do driver antigo no meio da gravação (ou do dedupe) no SQLite: o driver novo
+    da mesma fonte só lê offsets/totais depois que ela termina — acumulado publicado nunca desce, nada conta 2x."""
+    import threading
+    add, gws = started
+    trace = tmp_path / "trace"
+    a, b = await add(FakeBox(trace)), await add(FakeBox(trace))
+    tags = m1_tags(["good", "total", "c_hipot1"])
+    fleet = await add(FleetServer({1: plant_map([ueapd_source("ueapd-m1", a.url)], tags),
+                                   2: plant_map([ueapd_source("ueapd-m1", b.url)], tags)}))
+    _settings(monkeypatch, tmp_path, fleet.url)
+    g = gw_mod.EdgeGateway()
+    gws.append(g)
+    broker = await _boot(g)
+    await until(lambda: _ueapd(g, "ueapd-m1").stats["polls"] >= 1)
+    for _ in range(3):
+        a.add_pass()
+    await until(lambda: broker.last("ledd.m1.total") == 3)
+
+    store = g.counter_store
+    entered, armed = threading.Event(), threading.Event()
+    real = getattr(store, slow)
+
+    def slow_call(*args, **kw):                         # roda na thread do to_thread
+        busy = armed.is_set() and (slow == "seen" or bool(args and args[0]))
+        if busy:
+            armed.clear()
+            entered.set()
+            time.sleep(1.0)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(store, slow, slow_call)
+    armed.set()
+    for _ in range(2):
+        a.add_pass()
+    await until(entered.is_set, msg=f"volta do driver antigo presa em {slow}")
+    fleet.version = 2
+    assert await g.fleet_heartbeat_once() is True     # recarga com a gravação/dedupe em voo
+    assert g.config_version == 2 and _ueapd(g, "ueapd-m1").base == b.url
+    await until(lambda: broker.last("ledd.m1.total") == 5, msg="os 2 passes do meio da recarga")
+    await asyncio.sleep(1.3)                          # a gravação lenta do driver antigo (1 s) já teria terminado
+    assert store.get("ledd.m1.total") == 5            # ... e não somou de novo por cima do driver novo
+    a.add_pass()
+    await until(lambda: broker.last("ledd.m1.total") == 6)
+    await asyncio.sleep(0.6)
+    for key in ("ledd.m1.total", "ledd.m1.good", "ledd.m1.c_hipot1"):
+        vals = broker.values(key)
+        assert vals == sorted(vals), f"{key}: acumulado desceu {vals}"
+        assert vals[-1] == 6, f"{key}: {vals}"
+    assert store.get("ledd.m1.total") == 6 and store.get("ledd.m1.c_hipot1") == 6

@@ -34,10 +34,10 @@ Administração (JWT; tudo filtrado por `tenant_id`, gateway de outro tenant →
 | `POST /api/gateways/` `{name, plant_id, devices[], heartbeat_s, pulse_poll_ms}` | admin | cria (`pending`) |
 | `GET/PATCH/DELETE /api/gateways/{id}` | manager+/admin/admin | detalhe, edição, remoção (as tags perdem a atribuição); gateway cadastrado → **409**: revogue antes |
 | `POST /api/gateways/{id}/enroll-token` | admin | código de cadastro `XXXX-XXXX-XXXX`, uso único, 24 h |
-| `POST /api/gateways/{id}/revoke` | admin | invalida o token **e a credencial MQTT** (`mqtt_password_hash` apagado); o servidor passa a **descartar as leituras das tags do gateway** (log `mqtt.rejected_revoked_gateway`). A resposta traz `mqtt_action`: com a sincronização ligada (`mqtt_managed = true`) diz que a credencial saiu do broker sozinha (≤ ~10 s); sem ela, remover a linha do usuário do `gateways.conf` e recarregar o broker (`make mqtt-gateway-remove GATEWAY=<usuário> && make mqtt-reload`). Um novo cadastro reativa |
+| `POST /api/gateways/{id}/revoke` | admin | invalida o token **e a credencial MQTT** (`mqtt_password_hash` apagado); o servidor passa a **descartar as leituras das tags do gateway** (log `mqtt.rejected_revoked_gateway`). A resposta traz `mqtt_action`: com a sincronização ligada (`mqtt_managed = true`) diz que a credencial saiu do broker sozinha (≤ ~10 s: novas conexões recusadas e a sessão aberta derrubada) e que, se o usuário também estiver no `gateways.conf` manual, a linha deve ser removida de lá (a linha manual tem prioridade); sem ela, remover a linha do usuário do `gateways.conf` e recarregar o broker (`make mqtt-gateway-remove GATEWAY=<usuário> && make mqtt-reload`). Um novo cadastro reativa |
 | `PUT /api/gateways/{id}/tags` `{tags:[{tag_id, source?, key?, unit_id?, register_type?, data_type_plc?, word_order?, signal_role?}]}` | admin | substitui o conjunto de tags do gateway (só tags de máquinas da planta do gateway) |
 | `GET /api/gateways/{id}/config-preview` | admin | o mapa que o dispositivo receberia + avisos |
-| `GET /api/gateways/{id}/mqtt` | admin | `{username, topic_prefix, acl, gateways_conf_line, revoked, managed}` (+ `action` quando revogado). `managed: true` = credencial sincronizada automaticamente com o broker (a linha manual não é necessária) |
+| `GET /api/gateways/{id}/mqtt` | admin | `{username, topic_prefix, acl, gateways_conf_line, revoked, managed, sync_ok, sync_at, sync_error}` (+ `action` quando revogado). `managed: true` = sincronização configurada (a linha manual não é necessária); `sync_ok` / `sync_at` / `sync_error` = resultado real da última tentativa neste processo (`null` = nunca rodou ou desligada; erro curto, sem segredos) |
 
 Dispositivo (sem JWT):
 
@@ -84,7 +84,7 @@ Dispositivo (sem JWT):
 | Campo | Regra (servidor = `edge/src/plant_map.py`) |
 |---|---|
 | `id`, `protocol` | obrigatórios; `protocol = "ueapd"` |
-| `base_url` | obrigatório: `http(s)://host[:porta]`, `/` final opcional, sem usuário/senha, sem caminho/consulta; `${VAR}` / `${VAR:-padrão}` permitido (o padrão é validado; `${VAR}` sozinho é expandido no gateway) |
+| `base_url` | obrigatório: `http(s)://host[:porta]`, `/` final opcional, sem usuário/senha, sem caminho/consulta; `${VAR}` / `${VAR:-padrão}` só como a URL inteira, o host inteiro ou a porta inteira (`http://${UEAPD_M1_HOST:-192.168.1.15}:8003`, `http://10.0.0.5:${PORT}`); em qualquer outro lugar (usuário/senha, parte do host, caminho) → 422; o padrão também é validado |
 | `line` | texto opcional (`hipot`, `ats2`): linha esperada do box |
 | `poll_interval_s` / `timeout_s` | 0,2–300 (padrão 2) / 0,5–120 (padrão 5) |
 | `timestamps` | `gateway` (padrão) ou `source` (instante gravado pelo box) |
@@ -128,14 +128,18 @@ somente leitura no broker), o servidor escreve sozinho as credenciais dos gatewa
   gateways (todos os tenants — é um arquivo do broker; cada linha vira `topic readwrite factory/<tenant_id>/#`, o
   isolamento é pelo ACL) com usuário e hash não nulos **de tenants ativos** (tenant suspenso sai do arquivo);
 - linhas que o broker recusaria (usuário fora de `^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$`, tenant não UUID, hash fora de
-  `$6$`/`$7$`, usuário repetido ou reservado) não são escritas (aviso no log);
+  `^\$(7\$[0-9]{1,7}|6)\$<base64>\$<base64>$` — a mesma `APP_HASH_RE` do `render.sh`, usuário repetido ou reservado) não são escritas (aviso no log);
 - escrita atômica (temporário no mesmo diretório + `os.replace`, modo 0644) e só quando o conteúdo muda;
 - quando: depois do commit do cadastro, da revogação e da remoção de gateway, da suspensão/reativação/exclusão de
   tenant, na partida do servidor e a cada `MQTT_APP_SYNC_S` (padrão 60 s). Falha de escrita = log
-  `mqtt_app_file.write_failed`, nunca derruba a requisição (a sincronização periódica tenta de novo);
+  `mqtt_app_file.write_failed`, nunca derruba a requisição (a sincronização periódica tenta de novo). O resultado
+  da última tentativa aparece em `GET /api/gateways/{id}/mqtt` (`sync_ok`, `sync_at`, `sync_error`) e no `/metrics`:
+  `fm_mqtt_app_file_sync_ok` (1 ok, 0 falhou, -1 nunca rodou), `fm_mqtt_app_file_last_sync_timestamp_seconds`,
+  `fm_mqtt_app_file_sync_failures_total`;
 - o broker confere o arquivo a cada ~5 s e recarrega: o gateway cadastrado conecta em segundos; o **revogado** tem
   novas conexões recusadas **e a sessão aberta derrubada** em ≤ ~10 s, sem comando no broker
-  (`mqtt_action` e `managed` dizem isso à tela).
+  (`mqtt_action` e `managed` dizem isso à tela). Se o mesmo usuário também estiver no `gateways.conf` manual do
+  operador, a linha manual tem prioridade e precisa ser removida de lá.
 
 Vazio (dev, testes) = desligado: a inclusão/remoção da linha no `gateways.conf` volta a ser passo do operador
 (`make mqtt-gateway-add/remove` + `make mqtt-reload`), e a resposta de `revoke` diz qual linha remover. Em qualquer
@@ -153,17 +157,21 @@ Hoje: `ueapd-led-driver` — "Linha ueaPowerDriver (M1 Hipot + M2 ATS2)", dados 
 `POST /api/onboarding/line-templates/{key}/apply` (admin)
 `{plant_id, line_name?, gateway_id?, devices?: {"ueapd-m1": {"base_url": "..."}, ...}}` →
 `{template, line_id, line_name, line_created, machines: [{id, name, created}], tags_created, tags_updated,
-tags_unchanged, gateway: {id, devices, tags_assigned, config_version} | null, warnings: []}`.
+tags_unchanged, tags_skipped, gateway: {id, devices, tags_assigned, config_version} | null, warnings: []}`.
 
 - Idempotente, casa por nome como o `edge/src/provision.py`: linha na planta (sem acento/caixa), máquina na linha,
   posição na máquina, tag na máquina. Aplicar de novo não duplica; o que for estrutural volta ao modelo (papel,
-  seletor, unidade e posição das tags; contador de cada posição; máquina de saída da linha; códigos do
-  `fault_code_map` do modelo); modelo, série e tempo de ciclo ideal da máquina só são preenchidos se vazios.
-- Tags: `protocol = http`, `address` = seletor, `tags.edge.key` = chave do exemplo do edge (`ledd.m1.parts_good`, ...),
-  estável entre aplicações.
+  seletor, unidade e posição das tags; contador de cada posição; máquina de saída da linha); modelo, série e tempo
+  de ciclo ideal da máquina só são preenchidos se vazios. O que o usuário personalizou não é sobrescrito: o
+  `fault_code_map` só ganha os códigos que faltam (código mapeado diferente é mantido, com aviso); uma
+  `tags.edge.key` já gravada é mantida (o edge guarda o estado dos contadores por ela; aviso se difere da do modelo);
+  tag de mesmo nome com outro protocolo lida por outro gateway não é convertida (aviso, conta em `tags_skipped`, e
+  o contador da posição ligado a ela não é trocado).
+- Tags: `protocol = http`, `address` = seletor, `tags.edge.key` = chave do exemplo do edge (`ledd.m1.parts_good`, ...)
+  quando a tag ainda não tem chave, estável entre aplicações.
 - Com `gateway_id` (mesmo tenant **e** mesma planta): os dispositivos `ueapd-m1`/`ueapd-m2` são mesclados por id em
   `gateway.devices` (parâmetros do modelo; `base_url` do corpo, senão a já gravada, senão a padrão; id já usado por
-  outro protocolo → 422) e as 18 tags são atribuídas ao gateway (`source` = id do dispositivo); `config_version` sobe
+  outro protocolo → 422) e as tags do modelo (18, menos as ignoradas) são atribuídas ao gateway (`source` = id do dispositivo); `config_version` sobe
   se o mapa mudou (mesmo hash de `PUT /tags`).
 - Erros: planta/gateway de outro tenant → 404; gateway de outra planta, URL inválida, dispositivo fora do modelo →
   422; máquina do modelo já existente em outra linha da planta → 409; estouro de `tenant.max_machines` → 422

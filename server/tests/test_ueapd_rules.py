@@ -85,6 +85,10 @@ UEAPD_OK = [
     {"id": "u4", "protocol": "ueapd", "base_url": "${UEAPD_URL}"},
     {"id": "u5", "protocol": "ueapd", "base_url": "http://${BOX_HOST}:8003", "backfill": "all"},
     {"id": "u6", "protocol": "ueapd", "base_url": "http://[fe80::1]:8003", "poll_interval_s": "${POLL:-2}"},
+    # ${VAR} as the WHOLE host or the WHOLE port (I3)
+    {"id": "u7", "protocol": "ueapd", "base_url": "http://${UEAPD_M1_HOST:-192.168.1.15}:8003"},
+    {"id": "u8", "protocol": "ueapd", "base_url": "http://10.0.0.5:${BOX_PORT}"},
+    {"id": "u9", "protocol": "ueapd", "base_url": "https://${BOX_HOST}:${BOX_PORT:-8443}/"},
 ]
 UEAPD_BAD = [
     {"id": "b", "protocol": "ueapd"},
@@ -95,6 +99,17 @@ UEAPD_BAD = [
     {"id": "b", "protocol": "ueapd", "base_url": "http://h:99999"},
     {"id": "b", "protocol": "ueapd", "base_url": "http://h:8003?x=1"},
     {"id": "b", "protocol": "ueapd", "base_url": "http://${HOST:-u:p@h}:8003"},
+    # ${VAR} anywhere but the whole URL / host / port is refused (I3)
+    {"id": "b", "protocol": "ueapd", "base_url": "http://h:${SECRET}x"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://${VAR:-x}.evil.tld:8003"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://box-${N}.local:8003"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://${USER}:${PASS}@h:8003"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://h:8003/${PATH_VAR}"},
+    {"id": "b", "protocol": "ueapd", "base_url": "pre${URL}"},
+    {"id": "b", "protocol": "ueapd", "base_url": "${URL:-http://h:8003/api}"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://${H:-not a host}:8003"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://h:${P:-80a}"},
+    {"id": "b", "protocol": "ueapd", "base_url": "http://h:${P:-70000}"},
     {"id": "b", "protocol": "ueapd", "base_url": "http://h", "poll_interval_s": 0.1},
     {"id": "b", "protocol": "ueapd", "base_url": "http://h", "timeout_s": 500},
     {"id": "b", "protocol": "ueapd", "base_url": "http://h", "backfill": "everything"},
@@ -111,16 +126,19 @@ UEAPD_BAD = [
 def test_devices_accepted_by_the_server_are_accepted_by_the_edge():
     pm = edge_plant_map()
     from src.services import gateways as gs
-    env = {"UEAPD_URL": "http://10.1.1.1:8003", "BOX_HOST": "10.1.1.2"}
+    env = {"UEAPD_URL": "http://10.1.1.1:8003", "BOX_HOST": "10.1.1.2", "BOX_PORT": "8443"}
     out = gs.validate_devices(UEAPD_OK)
-    assert [d["id"] for d in out] == ["u1", "u2", "u3", "u4", "u5", "u6"]
+    assert [d["id"] for d in out] == ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9"]
     parsed = pm.parse_plant_map({"version": 1, "gateway_id": "gw", "sources": out, "tags": []}, env=env)
     assert parsed.sources["u1"].base_url == "http://192.168.1.15:8003"
     assert parsed.sources["u2"].backfill == "latest_day" and parsed.sources["u2"].fault_codes == {"ERRO_CLAMP": 401}
     assert parsed.sources["u4"].base_url == "http://10.1.1.1:8003"
+    assert parsed.sources["u7"].base_url == "http://192.168.1.15:8003"
+    assert parsed.sources["u9"].base_url == "https://10.1.1.2:8443"
     for bad in UEAPD_BAD:
         with pytest.raises(gs.ConfigError):
             gs.validate_devices([bad])
+            pytest.fail(f"accepted: {bad}")
 
 
 async def _tenant(label):

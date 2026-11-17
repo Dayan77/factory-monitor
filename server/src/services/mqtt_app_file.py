@@ -33,7 +33,8 @@ HEADER = "# GERADO pelo fm_server (MQTT_APP_GATEWAYS_FILE) — não edite; refei
 # the same checks render.sh applies to every line (a line it would refuse is never written)
 USER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$")
 TENANT_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-HASH_RE = re.compile(r"^\$[67]\$[A-Za-z0-9+/=$]+$")
+# = APP_HASH_RE of infra/mosquitto/prod/render.sh (the broker's check for this file)
+HASH_RE = re.compile(r"^\$(7\$[0-9]{1,7}|6)\$[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}$")
 RESERVED_USERS = {"fm-health"}
 
 _locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
@@ -45,6 +46,33 @@ def _lock() -> asyncio.Lock:
     if lk is None:
         lk = _locks[loop] = asyncio.Lock()
     return lk
+
+
+# result of the last sync attempt in this process (GET /api/gateways/{id}/mqtt → sync_ok / sync_at / sync_error)
+_status: dict = {"ok": None, "at": None, "error": None}
+
+
+def status() -> dict:
+    return dict(_status)
+
+
+def _record(ok: bool, error: Optional[str] = None) -> None:
+    from datetime import datetime, timezone
+
+    from .metrics import MQTT_APP_SYNC_AT, MQTT_APP_SYNC_FAILURES, MQTT_APP_SYNC_OK
+    now = datetime.now(timezone.utc)
+    _status.update(ok=ok, at=now, error=error)
+    MQTT_APP_SYNC_OK.set(1 if ok else 0)
+    MQTT_APP_SYNC_AT.set(now.timestamp())
+    if not ok:
+        MQTT_APP_SYNC_FAILURES.inc()
+
+
+def short_error(e: BaseException) -> str:
+    """Error for the API / UI without secrets: the exception class + the OS reason (no SQL, no DSN, no content)."""
+    if isinstance(e, OSError) and e.strerror:
+        return f"{type(e).__name__}: {e.strerror}"[:160]
+    return type(e).__name__
 
 
 def enabled() -> bool:
@@ -114,9 +142,14 @@ async def sync() -> Optional[bool]:
     if not enabled():
         return None
     path = settings.mqtt_app_gateways_file.strip()
-    async with _lock():            # one writer per process: the last DB read is the last write
-        content = render(await gateway_rows())
-        changed = await asyncio.to_thread(write_if_changed, path, content)
+    try:
+        async with _lock():            # one writer per process: the last DB read is the last write
+            content = render(await gateway_rows())
+            changed = await asyncio.to_thread(write_if_changed, path, content)
+    except Exception as e:
+        _record(False, short_error(e))
+        raise
+    _record(True)
     if changed:
         log.info("mqtt_app_file.written", path=path, gateways=content.count("\n") - 1)
     return changed

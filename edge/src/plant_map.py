@@ -118,8 +118,9 @@ def _flag(raw, sid: str) -> bool:
     raise PlantMapError(f"source {sid}: booleano inválido {raw!r}")
 
 
-def expand_env(value, env: Mapping[str, str]):
-    """Expande ${VAR} e ${VAR:-padrão} em strings (recursivo em listas/dicts)."""
+def expand_env(value, env: Mapping[str, str], used: Optional[list[str]] = None):
+    """Expande ${VAR} e ${VAR:-padrão} em strings (recursivo em listas/dicts). `used` (opcional) recebe os valores
+    vindos do AMBIENTE (não os padrões, que já estão no texto do mapa) — para `redact` tirá-los de mensagens."""
     if isinstance(value, str):
         def repl(m: re.Match) -> str:
             name, default = m.group(1), m.group(2)
@@ -128,13 +129,23 @@ def expand_env(value, env: Mapping[str, str]):
                 if default is None:
                     raise PlantMapError(f"variável de ambiente {name} não definida (sem padrão)")
                 return default
+            if used is not None:
+                used.append(v)
             return v
         return _VAR.sub(repl, value)
     if isinstance(value, list):
-        return [expand_env(v, env) for v in value]
+        return [expand_env(v, env, used) for v in value]
     if isinstance(value, dict):
-        return {k: expand_env(v, env) for k, v in value.items()}
+        return {k: expand_env(v, env, used) for k, v in value.items()}
     return value
+
+
+def redact(text: str, secrets) -> str:
+    """Troca por *** todo valor que veio do ambiente (${VAR}): mensagens de erro vão para o log, para os `errors`
+    do heartbeat e para a tela do servidor — um segredo do ambiente do gateway nunca sai por elas."""
+    for v in sorted({str(x) for x in secrets if x}, key=len, reverse=True):
+        text = text.replace(v, "***")
+    return text
 
 
 def parse_ueapd_selector(address) -> tuple[str, Optional[str], Optional[object]]:
@@ -185,6 +196,11 @@ class SourceConfig:
     fault_codes: dict = field(default_factory=dict)   # tag de falha do CLP → código (sobre os padrões)
     default_fault_code: int = 301   # falha de tag sem código no mapa (3xx automação, EQP-04)
     line: str = ""                  # linha esperada do box ("hipot" | "ats2"); vazio = não confere
+    # valores do ambiente expandidos nesta fonte (${VAR}); só para `redact` — nunca logar/enviar sem passar por ele
+    secret_values: tuple = field(default=(), repr=False)
+
+    def redact(self, text: str) -> str:
+        return redact(text, self.secret_values)
 
 
 @dataclass
@@ -406,18 +422,22 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None, strict: 
             raise PlantMapError(f"source sem id ou duplicada: {sid!r}")
         if proto not in PROTOCOLS:
             raise PlantMapError(f"source {sid}: protocolo inválido {proto!r} (use {sorted(PROTOCOLS)})")
+        used: list[str] = []
         try:
             try:
-                sources[sid] = _parse_source(sid, proto, expand_env(item, env))
+                src = _parse_source(sid, proto, expand_env(item, env, used))
             except (TypeError, ValueError) as e:
                 if isinstance(e, PlantMapError):
                     raise
                 raise PlantMapError(f"source {sid}: campo inválido ({e})") from None
+            src.secret_values = tuple(used)
+            sources[sid] = src
         except PlantMapError as e:
+            msg = redact(str(e), used)      # a mensagem cita valores já expandidos (ex.: base_url)
             if strict:
-                raise
+                raise PlantMapError(msg) from None
             dropped.add(sid)
-            rejected.append(f"fonte {sid} recusada: {e}")
+            rejected.append(f"fonte {sid} recusada: {msg}")
 
     tags: list[MapTag] = []
     skipped: list[str] = []

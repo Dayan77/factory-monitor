@@ -251,3 +251,59 @@ async def test_template_keys_survive_a_later_manual_assignment(client):
     ex = json.loads(EXAMPLE.read_text(encoding="utf-8"))
     assert {x["key"]: x["source"] for x in prev["plant_map"]["tags"]} == {t_["key"]: t_["source"] for t_ in ex["tags"]}
     assert len(pm.parse_plant_map(prev["plant_map"], env={}).tags) == 18
+
+
+async def test_reapply_keeps_custom_keys_fault_codes_and_foreign_tags(client):
+    """S4: re-applying never breaks counter continuity nor user customizations:
+    - an existing tags.edge.key is kept (warning when it differs from the template key);
+    - fault_code_map only gains missing codes, a code mapped differently is kept (warning);
+    - a same-name tag with another protocol, read by another gateway, is not converted (warning, skipped)."""
+    from src.db import AsyncSessionLocal
+    from src.models import Tag
+    t = await _tenant("LTS")
+    h = t.headers("admin")
+    plant = await api(client, "POST", "/api/plants/", h, 201, json={"name": "Planta LTS"})
+    first = await api(client, "POST", URL, h, json={"plant_id": plant["id"]})
+    m1, m2 = first["machines"]
+    tags = {x["name"]: x for x in await api(client, "GET", "/api/tags/", h, params={"machine_id": m1["id"]})}
+    good_id = tags["Peças boas (veredito OK)"]["id"]
+    async with AsyncSessionLocal() as s:
+        tg = await s.get(Tag, good_id)
+        tg.edge = {"source": "ueapd-m1", "key": "custom.m1.good"}
+        await s.commit()
+    # user remaps a template code and adds one of their own
+    mach = await api(client, "GET", f"/api/machines/{m1['id']}", h)
+    fmap = {**mach["fault_code_map"], "401": "EQP-09", "999": "EQP-02"}
+    fmap.pop("501")
+    await api(client, "PATCH", f"/api/machines/{m1['id']}", h, json={"fault_code_map": fmap})
+    # M2's run tag becomes a Modbus tag read by another gateway
+    other = await api(client, "POST", "/api/gateways/", h, 201, json={"name": "gw modbus", "plant_id": plant["id"],
+                                                                     "devices": [{"id": "plc", "protocol": "modbus",
+                                                                                  "host": "10.0.0.9"}]})
+    run2 = next(x for x in await api(client, "GET", "/api/tags/", h, params={"machine_id": m2["id"]})
+                if x["semantic_role"] == "run_state")
+    from src.models.tag import ProtocolType
+    async with AsyncSessionLocal() as s:                  # protocol is not editable through the API
+        tg = await s.get(Tag, run2["id"])
+        tg.protocol, tg.address, tg.edge = ProtocolType.modbus_tcp, "unit=1;co=3", None
+        await s.commit()
+    await api(client, "PUT", f"/api/gateways/{other['id']}/tags", h, json={"tags": [{"tag_id": run2["id"]}]})
+
+    gw = await api(client, "POST", "/api/gateways/", h, 201, json={"name": "gw ledd", "plant_id": plant["id"]})
+    out = await api(client, "POST", URL, h, json={"plant_id": plant["id"], "gateway_id": gw["id"]})
+    w = "\n".join(out["warnings"])
+    assert "'custom.m1.good' mantida" in w
+    assert "código de falha 401 mantido como EQP-09" in w
+    assert "não convertida" in w and out["tags_skipped"] == 1 and out["tags_created"] == 0
+    assert out["gateway"]["tags_assigned"] == 17
+    mach = await api(client, "GET", f"/api/machines/{m1['id']}", h)
+    assert mach["fault_code_map"]["401"] == "EQP-09" and mach["fault_code_map"]["999"] == "EQP-02"
+    assert mach["fault_code_map"]["501"] == "EQP-05"                                     # missing code added back
+    r2 = await api(client, "GET", f"/api/tags/{run2['id']}", h)
+    assert (r2["protocol"], r2["gateway_id"]) == ("modbus_tcp", other["id"])            # untouched
+    prev = await api(client, "GET", f"/api/gateways/{gw['id']}/config-preview", h)
+    keys = {x["tag_id"]: x["key"] for x in prev["plant_map"]["tags"]}
+    assert keys[good_id] == "custom.m1.good" and len(keys) == 17 and prev["warnings"] == []
+    # and the Modbus gateway still maps its tag
+    prev_o = await api(client, "GET", f"/api/gateways/{other['id']}/config-preview", h)
+    assert [x["tag_id"] for x in prev_o["plant_map"]["tags"]] == [run2["id"]]

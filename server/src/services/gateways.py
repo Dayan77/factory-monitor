@@ -43,9 +43,12 @@ UEAPD_DEVICE_KEYS = {"id", "protocol", "base_url", "line", "poll_interval_s", "t
                      "max_clock_skew_s", "backfill", "default_fault_code", "fault_codes"}
 MODBUS_EDGE_KEYS = {"unit_id", "register_type", "data_type_plc", "word_order"}
 _ENV_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-# base_url of a ueapd box after ${VAR} expansion: http(s)://host[:port][/] — no user/password, no path
-_BASE_URL = re.compile(r"^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])"
-                       r"(?::(\d{1,5}))?/?$")
+# base_url of a ueapd box: http(s)://host[:port][/] — no user/password, no path. A ${VAR} / ${VAR:-default} may only
+# be the WHOLE URL, the WHOLE host or the WHOLE port (never part of a label, userinfo or path)
+_VAR_TOKEN = r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}"
+_HOST_LIT = r"(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]+\])"
+_BASE_URL = re.compile(rf"^https?://(?P<host>{_HOST_LIT}|{_VAR_TOKEN})(?::(?P<port>\d{{1,5}}|{_VAR_TOKEN}))?/?$")
+_HOST_ONLY = re.compile(rf"^{_HOST_LIT}$")
 MODBUS_REGISTER_TYPES = {"holding", "input", "coil", "discrete"}
 SIGNAL_ROLES = {"product_code", "starved", "blocked"}
 EDGE_TAG_KEYS = {"source", "key", "unit_id", "register_type", "data_type_plc", "word_order", "signal_role"}
@@ -129,7 +132,9 @@ def mqtt_revoke_action(gw: Gateway) -> str:
     if mqtt_managed():
         return (f"A credencial MQTT do usuário {gw.mqtt_username} foi retirada automaticamente do broker: em até "
                 f"~10 s ele recusa novas conexões deste gateway e derruba a sessão já aberta. Nenhum comando no "
-                f"broker é necessário; o servidor já descarta as leituras das tags deste gateway.")
+                f"broker é necessário; o servidor já descarta as leituras das tags deste gateway. Se este "
+                f"usuário também estiver no gateways.conf manual do broker, remova a linha de lá (a linha manual "
+                f"tem prioridade).")
     return (f"Remova a linha do usuário {gw.mqtt_username} do gateways.conf do broker e recarregue-o "
             f"(make mqtt-gateway-remove GATEWAY={gw.mqtt_username} && make mqtt-reload). Até lá o broker ainda "
             f"aceita a conexão, mas o servidor descarta as leituras das tags deste gateway.")
@@ -146,21 +151,35 @@ class ConfigError(ValueError):
 
 
 def _check_base_url(did: str, raw) -> str:
-    """base_url of a ueapd device: http(s)://host[:port] (optional trailing /), no credential nor path. `${VAR}` /
-    `${VAR:-default}` are expanded on the gateway (edge plant_map.expand_env): the default (or a placeholder) is
-    checked here; a URL made only of a variable without default is accepted as is."""
+    """base_url of a ueapd device: http(s)://host[:port] (optional trailing /), no credential nor path.
+    `${VAR}` / `${VAR:-default}` (expanded on the gateway, edge plant_map.expand_env) are accepted only as the whole
+    URL, the whole host or the whole port; a default must itself be a valid URL / host / port."""
+    bad = ConfigError(f"dispositivo {did}: base_url inválido {raw!r} (use http(s)://host[:porta], sem usuário/senha "
+                      f"nem caminho; ${{VAR}} só como URL, host ou porta inteiros)")
     if not isinstance(raw, str) or not raw.strip():
         raise ConfigError(f"dispositivo {did}: base_url 'http(s)://host[:porta]' obrigatório")
     url = raw.strip()
     whole = _ENV_VAR.fullmatch(url)
-    if whole and whole.group(2) is None:
+    if whole:
+        if whole.group(2) is not None:
+            if _ENV_VAR.search(whole.group(2)) or "$" in whole.group(2):
+                raise bad
+            _check_base_url(did, whole.group(2))
         return url
-    probe = _ENV_VAR.sub(lambda m: m.group(2) if m.group(2) is not None else "1", url)
-    if "@" in probe:
+    if "@" in url:
         raise ConfigError(f"dispositivo {did}: credencial na URL não é permitida (use ${{VAR}} no gateway)")
-    m = _BASE_URL.match(probe)
-    if not m or (m.group(1) is not None and not 1 <= int(m.group(1)) <= 65535):
-        raise ConfigError(f"dispositivo {did}: base_url inválido {url!r} (use http(s)://host[:porta], sem caminho)")
+    m = _BASE_URL.match(url)
+    if not m:
+        raise bad
+    host, port = m.group("host"), m.group("port")
+    hv = _ENV_VAR.fullmatch(host)
+    if hv and hv.group(2) is not None and not _HOST_ONLY.match(hv.group(2)):
+        raise bad
+    if port is not None:
+        pv = _ENV_VAR.fullmatch(port)
+        value = (pv.group(2) if pv else port)
+        if value is not None and (not value.isdigit() or not 1 <= int(value) <= 65535):
+            raise bad
     return url
 
 

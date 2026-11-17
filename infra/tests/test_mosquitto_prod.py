@@ -557,8 +557,15 @@ def test_garbage_app_file_never_stops_the_broker_nor_drops_valid_users(app_broke
     assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0,
                     timeout=10 * POLL_S + 10), logs(b)
     text = logs(b)
-    assert "AVISO" in text and "não é UUID" in text and "repetido 'gw-op'" in text
+    assert "AVISO" in text and "não é UUID" in text
+    assert ("usuário gw-op do app sombreado pelo gateways.conf manual — revogar no app não terá efeito" in text), text
     assert "app: 1, ignorados: 9" in text
+    # nada cru das linhas inválidas no log (só o usuário, filtrado): nem a "senha", nem o comando
+    assert "plaintextpassword" not in text and "rm -rf" not in text
+    # helper do operador: quem está nos dois arquivos (lê o app file de dentro do container)
+    r = sh("bash", str(ROOT / "scripts/mqtt_gateway.sh"), "overlap",
+           env={**os.environ, "MQTT_GATEWAYS_FILE": str(b.gw_file), "MQTT_CONTAINER": b.name})
+    assert r.stdout.split() == ["gw-op"], r.stdout + r.stderr
     acl = sh("docker", "exec", b.name, "cat", "/mosquitto/runtime/acl").stdout
     assert acl.count("user gw-op\n") == 1 and f"user gw-op\ntopic readwrite factory/{TENANT_A}/#" in acl
     assert "rm -rf" not in acl and "gw-app-1\ntopic readwrite factory/" + TENANT_A not in acl
@@ -575,28 +582,76 @@ def test_garbage_app_file_never_stops_the_broker_nor_drops_valid_users(app_broke
     assert b.pub(SERVER_USER, SERVER_PW, "health/x", tls=False).returncode == 0   # autentica (ACL nega a escrita)
 
 
-def test_invalid_operator_file_at_runtime_keeps_the_config_in_use(app_broker):
+def test_invalid_operator_file_at_runtime_keeps_last_valid_operator_block_and_applies_the_app_file(app_broker):
+    """Review I2: um gateways.conf quebrado durante a operação não pode congelar cadastros/revogações do app.
+    Na recarga automática o bloco do operador da última renderização válida continua valendo e o app file é aplicado;
+    na partida e no `make mqtt-reload` (render manual) o operador continua estrito."""
     b = app_broker
     write_app_file(b, [f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}"])
     assert wait_for(lambda: b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0,
                     timeout=10 * POLL_S + 10), logs(b)
     good = b.gw_file.read_text()
+    marker = "mantidos os gateways manuais da última config válida"
     try:
         b.gw_file.write_text(good + "gw-broken not-a-uuid $7$1$a$b\n")
-        assert wait_for(lambda: "render falhou" in logs(b), timeout=10 * POLL_S + 10), logs(b)
-        # nada mudou: operador e app continuam valendo
+        assert wait_for(lambda: marker in logs(b), timeout=10 * POLL_S + 10), logs(b)
         assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
-        assert b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode == 0
-        n_fail = logs(b).count("render falhou")
+        n_warn = logs(b).count(marker)
         time.sleep(3 * POLL_S + 1)
-        assert logs(b).count("render falhou") == n_fail, "não repete o erro enquanto o arquivo não muda"
+        assert logs(b).count(marker) == n_warn, "avisa uma vez por mudança, não a cada volta do laço"
+
+        # revogação e cadastro no app continuam valendo com o operador quebrado
+        pw_new = secrets.token_urlsafe(24)
+        write_app_file(b, [f"gw-app-3 {TENANT_A} {server_hash(pw_new)}"])
+        assert wait_for(lambda: b.pub("gw-app-3", pw_new, f"factory/{TENANT_A}/sensors/t").returncode == 0,
+                        timeout=10 * POLL_S + 10), logs(b)
+        assert b.pub("gw-app-1", b.pw_app, f"factory/{TENANT_B}/sensors/t").returncode != 0, "revogação ignorada"
+        assert b.pub("gw-op", b.pw_op, f"factory/{TENANT_A}/sensors/t").returncode == 0
+        assert "gw-broken" not in sh("docker", "exec", b.name, "cat", "/mosquitto/runtime/acl").stdout
+
+        # render manual (make mqtt-reload) continua estrito: falha alto e não mexe na config em uso
+        r = sh("docker", "exec", b.name, "sh", "/fm/render.sh", check=False)
+        assert r.returncode != 0 and "não é UUID" in r.stderr
+        assert b.pub("gw-app-3", pw_new, f"factory/{TENANT_A}/sensors/t").returncode == 0
+        normal = "(operador: 1, app: 1, ignorados: 0)"
+        n_normal = logs(b).count(normal)
     finally:
         b.gw_file.write_text(good)
-    # corrigido → volta a recarregar sozinho
-    pw_new = secrets.token_urlsafe(24)
-    write_app_file(b, [f"gw-app-1 {TENANT_B} {server_hash(b.pw_app)}", f"gw-app-3 {TENANT_A} {server_hash(pw_new)}"])
-    assert wait_for(lambda: b.pub("gw-app-3", pw_new, f"factory/{TENANT_A}/sensors/t").returncode == 0,
+    # corrigido → render normal de novo (resumo sem "da última config válida")
+    assert wait_for(lambda: logs(b).count(normal) > n_normal, timeout=10 * POLL_S + 10), logs(b)
+
+
+def test_server_rendered_app_file_is_accepted_by_the_broker(app_broker):
+    """Review S6: o app file escrito pelo renderizador REAL do servidor (server/src/services/mqtt_app_file.py
+    render + write_if_changed, hash de services/gateways.mosquitto_hash) é aceito inteiro pelo broker: nenhuma
+    linha ignorada, cada gateway no seu tenant; o servidor já deixa de fora backend e fm-health."""
+    py = ROOT / ".venv/bin/python"
+    if not py.exists():
+        pytest.skip("precisa do venv do servidor (.venv)")
+    b = app_broker
+    pw1, pw2 = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+    rows = [["gw-srv-1", TENANT_A, pw1], ["gw-srv-2", TENANT_B, pw2], ["fm-health", TENANT_A, pw1],
+            [SERVER_USER, TENANT_A, pw1]]
+    code = (
+        "import json, sys\n"
+        "from src.services.mqtt_app_file import render, write_if_changed\n"
+        "from src.services.gateways import mosquitto_hash\n"
+        "rows = json.load(sys.stdin)\n"
+        "write_if_changed(sys.argv[1], render([(u, t, mosquitto_hash(p)) for u, t, p in rows]))\n")
+    env = {"PATH": os.environ["PATH"], "MQTT_USERNAME": SERVER_USER, "HOME": os.environ.get("HOME", "/tmp")}
+    r = subprocess.run([str(py), "-c", code, str(b.app_file)], input=json.dumps(rows), cwd=str(ROOT / "server"),
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    text = b.app_file.read_text()
+    assert text.startswith(APP_HEADER) and "fm-health" not in text and f"{SERVER_USER} " not in text
+    assert oct(b.app_file.stat().st_mode)[-3:] == "644"
+    assert wait_for(lambda: b.pub("gw-srv-2", pw2, f"factory/{TENANT_B}/sensors/t").returncode == 0,
                     timeout=10 * POLL_S + 10), logs(b)
+    assert b.pub("gw-srv-1", pw1, f"factory/{TENANT_A}/sensors/t").returncode == 0
+    assert "(operador: 1, app: 2, ignorados: 0)" in logs(b)
+    acl = sh("docker", "exec", b.name, "cat", "/mosquitto/runtime/acl").stdout
+    assert f"user gw-srv-1\ntopic readwrite factory/{TENANT_A}/#" in acl
+    assert f"user gw-srv-2\ntopic readwrite factory/{TENANT_B}/#" in acl
 
 
 def test_entrypoint_starts_with_garbage_app_file_but_operator_file_stays_strict(broker, tmp_path):
@@ -606,3 +661,94 @@ def test_entrypoint_starts_with_garbage_app_file_but_operator_file_stays_strict(
     r = _render_fails(broker, tmp_path, {}, gateways=f"gw-x {TENANT_A} plaintextpassword\n",
                       app=f"gw-app {TENANT_A} {server_hash('x')}\n")
     assert r.returncode != 0 and "hash inválido" in r.stderr
+
+
+def test_app_file_symlink_or_non_regular_is_ignored_and_invalid_lines_are_not_echoed(broker, tmp_path):
+    """Review S7: o volume só pode trazer um arquivo regular; symlink (ex.: para outro arquivo do container) ou
+    diretório → aviso e nenhum gateway do app. Linha inválida: o log mostra no máximo o usuário filtrado."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "real.conf").write_text(f"gw-link {TENANT_A} {server_hash('x')}\n")
+    (app_dir / "gateways.app.conf").symlink_to("real.conf")
+    r = _render_fails(broker, tmp_path, {}, gateways="")
+    assert r.returncode == 0, r.stderr
+    assert "link simbólico" in r.stderr and "app: 0" in r.stdout
+
+    (app_dir / "gateways.app.conf").unlink()
+    (app_dir / "gateways.app.conf").mkdir()
+    r = _render_fails(broker, tmp_path, {}, gateways="")
+    assert r.returncode == 0, r.stderr
+    assert "não é um arquivo regular" in r.stderr and "app: 0" in r.stdout
+
+    (app_dir / "gateways.app.conf").rmdir()
+    secret = "s3cr3t-Pa55word-in-the-wrong-field"
+    r = _render_fails(broker, tmp_path, {}, gateways="", app=(
+        f"gw-q {secret}\n"
+        f"gw;$(id)`x`\x1b[31m {TENANT_A} {server_hash('x')}\n"
+        f"gw-t {TENANT_A}-{secret} {server_hash('x')}\n"
+        f"gw-h {TENANT_A} {secret}\n"))
+    assert r.returncode == 0, r.stderr
+    assert "app: 0, ignorados: 4" in r.stdout
+    assert secret not in r.stderr and "$(id)" not in r.stderr and "\x1b" not in r.stderr and ";" not in r.stderr
+    assert "usuário inválido 'gwidx31m'" in r.stderr
+
+
+def test_overlap_helper_lists_users_in_both_files(tmp_path):
+    gw = tmp_path / "gateways.conf"
+    gw.write_text(f"# manual\ngw-a {TENANT_A} $7$1$a$b\ngw-old {TENANT_B} $7$1$a$b\n")
+    app = tmp_path / "gateways.app.conf"
+    app.write_text(f"{APP_HEADER}gw-a {TENANT_A} $7$1$c$d\ngw-new {TENANT_A} $7$1$c$d\n")
+    run = lambda: sh("bash", str(ROOT / "scripts/mqtt_gateway.sh"), "overlap",   # noqa: E731
+                     env={**os.environ, "MQTT_GATEWAYS_FILE": str(gw), "MQTT_APP_FILE": str(app)})
+    r = run()
+    assert r.stdout.split() == ["gw-a"] and "sombreia" in r.stderr
+    gw.write_text(f"gw-old {TENANT_B} $7$1$a$b\n")
+    r = run()
+    assert r.stdout == "" and "nenhum usuário" in r.stderr
+
+
+def test_server_can_write_a_fresh_mqtt_app_volume_mounted_first_by_the_broker(tmp_path):
+    """Review S5: no compose de produção o fm_server só sobe com o broker saudável, então o volume mqtt-app NOVO é
+    montado primeiro pelo mosquitto (ro, sem /mosquitto/app na imagem dele). O servidor (uid 10001) ainda precisa
+    conseguir escrever: o docker copia dono/permissão do diretório da imagem do servidor para o volume vazio.
+    Imagem de prova = FROM + as linhas `RUN useradd … mkdir … /app/data/mqtt … chown` e `USER` do server/Dockerfile
+    (sem a instalação das dependências). Sem a base do servidor (rate limit do Docker Hub), cai para a imagem do
+    mosquitto (alpine) trocando só o `useradd` pelo `adduser` do busybox — o mkdir/chown/USER seguem idênticos."""
+    b = Broker(tmp_path)
+    b.service()   # escreve o .env do teste
+    cfg = json.loads(sh("docker", "compose", "--env-file", str(b.env_file), "-f",
+                        str(ROOT / "infra/docker-compose.prod.yml"), "config", "--format", "json").stdout)
+    mosq_t = next(v for v in cfg["services"]["mosquitto"]["volumes"] if v.get("source") == "mqtt-app")["target"]
+    srv_t = next(v for v in cfg["services"]["server"]["volumes"] if v.get("source") == "mqtt-app")["target"]
+    srv_file = cfg["services"]["server"]["environment"]["MQTT_APP_GATEWAYS_FILE"]
+    mosq_file = cfg["services"]["mosquitto"]["environment"]["MQTT_APP_GATEWAYS_FILE"]
+    assert os.path.dirname(srv_file) == srv_t and os.path.dirname(mosq_file) == mosq_t
+
+    dockerfile = (ROOT / "server/Dockerfile").read_text()
+    base = re.search(r"^FROM\s+(\S+)", dockerfile, re.M).group(1)
+    run_line = next(x for x in dockerfile.splitlines() if x.startswith("RUN useradd") and "/app/data/mqtt" in x)
+    user_line = next(x for x in dockerfile.splitlines() if x.startswith("USER "))
+    if sh("docker", "image", "inspect", base, check=False).returncode != 0 and \
+            sh("docker", "pull", "-q", base, check=False, timeout=180).returncode != 0:
+        base = IMAGE
+        run_line = re.sub(r"useradd --system --uid (\d+) --no-create-home (\w+)", r"adduser -S -H -u \1 \2", run_line)
+    ctx = tmp_path / "probe"
+    ctx.mkdir()
+    (ctx / "Dockerfile").write_text(f"FROM {base}\n{run_line}\n{user_line}\n")
+    tag = f"fm-volprobe:{uuid.uuid4().hex[:8]}"
+    vol = f"fmvol{uuid.uuid4().hex[:8]}"
+    sh("docker", "build", "-q", "-t", tag, str(ctx), timeout=300)
+    try:
+        sh("docker", "volume", "create", vol)
+        # 1º o broker (ro), como na ordem real do compose
+        sh("docker", "run", "--rm", "-v", f"{vol}:{mosq_t}:ro", "--entrypoint", "ls", IMAGE, "-ld", mosq_t)
+        w = sh("docker", "run", "--rm", "-v", f"{vol}:{srv_t}", "--entrypoint", "sh", tag, "-c",
+               f"id -u && echo 'gw-x {TENANT_A} $7$1$a$b' > {srv_file}.tmp && mv {srv_file}.tmp {srv_file}",
+               check=False)
+        assert w.returncode == 0, w.stderr
+        assert w.stdout.strip() == "10001"
+        r = sh("docker", "run", "--rm", "-v", f"{vol}:{mosq_t}:ro", "--entrypoint", "cat", IMAGE, mosq_file)
+        assert r.stdout.startswith("gw-x ")
+    finally:
+        sh("docker", "volume", "rm", "-f", vol, check=False)
+        sh("docker", "rmi", "-f", tag, check=False)
