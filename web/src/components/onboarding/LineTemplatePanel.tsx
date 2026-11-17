@@ -210,7 +210,7 @@ function AppliedResult({ a, gateways }: { a: Applied; gateways: Gateway[] | unde
       <p role="status" className="font-semibold text-ok">Modelo aplicado: {a.lineName}{r.line_created === true ? " (linha criada)" : r.line_created === false ? " (linha existente atualizada)" : ""}</p>
       <ul className="space-y-1 text-caption text-fg-muted">
         <li>Máquinas: {r.machines.length > 0 ? r.machines.map((m) => `${m.name}${m.created === true ? " (nova)" : ""}`).join(", ") : "nenhuma"}</li>
-        <li>Tags: {formatInt(r.tags_created)} criada(s), {formatInt(r.tags_updated)} atualizada(s){r.tags_unchanged != null ? `, ${formatInt(r.tags_unchanged)} sem mudança` : ""}</li>
+        <li>Tags: {formatInt(r.tags_created)} criada(s), {formatInt(r.tags_updated)} atualizada(s){r.tags_unchanged != null ? `, ${formatInt(r.tags_unchanged)} sem mudança` : ""}{r.tags_skipped ? `, ${formatInt(r.tags_skipped)} ignorada(s) (outro protocolo/gateway)` : ""}</li>
         {r.gateway
           ? <li>Gateway{gw ? ` ${gw.name}` : ""} — {formatInt(deviceCount(r.gateway.devices))} dispositivo(s) configurado(s), {formatInt(r.gateway.tags_assigned)} tag(s) atribuída(s){r.gateway.config_version != null ? ` · configuração v${r.gateway.config_version}` : ""}</li>
           : <li>Sem gateway: atribua as tags a um gateway em Configurações → Gateways.</li>}

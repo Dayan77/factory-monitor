@@ -38,6 +38,8 @@ export interface ApplyLineTemplateResult {
   tags_created: number;
   tags_updated: number;
   tags_unchanged?: number;
+  /** same-name tags of another protocol already read by another gateway: left untouched */
+  tags_skipped?: number;
   gateway: { id: string; devices: number | unknown[]; tags_assigned: number; config_version?: number } | null;
   warnings: string[];
 }
