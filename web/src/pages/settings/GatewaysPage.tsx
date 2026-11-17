@@ -326,7 +326,7 @@ function MqttCredential({ info }: { info: MqttInfo }) {
 
 function revokeConfirmText(managed: boolean | undefined) {
   const base = "Revogar o gateway? O token e a credencial MQTT deixam de valer e o servidor descarta as leituras dele até um novo cadastro.";
-  if (managed === true) return `${base} O broker passa a recusar a credencial sozinho em poucos segundos (uma conexão já aberta só cai quando o broker reinicia).`;
+  if (managed === true) return `${base} O broker passa a recusar a credencial sozinho em poucos segundos e derruba uma conexão que já estava aberta.`;
   if (managed === false) return `${base} Depois remova a linha dele do gateways.conf do broker e recarregue-o.`;
   return base;
 }

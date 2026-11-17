@@ -161,7 +161,7 @@ export default function LineTemplatePanel({ plant }: { plant: TreePlant }) {
           <fieldset className="space-y-2">
             <legend className="mb-1 text-caption font-medium text-fg-muted">Endereço dos boxes na rede da fábrica</legend>
             {!withGateway && <p className="text-caption text-warn" data-testid="tpl-urls-need-gw">As URLs ficam gravadas no gateway que lê os boxes: escolha ou crie um gateway acima para usá-las.</p>}
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 xl:grid-cols-2">
               {tpl.devices.map((d) => {
                 const v = urls[d.id] ?? d.default_base_url;
                 const err = urlErrors[d.id];
