@@ -314,9 +314,12 @@ async def assign_tags(gateway_id: str, body: TagsIn, user: CurrentUser, db: DB):
             errors.append(f"tag {t.name}: não pertence a uma máquina da planta do gateway")
             continue
         edge = a.model_dump(exclude_none=True, exclude={"tag_id"})
-        if "key" not in edge and (t.edge or {}).get("key"):
+        prev = t.edge or {}
+        if "key" not in edge and prev.get("key"):
             # keep the map key already set (template / CSV import): the edge keys counter state by it
-            edge["key"] = t.edge["key"]
+            edge["key"] = prev["key"]
+        if "source" not in edge and prev.get("source") in {d.get("id") for d in (gw.devices or [])}:
+            edge["source"] = prev["source"]          # e.g. ueapd-m2 set by the line template
         try:
             t.edge = gs.validate_tag_edge(t, edge, list(gw.devices or []))
         except gs.ConfigError as e:
