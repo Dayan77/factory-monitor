@@ -15,8 +15,12 @@ falta, do mapa local (`PLANT_MAP_PATH`).
 Resposta esperada (200, application/json):
     {"gateway_id": "<uuid>", "revision": "7", "config_version": 7, "plant_map": { ...mapa v1... }}
 ou o próprio mapa v1 (edge/src/plant_map.py) no corpo. Cabeçalho `ETag` opcional (vira If-None-Match na próxima
-partida; 304 = usar a cópia local). O mapa é validado (`parse_plant_map`) ANTES de ser aceito e gravado; o
-`gateway_id` do mapa precisa ser o deste gateway.
+partida; 304 = usar a cópia local). O mapa é validado (`parse_plant_map`, modo tolerante) ANTES de ser aceito e
+gravado; o `gateway_id` do mapa precisa ser o deste gateway. Fonte ou tag inválida (ex.: seletor `ueapd` errado,
+`base_url` com `${VAR}` sem valor) sai do mapa com aviso (`remote_config.item_rejected`, também nos `errors` do
+heartbeat) e as demais rodam; erro de estrutura (versão, protocolo desconhecido, key/tag_id repetidos) recusa o mapa.
+Fontes `ueapd` (boxes ueaPowerDriver) vêm do servidor como as de OPC UA/Modbus; `${VAR}`/`${VAR:-padrão}` são
+expandidos aqui, no gateway (a cópia local guarda o texto sem expandir).
 
 Ordem de carga (nunca perder dado: o gateway sobe mesmo sem servidor):
     1. servidor respondeu 200 com mapa válido → usa e grava a cópia local (escrita atômica, sem o token);
@@ -96,7 +100,12 @@ def extract_config(body: Any) -> tuple[dict, Optional[str], Optional[int]]:
 def _validate(doc: dict, gateway_id: str, env: Optional[Mapping[str, str]]) -> PlantMap:
     if doc.get("gateway_id") and doc["gateway_id"] != gateway_id:
         raise PlantMapError(f"mapa é do gateway {doc['gateway_id']!r}, não de {gateway_id!r}")
-    return parse_plant_map({**doc, "gateway_id": gateway_id}, env=env)
+    # tolerante: fonte/tag inválida vinda do servidor (ex.: seletor ueapd errado) sai do mapa com o motivo em
+    # `rejected` e o resto roda; erro de estrutura recusa o mapa inteiro (edge/src/plant_map.py)
+    pm = parse_plant_map({**doc, "gateway_id": gateway_id}, env=env, strict=False)
+    for msg in pm.rejected:
+        log.warning("remote_config.item_rejected", gateway_id=gateway_id, reason=msg)
+    return pm
 
 
 def read_cache(path: str | Path) -> Optional[dict]:
@@ -183,7 +192,8 @@ async def load_gateway_config(
                 pm = _validate(doc, gateway_id, env)
                 write_cache(cache_path, doc, gateway_id, url, etag, revision, version)
                 log.info("remote_config.loaded", url=url, revision=revision, config_version=version,
-                         tags=len(pm.tags))
+                         tags=len(pm.tags), sources=sorted(f"{s.id}:{s.protocol}" for s in pm.sources.values()),
+                         rejected=len(pm.rejected))
                 return LoadedConfig(pm, "remote", revision, config_version=version)
             if status == 304 and cache is not None:
                 pm = _validate(cache["plant_map"], gateway_id, env)

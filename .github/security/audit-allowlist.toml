@@ -113,3 +113,16 @@ reason = """launch-editor embutido no servidor de DESENVOLVIMENTO do vite (abrir
 fs.existsSync() só existe no Windows e só com `vite dev` rodando. Produção serve o build estático pelo nginx (sem
 vite). Correção = vite 6.4.4+/8.3.5 (major a partir do 5.x do web) — migrar junto com vitest 3+."""
 expires = 2027-01-31
+
+[[advisory]]
+id = "GHSA-fc5q-39xc-vjpf"
+ecosystem = "npm"
+package = "picomatch"
+projects = ["web", "site"]
+scope = "dev"
+reason = """Sem versão corrigida publicada (4.0.7 é a última e ainda está na faixa vulnerável; o `npm audit fix` sugere
+trocar tailwindcss/vitest de major, o que não remove o picomatch). ReDoS com extglobs repetidos: só ocorre com padrões
+glob controlados por quem chama. Aqui o picomatch roda só no BUILD/testes (tailwindcss → chokidar/micromatch/tinyglobby
+no web; vitest no site) com padrões fixos do próprio repositório (content do tailwind, include do vitest); nada em
+produção (web e site são estáticos servidos pelo nginx). Revisar quando sair picomatch corrigido."""
+expires = 2027-01-31

@@ -9,6 +9,10 @@ Onboarding wizard (Sprint 6 — docs/sprint6.md §4). Admin of the tenant only.
   POST /api/onboarding/tags/import           {gateway_id, csv, confirm} — tag CSV §4.1 (preview / confirm, idempotent;
                                              per-line results with the edge parser's messages)
   GET  /api/onboarding/templates/{assets|tags}.csv   CSV template with the header and one example row
+  GET  /api/onboarding/line-templates        line templates (e.g. ueaPowerDriver M1 Hipot + M2 ATS2)
+  POST /api/onboarding/line-templates/{key}/apply   {plant_id, line_name?, gateway_id?, devices?: {id: {base_url}}}
+                                             → line, machines, positions, tags (idempotent by name); with a gateway:
+                                             ueapd devices merged + tags assigned (services/onboarding/line_templates)
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import get_current_user, require_roles
 from ...db import get_db
 from ...models import Gateway, Plant, User, UserRole
-from ...services.onboarding import assets_csv, readiness, steps, tags_csv
+from ...services.onboarding import assets_csv, line_templates, readiness, steps, tags_csv
 from ...services.onboarding.csvutil import CsvError
 from ...services.validation import is_uuid
 
@@ -41,6 +45,60 @@ TAGS_TEMPLATE = (
     "holding;uint16;big;65535;;1;0;1000\n"
     "montagem.transportador.rodando;Linha de Montagem;Transportador de Saída;;run_state;opcua-plc;"
     "\"ns=2;s=Transportador.Run\";;;;;;;;;500\n")
+
+
+class TemplateDeviceIn(BaseModel):
+    base_url: Optional[str] = Field(default=None, max_length=300)
+
+
+class LineTemplateApplyIn(BaseModel):
+    plant_id: str = Field(min_length=1)
+    line_name: Optional[str] = Field(default=None, max_length=255)
+    gateway_id: Optional[str] = None
+    devices: dict[str, TemplateDeviceIn] = Field(default_factory=dict)
+
+
+class LineTemplateDeviceOut(BaseModel):
+    id: str
+    label: str
+    default_base_url: str
+
+
+class LineTemplateOut(BaseModel):
+    key: str
+    name: str
+    description: str
+    line_name: str
+    machines: list[str]
+    devices: list[LineTemplateDeviceOut]
+    tag_count: int
+
+
+class AppliedMachineOut(BaseModel):
+    id: str
+    name: str
+    created: bool
+
+
+class AppliedGatewayOut(BaseModel):
+    id: str
+    devices: list[dict]
+    tags_assigned: int
+    config_version: int
+
+
+class LineTemplateApplyOut(BaseModel):
+    template: str
+    line_id: str
+    line_name: str
+    line_created: bool
+    machines: list[AppliedMachineOut]
+    tags_created: int
+    tags_updated: int
+    tags_unchanged: int
+    tags_skipped: int = 0
+    gateway: Optional[AppliedGatewayOut]
+    warnings: list[str]
 
 
 class StepIn(BaseModel):
@@ -157,3 +215,27 @@ async def template(name: Literal["assets.csv", "tags.csv"]):
     body = assets_csv.TEMPLATE if name == "assets.csv" else TAGS_TEMPLATE
     return Response(content="﻿" + body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/line-templates", response_model=list[LineTemplateOut], dependencies=ADMIN)
+async def list_line_templates():
+    return line_templates.list_public()
+
+
+@router.post("/line-templates/{key}/apply", response_model=LineTemplateApplyOut, dependencies=ADMIN)
+async def apply_line_template(key: str, body: LineTemplateApplyIn, user: CurrentUser, db: DB):
+    if not is_uuid(body.plant_id):
+        raise HTTPException(status_code=404, detail="Planta não encontrada.")
+    if body.gateway_id and not is_uuid(body.gateway_id):
+        raise HTTPException(status_code=404, detail="Gateway não encontrado.")
+    try:
+        out = await line_templates.apply(
+            db, user.tenant_id, key, body.plant_id, line_name=body.line_name, gateway_id=body.gateway_id or None,
+            devices={k: v.base_url for k, v in body.devices.items()})
+    except line_templates.TemplateError as e:
+        await db.rollback()
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    await db.commit()
+    from ...services.usage.cache import topology_cache
+    topology_cache.invalidate()            # new tags / counter links reach the MQTT hot path
+    return out

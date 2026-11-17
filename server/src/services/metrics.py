@@ -43,3 +43,11 @@ for _s in ("lookup", "influx", "usage", "process"):
     INGEST_DEAD_LETTERS.labels(_s)
     INGEST_RETRIES.labels(_s)
 INGEST_DROPPED.inc(0)
+
+
+# ── broker app file with the gateways' MQTT credentials (services/mqtt_app_file.py, docs/gateways.md) ─────────
+MQTT_APP_SYNC_OK = Gauge("fm_mqtt_app_file_sync_ok", "Last sync of the broker app file (MQTT_APP_GATEWAYS_FILE): "
+                         "1 ok, 0 failed, -1 never ran / disabled")
+MQTT_APP_SYNC_OK.set(-1)
+MQTT_APP_SYNC_AT = Gauge("fm_mqtt_app_file_last_sync_timestamp_seconds", "Unix time of the last sync attempt")
+MQTT_APP_SYNC_FAILURES = Counter("fm_mqtt_app_file_sync_failures", "Failed syncs of the broker app file")

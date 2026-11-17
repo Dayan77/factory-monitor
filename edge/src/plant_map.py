@@ -67,6 +67,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+from urllib.parse import urlsplit
 
 from .clock import POLICIES, parse_max_skew
 
@@ -117,8 +118,9 @@ def _flag(raw, sid: str) -> bool:
     raise PlantMapError(f"source {sid}: booleano inválido {raw!r}")
 
 
-def expand_env(value, env: Mapping[str, str]):
-    """Expande ${VAR} e ${VAR:-padrão} em strings (recursivo em listas/dicts)."""
+def expand_env(value, env: Mapping[str, str], used: Optional[list[str]] = None):
+    """Expande ${VAR} e ${VAR:-padrão} em strings (recursivo em listas/dicts). `used` (opcional) recebe os valores
+    vindos do AMBIENTE (não os padrões, que já estão no texto do mapa) — para `redact` tirá-los de mensagens."""
     if isinstance(value, str):
         def repl(m: re.Match) -> str:
             name, default = m.group(1), m.group(2)
@@ -127,13 +129,23 @@ def expand_env(value, env: Mapping[str, str]):
                 if default is None:
                     raise PlantMapError(f"variável de ambiente {name} não definida (sem padrão)")
                 return default
+            if used is not None:
+                used.append(v)
             return v
         return _VAR.sub(repl, value)
     if isinstance(value, list):
-        return [expand_env(v, env) for v in value]
+        return [expand_env(v, env, used) for v in value]
     if isinstance(value, dict):
-        return {k: expand_env(v, env) for k, v in value.items()}
+        return {k: expand_env(v, env, used) for k, v in value.items()}
     return value
+
+
+def redact(text: str, secrets) -> str:
+    """Troca por *** todo valor que veio do ambiente (${VAR}): mensagens de erro vão para o log, para os `errors`
+    do heartbeat e para a tela do servidor — um segredo do ambiente do gateway nunca sai por elas."""
+    for v in sorted({str(x) for x in secrets if x}, key=len, reverse=True):
+        text = text.replace(v, "***")
+    return text
 
 
 def parse_ueapd_selector(address) -> tuple[str, Optional[str], Optional[object]]:
@@ -184,6 +196,11 @@ class SourceConfig:
     fault_codes: dict = field(default_factory=dict)   # tag de falha do CLP → código (sobre os padrões)
     default_fault_code: int = 301   # falha de tag sem código no mapa (3xx automação, EQP-04)
     line: str = ""                  # linha esperada do box ("hipot" | "ats2"); vazio = não confere
+    # valores do ambiente expandidos nesta fonte (${VAR}); só para `redact` — nunca logar/enviar sem passar por ele
+    secret_values: tuple = field(default=(), repr=False)
+
+    def redact(self, text: str) -> str:
+        return redact(text, self.secret_values)
 
 
 @dataclass
@@ -232,12 +249,155 @@ class PlantMap:
     sources: dict[str, SourceConfig]
     tags: list[MapTag]
     skipped: list[str] = field(default_factory=list)   # chaves sem tag_id
+    rejected: list[str] = field(default_factory=list)  # fontes/tags recusadas no modo tolerante (motivo)
 
     def tags_for(self, source_id: str, pulse: Optional[bool] = None) -> list[MapTag]:
         return [t for t in self.tags if t.source == source_id and (pulse is None or t.is_pulse == pulse)]
 
 
-def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> PlantMap:
+def _parse_source(sid: str, proto: str, raw: dict) -> SourceConfig:
+    """Uma fonte do mapa (`raw` já com ${VAR} expandido). PlantMapError = fonte inválida."""
+    policy = raw.get("timestamps") or "gateway"
+    if policy not in POLICIES:
+        raise PlantMapError(f"source {sid}: timestamps inválido {policy!r} (use gateway|source)")
+    try:
+        max_skew = parse_max_skew(raw.get("max_clock_skew_s", 2.0))
+    except ValueError as e:
+        raise PlantMapError(f"source {sid}: {e}") from None
+    if proto == "opcua":
+        if not raw.get("endpoint"):
+            raise PlantMapError(f"source {sid}: endpoint obrigatório")
+        return SourceConfig(sid, proto, endpoint=raw["endpoint"],
+                            publishing_interval_ms=int(raw.get("publishing_interval_ms", 500)),
+                            timestamps=policy, max_clock_skew_s=max_skew,
+                            device_heartbeat=_flag(raw.get("device_heartbeat", False), sid))
+    elif proto == "modbus":
+        if not raw.get("host"):
+            raise PlantMapError(f"source {sid}: host obrigatório")
+        if policy == "source":
+            raise PlantMapError(f"source {sid}: Modbus não traz timestamp do CLP (use timestamps=gateway)")
+        return SourceConfig(sid, proto, host=raw["host"], port=int(raw.get("port", 502)),
+                            max_clock_skew_s=max_skew)
+    elif proto == "ueapd":
+        url = str(raw.get("base_url") or "").strip().rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            raise PlantMapError(f"source {sid}: base_url http(s):// obrigatório ({url!r})")
+        try:
+            parts = urlsplit(url)
+            parts.port                                  # porta não numérica / fora de faixa → ValueError
+        except ValueError:
+            raise PlantMapError(f"source {sid}: base_url inválido ({url!r})") from None
+        if parts.username is not None or parts.password is not None:
+            # credencial na URL iria parar no log (ueapd.starting) e na cópia local; o box não pede autenticação
+            raise PlantMapError(f"source {sid}: base_url não pode ter usuário/senha")
+        if not parts.hostname:
+            raise PlantMapError(f"source {sid}: base_url sem host ({url!r})")
+        try:
+            poll = float(raw.get("poll_interval_s", 2.0))
+            timeout = float(raw.get("timeout_s", 5.0))
+            dflt = int(raw.get("default_fault_code", 301))
+        except (TypeError, ValueError):
+            raise PlantMapError(f"source {sid}: poll_interval_s/timeout_s/default_fault_code inválidos") from None
+        if not 0.2 <= poll <= 300 or not 0.5 <= timeout <= 120:
+            raise PlantMapError(f"source {sid}: poll_interval_s em [0,2; 300] e timeout_s em [0,5; 120]")
+        backfill = raw.get("backfill") or "none"
+        if backfill not in UEAPD_BACKFILL:
+            raise PlantMapError(f"source {sid}: backfill inválido {backfill!r} (use {sorted(UEAPD_BACKFILL)})")
+        codes = raw.get("fault_codes") or {}
+        if not isinstance(codes, dict) or not all(
+                isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v > 0
+                for k, v in codes.items()):
+            raise PlantMapError(f"source {sid}: fault_codes deve ser {{tag: código inteiro > 0}}")
+        if dflt <= 0:
+            raise PlantMapError(f"source {sid}: default_fault_code deve ser > 0")
+        return SourceConfig(sid, proto, endpoint=url, base_url=url, poll_interval_s=poll,
+                            timeout_s=timeout, timestamps=policy, max_clock_skew_s=max_skew,
+                            backfill=backfill, fault_codes=dict(codes), default_fault_code=dflt,
+                            line=str(raw.get("line") or ""))
+    raise PlantMapError(f"source {sid}: protocolo inválido {proto!r} (use {sorted(PROTOCOLS)})")
+
+
+def _parse_tag(key: str, raw: dict, sources: dict[str, SourceConfig], dropped: set[str]) -> MapTag:
+    """Uma tag do mapa. PlantMapError = tag inválida."""
+    role = raw.get("semantic_role", "analog")
+    if role not in SEMANTIC_ROLES:
+        raise PlantMapError(f"tag {key}: semantic_role inválido {role!r}")
+    src = sources.get(raw.get("source"))
+    if src is None:
+        why = "recusada" if raw.get("source") in dropped else "desconhecida"
+        raise PlantMapError(f"tag {key}: source {why} {raw.get('source')!r}")
+    address = raw.get("address")
+    if src.protocol == "ueapd":
+        try:
+            kind, _, _ = parse_ueapd_selector(address)
+        except ValueError as e:
+            raise PlantMapError(f"tag {key}: {e}") from None
+        if role not in UEAPD_SELECTOR_ROLES[kind]:
+            raise PlantMapError(f"tag {key}: seletor {address!r} exige semantic_role em "
+                                f"{sorted(UEAPD_SELECTOR_ROLES[kind])} (não {role})")
+        address = address.strip()
+    elif src.protocol == "opcua":
+        if not isinstance(address, str) or not address.startswith("ns="):
+            raise PlantMapError(f"tag {key}: endereço OPC UA deve ser um NodeId 'ns=..;s=..' ({address!r})")
+        if role == "cycle_pulse":
+            raise PlantMapError(f"tag {key}: cycle_pulse só é suportado em bit Modbus (coil/discrete)")
+    else:
+        m = _MODBUS_ADDR.match(address.strip()) if isinstance(address, str) else None
+        if m:          # "unit=2;hr=10:uint16" (Tag.address do servidor) → campos do mapa v1
+            raw = {**raw, "unit_id": raw.get("unit_id", int(m.group(1))),
+                   "register_type": raw.get("register_type", _AREA[m.group(2)])}
+            if m.group(4):
+                raw.setdefault("data_type_plc", m.group(4))
+            address = int(m.group(3))
+        if not isinstance(address, int) or isinstance(address, bool) or address < 0:
+            raise PlantMapError(f"tag {key}: endereço Modbus deve ser inteiro >= 0 ({address!r})")
+        rt = raw.get("register_type", "holding")
+        if rt not in MODBUS_REGISTER_TYPES:
+            raise PlantMapError(f"tag {key}: register_type inválido {rt!r}")
+        if role == "cycle_pulse" and rt not in MODBUS_BIT_TYPES:
+            raise PlantMapError(f"tag {key}: cycle_pulse exige register_type coil/discrete")
+    signal_role = raw.get("signal_role") or None
+    if signal_role is not None and signal_role not in SIGNAL_ROLES:
+        raise PlantMapError(f"tag {key}: signal_role inválido {signal_role!r}")
+    counter_max = raw.get("counter_max")
+    if counter_max is not None and (not isinstance(counter_max, int) or counter_max <= 0):
+        raise PlantMapError(f"tag {key}: counter_max inválido {counter_max!r}")
+    deadband_pct = raw.get("deadband_pct")
+    if deadband_pct is not None and (isinstance(deadband_pct, bool) or not isinstance(deadband_pct, (int, float))
+                                     or deadband_pct < 0):
+        raise PlantMapError(f"tag {key}: deadband_pct inválido {deadband_pct!r}")
+    aggregate = raw.get("aggregate") or None
+    if aggregate is not None:
+        if role not in DEADBAND_ROLES or signal_role in SIGNAL_ROLES:
+            raise PlantMapError(f"tag {key}: aggregate só vale para grandezas contínuas (não {role})")
+        w, stat = aggregate.get("window_s") if isinstance(aggregate, dict) else None, \
+            (aggregate.get("stat") if isinstance(aggregate, dict) else None)
+        if isinstance(w, bool) or not isinstance(w, (int, float)) or w <= 0 or stat not in AGGREGATE_STATS:
+            raise PlantMapError(f"tag {key}: aggregate inválido {aggregate!r} "
+                                f"(window_s > 0, stat em {sorted(AGGREGATE_STATS)})")
+        aggregate = {"window_s": float(w), "stat": stat}
+
+    try:
+        return MapTag(
+            key=key, source=src.id, semantic_role=role, address=address,
+            tag_id=raw.get("tag_id") or None, unit=raw.get("unit") or "", counter_max=counter_max,
+            unit_id=int(raw.get("unit_id", 1)), register_type=raw.get("register_type", "holding"),
+            data_type_plc=raw.get("data_type_plc", "uint16"), word_order=raw.get("word_order", "big"),
+            scale=float(raw.get("scale", 1.0)), offset=float(raw.get("offset", 0.0)),
+            poll_interval_ms=int(raw.get("poll_interval_ms", 1000)), signal_role=signal_role,
+            machine=str(raw.get("machine_id") or raw.get("machine") or ""),
+            position=(raw.get("position_id") or raw.get("position") or None),
+            deadband_pct=None if deadband_pct is None else float(deadband_pct), aggregate=aggregate,
+        )
+    except (TypeError, ValueError) as e:
+        raise PlantMapError(f"tag {key}: campo numérico inválido ({e})") from None
+
+
+def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None, strict: bool = True) -> PlantMap:
+    """Valida o mapa v1. `strict=False` (mapa vindo do servidor, edge/src/remote_config.py): uma fonte ou tag
+    inválida (seletor ueapd errado, base_url sem ${VAR} definido, endereço ruim, ...) sai do mapa com o motivo em
+    `PlantMap.rejected` e o resto roda; erros de estrutura (versão, gateway_id, protocolo desconhecido, key/tag_id
+    repetidos) continuam recusando o mapa inteiro. Arquivo local (PLANT_MAP_PATH) = estrito."""
     env = os.environ if env is None else env
     if doc.get("version") != 1:
         raise PlantMapError(f"versão de mapa não suportada: {doc.get('version')!r}")
@@ -249,137 +409,54 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
         raise PlantMapError("pulse_poll_ms deve estar entre 1 e 1000")
 
     sources: dict[str, SourceConfig] = {}
-    for raw in expand_env(doc.get("sources", []), env):
-        sid, proto = raw.get("id"), raw.get("protocol")
-        if not sid or sid in sources:
+    rejected: list[str] = []
+    dropped: set[str] = set()           # fontes recusadas (modo tolerante): as tags delas também saem
+    raw_sources = doc.get("sources", [])
+    if not isinstance(raw_sources, list):
+        raise PlantMapError("sources deve ser uma lista")
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            raise PlantMapError(f"source inválida: {item!r}")
+        sid, proto = item.get("id"), item.get("protocol")
+        if not sid or sid in sources or sid in dropped:
             raise PlantMapError(f"source sem id ou duplicada: {sid!r}")
-        policy = raw.get("timestamps") or "gateway"
-        if policy not in POLICIES:
-            raise PlantMapError(f"source {sid}: timestamps inválido {policy!r} (use gateway|source)")
-        try:
-            max_skew = parse_max_skew(raw.get("max_clock_skew_s", 2.0))
-        except ValueError as e:
-            raise PlantMapError(f"source {sid}: {e}") from None
-        if proto == "opcua":
-            if not raw.get("endpoint"):
-                raise PlantMapError(f"source {sid}: endpoint obrigatório")
-            sources[sid] = SourceConfig(sid, proto, endpoint=raw["endpoint"],
-                                        publishing_interval_ms=int(raw.get("publishing_interval_ms", 500)),
-                                        timestamps=policy, max_clock_skew_s=max_skew,
-                                        device_heartbeat=_flag(raw.get("device_heartbeat", False), sid))
-        elif proto == "modbus":
-            if not raw.get("host"):
-                raise PlantMapError(f"source {sid}: host obrigatório")
-            if policy == "source":
-                raise PlantMapError(f"source {sid}: Modbus não traz timestamp do CLP (use timestamps=gateway)")
-            sources[sid] = SourceConfig(sid, proto, host=raw["host"], port=int(raw.get("port", 502)),
-                                        max_clock_skew_s=max_skew)
-        elif proto == "ueapd":
-            url = str(raw.get("base_url") or "").strip().rstrip("/")
-            if not url.startswith(("http://", "https://")):
-                raise PlantMapError(f"source {sid}: base_url http(s):// obrigatório ({url!r})")
-            try:
-                poll = float(raw.get("poll_interval_s", 2.0))
-                timeout = float(raw.get("timeout_s", 5.0))
-                dflt = int(raw.get("default_fault_code", 301))
-            except (TypeError, ValueError):
-                raise PlantMapError(f"source {sid}: poll_interval_s/timeout_s/default_fault_code inválidos") from None
-            if not 0.2 <= poll <= 300 or not 0.5 <= timeout <= 120:
-                raise PlantMapError(f"source {sid}: poll_interval_s em [0,2; 300] e timeout_s em [0,5; 120]")
-            backfill = raw.get("backfill") or "none"
-            if backfill not in UEAPD_BACKFILL:
-                raise PlantMapError(f"source {sid}: backfill inválido {backfill!r} (use {sorted(UEAPD_BACKFILL)})")
-            codes = raw.get("fault_codes") or {}
-            if not isinstance(codes, dict) or not all(
-                    isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v > 0
-                    for k, v in codes.items()):
-                raise PlantMapError(f"source {sid}: fault_codes deve ser {{tag: código inteiro > 0}}")
-            if dflt <= 0:
-                raise PlantMapError(f"source {sid}: default_fault_code deve ser > 0")
-            sources[sid] = SourceConfig(sid, proto, endpoint=url, base_url=url, poll_interval_s=poll,
-                                        timeout_s=timeout, timestamps=policy, max_clock_skew_s=max_skew,
-                                        backfill=backfill, fault_codes=dict(codes), default_fault_code=dflt,
-                                        line=str(raw.get("line") or ""))
-        else:
+        if proto not in PROTOCOLS:
             raise PlantMapError(f"source {sid}: protocolo inválido {proto!r} (use {sorted(PROTOCOLS)})")
+        used: list[str] = []
+        try:
+            try:
+                src = _parse_source(sid, proto, expand_env(item, env, used))
+            except (TypeError, ValueError) as e:
+                if isinstance(e, PlantMapError):
+                    raise
+                raise PlantMapError(f"source {sid}: campo inválido ({e})") from None
+            src.secret_values = tuple(used)
+            sources[sid] = src
+        except PlantMapError as e:
+            msg = redact(str(e), used)      # a mensagem cita valores já expandidos (ex.: base_url)
+            if strict:
+                raise PlantMapError(msg) from None
+            dropped.add(sid)
+            rejected.append(f"fonte {sid} recusada: {msg}")
 
     tags: list[MapTag] = []
     skipped: list[str] = []
     keys: set[str] = set()
     tag_ids: set[str] = set()
     for raw in doc.get("tags", []):
+        if not isinstance(raw, dict):
+            raise PlantMapError(f"tag inválida: {raw!r}")
         key = raw.get("key")
         if not key or key in keys:
             raise PlantMapError(f"tag sem key ou duplicada: {key!r}")
         keys.add(key)
-        role = raw.get("semantic_role", "analog")
-        if role not in SEMANTIC_ROLES:
-            raise PlantMapError(f"tag {key}: semantic_role inválido {role!r}")
-        src = sources.get(raw.get("source"))
-        if src is None:
-            raise PlantMapError(f"tag {key}: source desconhecida {raw.get('source')!r}")
-        address = raw.get("address")
-        if src.protocol == "ueapd":
-            try:
-                kind, _, _ = parse_ueapd_selector(address)
-            except ValueError as e:
-                raise PlantMapError(f"tag {key}: {e}") from None
-            if role not in UEAPD_SELECTOR_ROLES[kind]:
-                raise PlantMapError(f"tag {key}: seletor {address!r} exige semantic_role em "
-                                    f"{sorted(UEAPD_SELECTOR_ROLES[kind])} (não {role})")
-            address = address.strip()
-        elif src.protocol == "opcua":
-            if not isinstance(address, str) or not address.startswith("ns="):
-                raise PlantMapError(f"tag {key}: endereço OPC UA deve ser um NodeId 'ns=..;s=..' ({address!r})")
-            if role == "cycle_pulse":
-                raise PlantMapError(f"tag {key}: cycle_pulse só é suportado em bit Modbus (coil/discrete)")
-        else:
-            m = _MODBUS_ADDR.match(address.strip()) if isinstance(address, str) else None
-            if m:          # "unit=2;hr=10:uint16" (Tag.address do servidor) → campos do mapa v1
-                raw = {**raw, "unit_id": raw.get("unit_id", int(m.group(1))),
-                       "register_type": raw.get("register_type", _AREA[m.group(2)])}
-                if m.group(4):
-                    raw.setdefault("data_type_plc", m.group(4))
-                address = int(m.group(3))
-            if not isinstance(address, int) or isinstance(address, bool) or address < 0:
-                raise PlantMapError(f"tag {key}: endereço Modbus deve ser inteiro >= 0 ({address!r})")
-            rt = raw.get("register_type", "holding")
-            if rt not in MODBUS_REGISTER_TYPES:
-                raise PlantMapError(f"tag {key}: register_type inválido {rt!r}")
-            if role == "cycle_pulse" and rt not in MODBUS_BIT_TYPES:
-                raise PlantMapError(f"tag {key}: cycle_pulse exige register_type coil/discrete")
-        signal_role = raw.get("signal_role") or None
-        if signal_role is not None and signal_role not in SIGNAL_ROLES:
-            raise PlantMapError(f"tag {key}: signal_role inválido {signal_role!r}")
-        counter_max = raw.get("counter_max")
-        if counter_max is not None and (not isinstance(counter_max, int) or counter_max <= 0):
-            raise PlantMapError(f"tag {key}: counter_max inválido {counter_max!r}")
-        deadband_pct = raw.get("deadband_pct")
-        if deadband_pct is not None and (isinstance(deadband_pct, bool) or not isinstance(deadband_pct, (int, float))
-                                         or deadband_pct < 0):
-            raise PlantMapError(f"tag {key}: deadband_pct inválido {deadband_pct!r}")
-        aggregate = raw.get("aggregate") or None
-        if aggregate is not None:
-            if role not in DEADBAND_ROLES or signal_role in SIGNAL_ROLES:
-                raise PlantMapError(f"tag {key}: aggregate só vale para grandezas contínuas (não {role})")
-            w, stat = aggregate.get("window_s") if isinstance(aggregate, dict) else None, \
-                (aggregate.get("stat") if isinstance(aggregate, dict) else None)
-            if isinstance(w, bool) or not isinstance(w, (int, float)) or w <= 0 or stat not in AGGREGATE_STATS:
-                raise PlantMapError(f"tag {key}: aggregate inválido {aggregate!r} "
-                                    f"(window_s > 0, stat em {sorted(AGGREGATE_STATS)})")
-            aggregate = {"window_s": float(w), "stat": stat}
-
-        tag = MapTag(
-            key=key, source=src.id, semantic_role=role, address=address,
-            tag_id=raw.get("tag_id") or None, unit=raw.get("unit") or "", counter_max=counter_max,
-            unit_id=int(raw.get("unit_id", 1)), register_type=raw.get("register_type", "holding"),
-            data_type_plc=raw.get("data_type_plc", "uint16"), word_order=raw.get("word_order", "big"),
-            scale=float(raw.get("scale", 1.0)), offset=float(raw.get("offset", 0.0)),
-            poll_interval_ms=int(raw.get("poll_interval_ms", 1000)), signal_role=signal_role,
-            machine=str(raw.get("machine_id") or raw.get("machine") or ""),
-            position=(raw.get("position_id") or raw.get("position") or None),
-            deadband_pct=None if deadband_pct is None else float(deadband_pct), aggregate=aggregate,
-        )
+        try:
+            tag = _parse_tag(key, raw, sources, dropped)
+        except PlantMapError as e:
+            if strict:
+                raise
+            rejected.append(f"tag {key} recusada: {str(e).removeprefix(f'tag {key}: ')}")
+            continue
         if tag.tag_id is None:
             skipped.append(key)
             continue
@@ -391,7 +468,7 @@ def parse_plant_map(doc: dict, env: Optional[Mapping[str, str]] = None) -> Plant
     return PlantMap(
         version=1, gateway_id=gateway_id, tenant_id=doc.get("tenant_id") or None,
         heartbeat_s=float(doc.get("heartbeat_s", 10.0)), pulse_poll_ms=pulse_poll_ms,
-        sources=sources, tags=tags, skipped=skipped,
+        sources=sources, tags=tags, skipped=skipped, rejected=rejected,
     )
 
 

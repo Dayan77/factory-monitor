@@ -8,8 +8,11 @@ export type GatewayStatus = "pending" | "online" | "degraded" | "offline";
 
 export interface GatewayDevice {
   id: string;
-  protocol: "opcua" | "modbus";
+  protocol: "opcua" | "modbus" | "ueapd";
   endpoint?: string;
+  /** ueapd (box ueaPowerDriver): http(s)://host[:porta] of the box API; `line` = optional line label of the box */
+  base_url?: string;
+  line?: string;
   host?: string;
   port?: number;
   timestamps?: "gateway" | "source";
@@ -103,6 +106,12 @@ export interface MqttInfo {
   gateways_conf_line: string | null;
   revoked?: boolean;
   action?: string;
+  /** true = the server syncs the credential to the broker by itself (MQTT_APP_GATEWAYS_FILE): no manual line */
+  managed?: boolean;
+  /** last sync of the broker app file (managed only): true ok, false failing, null not synced yet */
+  sync_ok?: boolean | null;
+  sync_at?: string | null;
+  sync_error?: string | null;
 }
 
 export const gatewaysApi = {
@@ -118,11 +127,16 @@ export const gatewaysApi = {
   mqtt: (id: string) => api.get<MqttInfo>(`/api/gateways/${id}/mqtt`),
 };
 
-/**
- * Edge image of this release — the same name as infra/gateway/docker-compose.yml (`image:`) and edge/README.md.
- * Change the three together when the edge version changes.
- */
-export const EDGE_IMAGE = "factoryconnect-edge:0.5.0";
+/** Default edge image (published by the CI to GHCR) — the same tag as infra/gateway/docker-compose.yml and edge/README.md. */
+export const DEFAULT_EDGE_IMAGE = "ghcr.io/dayan77/factoryconnect-edge:0.7.0";
+
+/** Edge image of the install command: `VITE_EDGE_IMAGE` at build time (e.g. a private registry), else the default. */
+export function edgeImage(env: string | undefined = import.meta.env.VITE_EDGE_IMAGE): string {
+  const v = env?.trim();
+  return v ? v : DEFAULT_EDGE_IMAGE;
+}
+
+export const EDGE_IMAGE = edgeImage();
 
 /**
  * Install commands shown with the enrollment code. One step: the edge enrolls by itself on the first start

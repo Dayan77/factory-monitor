@@ -16,7 +16,7 @@ import { useNow } from "@/hooks/useNow";
 import { useAuthStore } from "@/store/auth";
 import { tagsApi } from "@/services/api";
 import {
-  GATEWAY_STATUS_LABEL, gatewaysApi, installCommands, type EnrollToken, type Gateway, type GatewayDevice, type GatewayStatus,
+  GATEWAY_STATUS_LABEL, gatewaysApi, installCommands, type EnrollToken, type Gateway, type GatewayDevice, type GatewayStatus, type MqttInfo,
 } from "@/services/gatewaysApi";
 import type { Tag, TreePlant } from "@/services/types";
 import { can } from "@/utils/maintenance";
@@ -24,6 +24,7 @@ import { formatDateTime, formatInt } from "@/utils/format";
 import { formatAgo, secondsSince } from "@/utils/time";
 import { apiErrorMessage } from "@/utils/errors";
 import { useUrlFilters } from "@/pages/maintenance/filters";
+import { baseUrlError } from "@/utils/onboarding";
 
 const STATUS_TONE: Record<GatewayStatus, Tone> = { online: "ok", degraded: "warn", offline: "danger", pending: "neutral" };
 const gwKeys = { all: ["gateways"] as const, one: (id: string) => ["gateways", id] as const };
@@ -39,6 +40,44 @@ function seen(iso: string | null, now: number) {
 
 function plantName(tree: TreePlant[] | undefined, id: string) {
   return tree?.find((p) => p.id === id)?.name ?? "—";
+}
+
+const PROTOCOL_LABEL: Record<GatewayDevice["protocol"], string> = { modbus: "Modbus TCP", opcua: "OPC UA", ueapd: "Box ueaPowerDriver (HTTP)" };
+
+/** Where the gateway reads the device (no credentials are ever part of it). */
+export function deviceAddress(d: GatewayDevice): string {
+  if (d.protocol === "ueapd") return d.base_url || "—";
+  if (d.protocol === "opcua") return d.endpoint || "—";
+  return d.host ? `${d.host}:${d.port ?? 502}` : "—";
+}
+
+/** Client-side check of a device before saving (the server validates again). */
+export function deviceError(d: GatewayDevice): string | null {
+  if (!d.id.trim()) return "informe o id";
+  if (d.protocol === "ueapd") return baseUrlError(d.base_url ?? "", { allowEnv: true });
+  return null;
+}
+
+// keys the server accepts per protocol (server/src/services/gateways.py DEVICE_KEYS / UEAPD_DEVICE_KEYS)
+const PLC_KEYS = ["id", "protocol", "endpoint", "host", "port", "publishing_interval_ms", "timestamps", "device_heartbeat", "max_clock_skew_s"];
+const UEAPD_KEYS = ["id", "protocol", "base_url", "line", "poll_interval_s", "timeout_s", "timestamps", "max_clock_skew_s",
+  "backfill", "default_fault_code", "fault_codes"];
+
+/**
+ * Device after a protocol switch: only the keys valid for the new protocol survive (the server rejects unknown
+ * ones with 422), the address fields of the old protocol are dropped and the new ones start empty.
+ */
+export function switchProtocol(d: GatewayDevice, p: string): GatewayDevice {
+  const proto: GatewayDevice["protocol"] = p === "opcua" || p === "ueapd" ? p : "modbus";
+  const allowed = new Set(proto === "ueapd" ? UEAPD_KEYS : PLC_KEYS);
+  const keep = new Set(["id", "timestamps", "max_clock_skew_s"]);
+  const out: GatewayDevice = { id: d.id, protocol: proto };
+  for (const [k, v] of Object.entries(d)) if (keep.has(k) && allowed.has(k) && k !== "id") out[k] = v;
+  if (proto === "modbus" && out.timestamps === "source") delete out.timestamps; // Modbus has no PLC timestamp
+  if (proto === "opcua") out.endpoint = "opc.tcp://";
+  else if (proto === "ueapd") out.base_url = "http://";
+  else { out.host = ""; out.port = 502; }
+  return out;
 }
 
 function uptimeText(s: number | null | undefined) {
@@ -129,20 +168,39 @@ function DevicesEditor({ gw }: { gw: Gateway }) {
     onSuccess: () => { setMsg({ ok: true, text: "Dispositivos salvos." }); void qc.invalidateQueries({ queryKey: gwKeys.all }); },
     onError: (e) => setMsg({ ok: false, text: apiErrorMessage(e, "Não foi possível salvar.") }),
   });
-  const upd = (i: number, patch: Partial<GatewayDevice>) => setDevices((d) => d.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const upd = (i: number, patch: Partial<GatewayDevice>) => setDevices((d) => d.map((x, j) => {
+    if (j !== i) return x;
+    const n: GatewayDevice = { ...x, ...patch };
+    for (const k of Object.keys(patch)) if (patch[k] === undefined) delete n[k];
+    return n;
+  }));
+  const errors = devices.map(deviceError);
+  const invalid = errors.some(Boolean);
   return (
     <div className="space-y-3" data-testid="gw-devices">
       {devices.length === 0 && <p className="text-caption text-fg-subtle">Nenhum dispositivo. Adicione o CLP que o gateway lê.</p>}
       {devices.map((d, i) => (
-        <div key={i} className="grid gap-2 rounded-xl border border-line p-3 sm:grid-cols-[8rem_7rem_1fr_auto] sm:items-end">
+        <div key={i} className="grid gap-2 rounded-xl border border-line p-3 sm:grid-cols-[8rem_9rem_1fr_auto] sm:items-end" data-testid="gw-device" data-protocol={d.protocol}>
           <Field label="Id" htmlFor={`dev-id-${i}`}><input id={`dev-id-${i}`} value={d.id} onChange={(e) => upd(i, { id: e.target.value })} className={inputClass} /></Field>
           <Field label="Protocolo" htmlFor={`dev-p-${i}`}>
-            <select id={`dev-p-${i}`} value={d.protocol} onChange={(e) => upd(i, e.target.value === "opcua" ? { protocol: "opcua", host: undefined, port: undefined, endpoint: "opc.tcp://" } : { protocol: "modbus", endpoint: undefined, host: "", port: 502 })} className={inputClass}>
+            <select id={`dev-p-${i}`} value={d.protocol} onChange={(e) => setDevices((all) => all.map((x, j) => (j === i ? switchProtocol(x, e.target.value) : x)))} className={inputClass}>
               <option value="modbus">Modbus TCP</option>
               <option value="opcua">OPC UA</option>
+              <option value="ueapd">Box ueaPowerDriver</option>
             </select>
           </Field>
-          {d.protocol === "opcua" ? (
+          {d.protocol === "ueapd" ? (
+            // a box URL needs room: own row under id / protocol
+            <div className="grid gap-2 sm:col-span-full sm:row-start-2 sm:grid-cols-[1fr_9rem]">
+              <Field label="URL do box" htmlFor={`dev-url-${i}`} error={errors[i] ?? undefined}>
+                <input id={`dev-url-${i}`} value={d.base_url ?? ""} inputMode="url" spellCheck={false} aria-invalid={!!errors[i]} placeholder="http://192.168.1.15:8003"
+                  onChange={(e) => upd(i, { base_url: e.target.value })} className={clsx(inputClass, "font-mono")} />
+              </Field>
+              <Field label="Linha (opcional)" htmlFor={`dev-line-${i}`}>
+                <input id={`dev-line-${i}`} value={typeof d.line === "string" ? d.line : ""} placeholder="hipot" onChange={(e) => upd(i, { line: e.target.value || undefined })} className={inputClass} />
+              </Field>
+            </div>
+          ) : d.protocol === "opcua" ? (
             <Field label="Endpoint (sem credencial)" htmlFor={`dev-ep-${i}`}><input id={`dev-ep-${i}`} value={d.endpoint ?? ""} onChange={(e) => upd(i, { endpoint: e.target.value })} className={inputClass} /></Field>
           ) : (
             <div className="grid grid-cols-[1fr_5rem] gap-2">
@@ -150,12 +208,13 @@ function DevicesEditor({ gw }: { gw: Gateway }) {
               <Field label="Porta" htmlFor={`dev-po-${i}`}><input id={`dev-po-${i}`} inputMode="numeric" value={d.port ?? ""} onChange={(e) => upd(i, { port: Number(e.target.value) || undefined })} className={inputClass} /></Field>
             </div>
           )}
-          <Button variant="danger-ghost" aria-label={`Remover dispositivo ${d.id}`} onClick={() => setDevices((x) => x.filter((_, j) => j !== i))}>Remover</Button>
+          <Button variant="danger-ghost" className={d.protocol === "ueapd" ? "sm:col-start-4 sm:row-start-1" : undefined} aria-label={`Remover dispositivo ${d.id}`} onClick={() => setDevices((x) => x.filter((_, j) => j !== i))}>Remover</Button>
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => setDevices((d) => [...d, { id: `plc-${d.length + 1}`, protocol: "modbus", host: "", port: 502 }])}>Adicionar dispositivo</Button>
-        <Button size="sm" variant="primary" loading={save.isPending} onClick={() => { setMsg(null); save.mutate(); }}>Salvar dispositivos</Button>
+        <Button size="sm" variant="primary" loading={save.isPending} disabled={invalid} onClick={() => { setMsg(null); save.mutate(); }}>Salvar dispositivos</Button>
+        {invalid && <span className="text-caption text-danger">Corrija os campos marcados para salvar.</span>}
         {msg && <span role={msg.ok ? "status" : "alert"} className={clsx("text-body", msg.ok ? "text-ok" : "text-danger")}>{msg.text}</span>}
       </div>
     </div>
@@ -169,16 +228,32 @@ function TagAssignmentEditor({ gw, tree }: { gw: Gateway; tree: TreePlant[] | un
     const p = tree?.find((x) => x.id === gw.plant_id);
     return new Map((p?.lines ?? []).flatMap((l) => l.machines.map((m) => [m.id, `${l.name} · ${m.name}`] as const)));
   }, [tree, gw.plant_id]);
-  const eligible = useMemo(() => (tags.data ?? []).filter((t: Tag) => t.machine_id && machines.has(t.machine_id) && (t.protocol === "modbus_tcp" || t.protocol === "opc_ua")), [tags.data, machines]);
+  const boxes = useMemo(() => gw.devices.filter((d) => d.protocol === "ueapd").map((d) => d.id), [gw.devices]);
+  const eligible = useMemo(() => (tags.data ?? []).filter((t: Tag) => t.machine_id && machines.has(t.machine_id)
+    && (t.protocol === "modbus_tcp" || t.protocol === "opc_ua" || (t.protocol === "http" && boxes.length > 0))), [tags.data, machines, boxes]);
+  const hasHttp = eligible.some((t) => t.protocol === "http");
+  // the box (source) of the HTTP tags already assigned comes from the config the gateway receives
+  const preview = useQuery({
+    queryKey: ["gateways", gw.id, "config-preview"],
+    queryFn: () => gatewaysApi.configPreview(gw.id).then((r) => r.data),
+    enabled: hasHttp,
+  });
+  const savedSource = useMemo(() => new Map((preview.data?.plant_map.tags ?? []).map((t) => [t.tag_id, t.source] as const)), [preview.data]);
+  const [sources, setSources] = useState<Record<string, string>>({});
+  const sourceOf = (id: string) => sources[id] ?? (boxes.includes(savedSource.get(id) ?? "") ? savedSource.get(id) : undefined) ?? (boxes.length === 1 ? boxes[0] : "");
   const [sel, setSel] = useState<Set<string> | null>(null);
   const current = useMemo(() => new Set(eligible.filter((t) => t.gateway_id === gw.id).map((t) => t.id)), [eligible, gw.id]);
   const chosen = sel ?? current;
+  const isHttp = (id: string) => eligible.find((t) => t.id === id)?.protocol === "http";
+  const missingSource = [...chosen].filter((id) => isHttp(id) && !sourceOf(id)).length;
   const [result, setResult] = useState<{ ok: boolean; text: string; warnings?: string[] } | null>(null);
   const save = useMutation({
-    mutationFn: () => gatewaysApi.assignTags(gw.id, [...chosen].map((tag_id) => ({ tag_id }))).then((r) => r.data),
+    mutationFn: () => gatewaysApi.assignTags(gw.id, [...chosen].map((tag_id) => (isHttp(tag_id) ? { tag_id, source: sourceOf(tag_id) } : { tag_id }))).then((r) => r.data),
     onSuccess: (r) => {
       setResult({ ok: true, text: `${formatInt(r.assigned)} tag(s) atribuída(s). Configuração v${r.config_version} — o gateway recarrega sozinho.`, warnings: r.warnings });
       setSel(null);
+      setSources({});
+      void qc.invalidateQueries({ queryKey: ["gateways", gw.id, "config-preview"] });
       void qc.invalidateQueries({ queryKey: ["tags"] });
       void qc.invalidateQueries({ queryKey: gwKeys.all });
     },
@@ -186,7 +261,11 @@ function TagAssignmentEditor({ gw, tree }: { gw: Gateway; tree: TreePlant[] | un
   });
   if (tags.isPending) return <Skeleton className="h-32" />;
   if (tags.isError) return <ErrorState title="Não foi possível carregar as tags" error={tags.error} onRetry={() => void tags.refetch()} />;
-  if (eligible.length === 0) return <p className="text-caption text-fg-subtle">Nenhuma tag Modbus TCP ou OPC UA em máquinas desta planta. Tags MQTT/HTTP não são lidas por gateway.</p>;
+  if (eligible.length === 0) {
+    return <p className="text-caption text-fg-subtle">{boxes.length > 0
+      ? "Nenhuma tag Modbus TCP, OPC UA ou HTTP em máquinas desta planta."
+      : "Nenhuma tag Modbus TCP ou OPC UA em máquinas desta planta. Tags HTTP são lidas pelo gateway só com um box ueaPowerDriver nos dispositivos; tags MQTT não passam por gateway."}</p>;
+  }
   const toggle = (id: string) => setSel(() => { const n = new Set(chosen); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const byMachine = [...new Set(eligible.map((t) => t.machine_id as string))];
   return (
@@ -200,16 +279,25 @@ function TagAssignmentEditor({ gw, tree }: { gw: Gateway; tree: TreePlant[] | un
               <label key={t.id} className="flex min-h-10 items-center gap-3 rounded-lg px-2 hover:bg-surface-2/60">
                 <input type="checkbox" checked={chosen.has(t.id)} onChange={() => toggle(t.id)} />
                 <span className="min-w-0 flex-1 truncate text-body text-fg">{t.name}</span>
-                <span className="shrink-0 text-caption text-fg-subtle">{t.protocol === "opc_ua" ? "OPC UA" : "Modbus"} · {t.address}</span>
+                <span className="shrink-0 text-caption text-fg-subtle">{t.protocol === "opc_ua" ? "OPC UA" : t.protocol === "http" ? "HTTP" : "Modbus"} · {t.address}</span>
                 {t.gateway_id && t.gateway_id !== gw.id && <Badge tone="warn">outro gateway</Badge>}
+                {t.protocol === "http" && chosen.has(t.id) && boxes.length > 1 && (
+                  <select aria-label={`Box da tag ${t.name}`} value={sourceOf(t.id) ?? ""} onChange={(e) => { setSources((x) => ({ ...x, [t.id]: e.target.value })); setSel(new Set(chosen)); }}
+                    className={clsx(inputClass.replace("w-full ", ""), "w-36 shrink-0")}>
+                    <option value="">— box —</option>
+                    {boxes.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                )}
               </label>
             ))}
           </fieldset>
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" loading={save.isPending} disabled={sel === null} onClick={() => { setResult(null); save.mutate(); }}>Salvar atribuição</Button>
-        {sel !== null && <Button variant="ghost" onClick={() => setSel(null)}>Desfazer</Button>}
+        <Button variant="primary" loading={save.isPending} disabled={sel === null || missingSource > 0 || (hasHttp && preview.isPending)} onClick={() => { setResult(null); save.mutate(); }}>Salvar atribuição</Button>
+        {sel !== null && <Button variant="ghost" onClick={() => { setSel(null); setSources({}); }}>Desfazer</Button>}
+        {missingSource > 0 && <span className="text-caption text-danger">Escolha o box de {missingSource} tag(s) HTTP.</span>}
+        {hasHttp && preview.isError && <span className="text-caption text-warn">Não foi possível ler o box atual das tags HTTP: escolha-o de novo antes de salvar.</span>}
       </div>
       {result && (
         <div role={result.ok ? "status" : "alert"} className={clsx("rounded-xl px-3 py-2 text-body", result.ok ? "bg-ok-solid/15 text-ok" : "bg-danger-solid/10 text-danger")}>
@@ -219,6 +307,80 @@ function TagAssignmentEditor({ gw, tree }: { gw: Gateway; tree: TreePlant[] | un
       )}
     </div>
   );
+}
+
+function DeviceSummary({ devices }: { devices: GatewayDevice[] }) {
+  if (devices.length === 0) return null;
+  return (
+    <ul className="space-y-1 rounded-lg bg-surface-2/60 px-3 py-2 text-caption" aria-label="Dispositivos lidos" data-testid="gw-device-list">
+      {devices.map((d) => (
+        <li key={d.id} className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-semibold text-fg">{d.id}</span>
+          <span className="text-fg-muted">{PROTOCOL_LABEL[d.protocol] ?? d.protocol}</span>
+          <span className="break-all font-mono text-fg-subtle">{deviceAddress(d)}</span>
+          {d.protocol === "ueapd" && typeof d.line === "string" && d.line && <span className="text-fg-subtle">linha {d.line}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Broker sync state of a managed credential: ok | failing | pending (no sync yet). Older servers send no sync_ok. */
+function syncState(info: MqttInfo | undefined): "ok" | "failing" | "pending" | null {
+  if (!info?.managed) return null;
+  if (info.sync_ok === false) return "failing";
+  if (info.sync_ok === null) return "pending";
+  return "ok";
+}
+
+/** Visible alarm when the server cannot write the broker's credential file (the broker keeps the old credentials). */
+function SyncFailing({ info }: { info: MqttInfo }) {
+  return (
+    <p role="alert" className="rounded-xl border border-danger-solid/40 bg-danger-solid/10 px-3 py-2 text-body text-danger" data-testid="gw-mqtt-sync-failing">
+      A sincronização da credencial com o broker está falhando{info.sync_at ? ` desde ${formatDateTime(info.sync_at)}` : ""}: {info.sync_error || "erro desconhecido"}. O gateway pode ser recusado.
+    </p>
+  );
+}
+
+/** MQTT credential of the gateway: synced to the broker by the server (managed) or a line for the operator's gateways.conf. */
+function MqttCredential({ info }: { info: MqttInfo }) {
+  const sync = syncState(info);
+  if (info.revoked) return sync === "failing" ? <SyncFailing info={info} /> : null; // the revoked banner above says what to do
+  return (
+    <div className="space-y-2" data-testid="gw-mqtt" data-managed={info.managed ? "true" : "false"} data-sync={sync ?? undefined}>
+      <p className="text-caption text-fg-subtle">Usuário <span className="font-mono text-fg">{info.username}</span> · tópicos <span className="font-mono text-fg">{info.topic_prefix}#</span></p>
+      {sync === "failing" ? <SyncFailing info={info} />
+      : sync === "pending" ? (
+        <p role="status" className="rounded-xl bg-surface-2/60 px-3 py-2 text-body text-fg-muted">Credencial gerenciada pelo servidor — aguardando a primeira sincronização com o broker.</p>
+      ) : sync === "ok" ? (
+        <p className="rounded-xl bg-ok-solid/10 px-3 py-2 text-body text-ok">Credencial sincronizada automaticamente com o broker MQTT{info.sync_at ? ` (última vez ${formatDateTime(info.sync_at)})` : ""} — nenhum comando no servidor é necessário.</p>
+      ) : info.gateways_conf_line ? (
+        <CodeBlock label="Adicione esta linha ao gateways.conf do broker e recarregue-o (sincronização automática desligada neste servidor)" code={info.gateways_conf_line} testId="gw-mqtt-line" />
+      ) : null}
+    </div>
+  );
+}
+
+const MANUAL_LINE_TOO = "Se este gateway também foi colocado à mão no gateways.conf do broker, remova a linha de lá.";
+
+export function revokeConfirmText(info: MqttInfo | undefined): string {
+  const base = "Revogar o gateway? O token e a credencial MQTT deixam de valer e o servidor descarta as leituras dele até um novo cadastro.";
+  const sync = syncState(info);
+  if (sync === "failing") {
+    return `${base} Atenção: a sincronização com o broker está falhando — o broker só deixa de aceitar a credencial quando ela voltar a funcionar. ${MANUAL_LINE_TOO}`;
+  }
+  if (sync) return `${base} O broker passa a recusar a credencial sozinho em poucos segundos e derruba uma conexão que já estava aberta. ${MANUAL_LINE_TOO}`;
+  if (info?.managed === false) return `${base} Depois remova a linha dele do gateways.conf do broker e recarregue-o.`;
+  return base;
+}
+
+export function removeConfirmText(gw: Gateway, info: MqttInfo | undefined): string {
+  const base = `Remover o gateway ${gw.name}? As tags perdem a atribuição.`;
+  if (!gw.mqtt_revoked) return base;
+  const sync = syncState(info);
+  if (sync === "failing") return `${base} A sincronização com o broker está falhando: confira se a credencial dele já saiu do broker. ${MANUAL_LINE_TOO}`;
+  if (sync) return base;
+  return `${base} Remova também a linha dele do gateways.conf do broker.`;
 }
 
 function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | undefined; admin: boolean }) {
@@ -241,6 +403,11 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
     mutationFn: () => gatewaysApi.remove(gw.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: gwKeys.all }),
     onError: (e) => setErr(apiErrorMessage(e, "Não foi possível remover.")),
+  });
+  const mqtt = useQuery({
+    queryKey: ["gateways", gw.id, "mqtt", gw.mqtt_revoked ? "revoked" : "active"],
+    queryFn: () => gatewaysApi.mqtt(gw.id).then((r) => r.data),
+    enabled: admin && !!gw.mqtt_username,
   });
   const stale = hb?.config_version != null && hb.config_version !== gw.config_version;
   return (
@@ -276,9 +443,10 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
         {gw.mqtt_revoked && (
           <div className="rounded-xl bg-warn-solid/10 px-3 py-2 text-body text-warn" data-testid="gw-mqtt-revoked">
             <p className="font-semibold">Gateway revogado — as leituras das tags dele são descartadas pelo servidor.</p>
-            {gw.mqtt_action && <p className="text-caption">{gw.mqtt_action}</p>}
+            {(mqtt.data?.action ?? gw.mqtt_action) && <p className="text-caption">{mqtt.data?.action ?? gw.mqtt_action}</p>}
           </div>
         )}
+        <DeviceSummary devices={gw.devices} />
       </section>
 
       {admin && (
@@ -291,15 +459,17 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
           {token ? <EnrollmentInfo gw={gw} token={token} /> : (
             <div className="flex flex-wrap gap-2">
               <Button variant={gw.enrolled ? "secondary" : "primary"} loading={enroll.isPending} onClick={() => { setErr(""); enroll.mutate(); }}>{gw.enrolled ? "Gerar novo código (reinstalação)" : "Gerar código de cadastro"}</Button>
-              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm("Revogar o gateway? O token e a credencial MQTT deixam de valer e o servidor descarta as leituras dele até um novo cadastro.")) revoke.mutate(); }}>Revogar gateway</Button>}
+              {gw.enrolled && <Button variant="danger-ghost" loading={revoke.isPending} onClick={() => { if (window.confirm(revokeConfirmText(mqtt.data))) revoke.mutate(); }}>Revogar gateway</Button>}
             </div>
           )}
+          {mqtt.data && <MqttCredential info={mqtt.data} />}
+          {mqtt.isError && <p className="text-caption text-warn">{apiErrorMessage(mqtt.error, "Não foi possível ler a credencial MQTT do gateway.")}</p>}
         </section>
       )}
 
       {admin && (
         <section className="space-y-3">
-          <h3 className="text-overline uppercase text-fg-subtle">Dispositivos (CLPs)</h3>
+          <h3 className="text-overline uppercase text-fg-subtle">Dispositivos (CLPs e boxes)</h3>
           <DevicesEditor key={gw.id + gw.config_version} gw={gw} />
         </section>
       )}
@@ -316,7 +486,7 @@ function GatewayBody({ gw, tree, admin }: { gw: Gateway; tree: TreePlant[] | und
         <div className="border-t border-line pt-4">
           {gw.enrolled
             ? <p className="text-caption text-fg-subtle" data-testid="gw-remove-hint">Para remover, revogue o gateway antes (a credencial MQTT dele ainda está ativa).</p>
-            : <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(`Remover o gateway ${gw.name}? As tags perdem a atribuição.${gw.mqtt_revoked ? " Remova também a linha dele do gateways.conf do broker." : ""}`)) remove.mutate(); }}>Remover gateway</Button>}
+            : <Button variant="danger-ghost" loading={remove.isPending} onClick={() => { if (window.confirm(removeConfirmText(gw, mqtt.data))) remove.mutate(); }}>Remover gateway</Button>}
         </div>
       )}
     </div>

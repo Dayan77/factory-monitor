@@ -190,9 +190,20 @@ obrigatórios, diferentes dos padrões).
 
 - [ ] **9.1** Certificado do broker (`mqtt.factoryconnect.tech`, operations.md §6.3), `MQTT_TLS_ENABLED=true`,
       `dc up -d mosquitto`; de fora: `openssl s_client -connect mqtt.factoryconnect.tech:8883 -servername mqtt.factoryconnect.tech </dev/null | head -5`.
-- [ ] **9.2** Uma credencial MQTT **por gateway**, restrita ao tenant:
-      `make mqtt-gateway-add GATEWAY=gw-<cliente>-<linha> TENANT=<uuid do tenant>` → `make mqtt-reload`; senha
-      impressa uma vez vai só para o `.env` do gateway (infra/gateway, docs/gateways.md).
+- [ ] **9.2** Credencial MQTT **por gateway**, restrita ao tenant — **automática**: ao cadastrar o gateway no app
+      (código de cadastro), o servidor gera a credencial e o broker passa a aceitá-la em ~5 s (volume `mqtt-app`,
+      operations.md §6.1); nenhum comando no VPS. Confira: `docker logs fm_mosquitto | grep fm-mqtt-render` mostra
+      `app: N` e nenhum `AVISO` inesperado. Revogar/remover no app recusa novas conexões e derruba a sessão aberta
+      do gateway no próximo reload (~5–10 s). Só gateways antigos/manuais usam o arquivo do operador:
+      `make mqtt-gateway-add GATEWAY=gw-<cliente>-<linha> TENANT=<uuid do tenant>` (senha impressa uma vez vai só
+      para o `.env` do gateway; operations.md §6.2). `MQTT_ALLOW_NO_GATEWAYS` não é mais usado — pode sair do `.env`.
+- [ ] **9.2a** **Nenhum gateway nos dois arquivos:** `make mqtt-gateway-overlap` não lista ninguém. Se listar, remova
+      cada usuário do `mqtt/gateways.conf` (`make mqtt-gateway-remove GATEWAY=<usuário>`) — enquanto a linha manual
+      existir, revogar aquele gateway no app **não tem efeito** (operations.md §6.4, passo 2).
+- [ ] **9.2b** Volume `mqtt-app` gravável pelo servidor (primeiro deploy em staging, depois produção):
+      `docker exec fm_server sh -c 'id -u; ls -ld /app/data/mqtt'` → `10001` e dono `app`;
+      `docker exec fm_mosquitto ls -l /mosquitto/app/gateways.app.conf` existe; no log do servidor nenhum erro
+      `mqtt_app_file`. (Coberto também por `infra/tests/test_mosquitto_prod.py`, com o volume montado primeiro pelo broker.)
 - [ ] **9.3** Gateways antigos em 1883 sem TLS migrados → `MQTT_PLAIN_BIND=127.0.0.1` no `.env` → `dc up -d mosquitto`.
 - [ ] **9.4** Demo pública (opcional): bootstrap do [operations.md §10.1–10.2](operations.md), `COMPOSE_PROFILES=monitoring,demo`,
       `dc up -d demo-plant demo-gateway`; `curl -fsS https://app.factoryconnect.tech/api/public/demo-status` →

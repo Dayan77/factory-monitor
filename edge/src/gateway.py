@@ -28,7 +28,7 @@ edge counter SQLite, run/fault state from /auto/state).
 
 Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
-  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.6.0",
+  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.7.0",
            "config_version": 7, "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true},
            "clocks": {"opcua-plc": {"policy": "source", "configured": "source", "max_skew_s": 2.0,
                                     "skew_s": -0.12}}}
@@ -55,10 +55,12 @@ reading per cycle (OPC UA: every notification; Modbus: when the position's count
 
 import asyncio
 import math
+import os
 import signal
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import structlog
@@ -83,6 +85,38 @@ log = structlog.get_logger()
 
 HEARTBEAT_VERSION = 1
 DEFAULT_CREDENTIALS_PATH = "/tmp/edge_gateway_credentials.json"
+
+
+class StateDirError(RuntimeError):
+    """A state directory (buffer, counters, config cache, credentials) cannot be created/written."""
+
+
+def state_paths() -> dict[str, str]:
+    """Files the gateway keeps on disk (setting name → path); the parent directories must exist."""
+    paths = {"BUFFER_DB_PATH": settings.buffer_db_path, "COUNTER_DB_PATH": settings.counter_db_path,
+             "GATEWAY_CONFIG_CACHE": settings.gateway_config_cache}
+    if settings.gateway_credentials_path or settings.server_url or settings.enroll_code:
+        paths["GATEWAY_CREDENTIALS_PATH"] = settings.gateway_credentials_path or DEFAULT_CREDENTIALS_PATH
+    return {k: v for k, v in paths.items() if v}
+
+
+def prepare_state_dirs() -> list[str]:
+    """Creates the missing parent directories of the state files (mode 0700: they hold the enrollment credential,
+    buffered readings and the counters) BEFORE anything touches SQLite or the network. Existing directories are
+    left as they are. Not creatable / not writable → StateDirError with one clear message. Returns the created dirs."""
+    created: list[str] = []
+    for name, path in state_paths().items():
+        parent = Path(path).expanduser().parent
+        try:
+            if not parent.is_dir():
+                parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                created.append(str(parent))
+        except OSError as e:
+            raise StateDirError(f"{name}={path}: não foi possível criar o diretório {parent} "
+                                f"({e.strerror or type(e).__name__})") from None
+        if not os.access(parent, os.W_OK | os.X_OK):
+            raise StateDirError(f"{name}={path}: sem permissão de escrita no diretório {parent}")
+    return created
 # Smallest step the payload timestamp can express (format_ts has millisecond resolution).
 TS_STEP = timedelta(milliseconds=1)
 
@@ -270,6 +304,8 @@ class EdgeGateway:
         if pm.skipped:
             log.warning("edge_gateway.tags_without_tag_id", count=len(pm.skipped),
                         hint="rode python -m edge.src.provision para preencher os tag_id")
+        for msg in pm.rejected:          # mapa do servidor (modo tolerante): o resto do mapa roda
+            log.error("edge_gateway.config_item_rejected", reason=msg)
 
         aggregates: dict[str, WindowAggregator] = {}
         for t in pm.tags:
@@ -301,7 +337,7 @@ class EdgeGateway:
                 drv = OpcUaDriver(src.endpoint, tags, on_reading=self._handle_reading,
                                   publishing_interval_ms=src.publishing_interval_ms, source_timestamps=True,
                                   notify_on_timestamp=src.device_heartbeat, queue_size=settings.opcua_queue_size,
-                                  max_pending=settings.opcua_max_pending)
+                                  max_pending=settings.opcua_max_pending, redact=src.redact)
                 for t in tags:
                     if t.tag_id not in self._stroke and t.tag_id not in self._aggregates:
                         self._refresh_tags[t.tag_id] = drv
@@ -345,16 +381,23 @@ class EdgeGateway:
                  aggregates=len(self._aggregates))
 
     async def _stop_drivers(self) -> None:
+        """Order matters for the hot reload: first the run tasks are cancelled and AWAITED (no poll of the old
+        map can start a new SQLite commit after this point), then `stop()` drains what is still in flight (ueapd:
+        offsets + dedupe + totals of the source; pulse poller: queued counts). Only then the new map's drivers read
+        that state — a driver of the same source never sees stale offsets/totals (false reset or double count)."""
         for d in self.drivers:
-            try:
-                await d.stop()
-            except Exception as e:  # noqa: BLE001
-                log.warning("edge_gateway.driver_stop_failed", error=str(e))
+            if hasattr(d, "_running"):
+                d._running = False
         for t in self._driver_tasks:
             t.cancel()
         if self._driver_tasks:
             await asyncio.gather(*self._driver_tasks, return_exceptions=True)
         self._driver_tasks = []
+        for d in self.drivers:
+            try:
+                await d.stop()
+            except Exception as e:  # noqa: BLE001
+                log.warning("edge_gateway.driver_stop_failed", error=str(e))
 
     def _start_drivers(self) -> None:
         self._driver_tasks = [asyncio.create_task(d.run()) for d in self.drivers]
@@ -438,6 +481,8 @@ class EdgeGateway:
                 errs.append(f"fonte {sid} desconectada")
         if not self.publisher.is_connected:
             errs.append("broker MQTT desconectado")
+        if self.plant_map is not None:   # fonte/tag recusada do mapa em uso: reportada até o servidor corrigir
+            errs += [f"configuração: {m}" for m in self.plant_map.rejected]
         return errs + list(self._errors)
 
     def command_source(self, source_id: str) -> Optional[tuple[str, str]]:
@@ -530,6 +575,8 @@ class EdgeGateway:
 
     async def start(self) -> None:
         log.info("edge_gateway.starting", version=__version__)
+        for d in prepare_state_dirs():       # StateDirError → main() exits with one clear line (code 2)
+            log.info("edge_gateway.state_dir_created", path=d)
         await self.buffer.initialize()
         await self.configure()
         await self.publisher.connect()
@@ -871,7 +918,12 @@ def configure_logging(level: str) -> None:
 async def main() -> None:
     configure_logging(settings.log_level)
     try:
+        prepare_state_dirs()             # before SQLite and the network: one clear line instead of a traceback
         gateway = EdgeGateway()
+    except StateDirError as e:
+        log.error("edge_gateway.state_dir_unusable", error=str(e),
+                  hint="crie o diretório/volume com permissão de escrita para o usuário do gateway")
+        raise SystemExit(2) from None
     except ValueError as e:              # e.g. MQTT TLS settings (missing CA file)
         log.error("edge_gateway.invalid_settings", error=str(e))
         raise SystemExit(2) from None
@@ -896,6 +948,9 @@ async def main() -> None:
     except EnrollmentError as e:
         log.error("edge_gateway.enrollment_failed", error=str(e))
         raise SystemExit(3) from None
+    except StateDirError as e:
+        log.error("edge_gateway.state_dir_unusable", error=str(e))
+        raise SystemExit(2) from None
     except asyncio.CancelledError:
         pass
 

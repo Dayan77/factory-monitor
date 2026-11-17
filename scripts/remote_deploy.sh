@@ -129,21 +129,15 @@ for e in errs:
 }
 
 # Pré-requisitos do broker MQTT de produção (docs/operations.md §6.4). Roda ANTES de pull/build/migrations/up:
-# se faltar algo o deploy aborta com o código anterior no ar — nunca sobe um broker que recusaria os
-# gateways em campo (ingestão parada) nem um compose que não valida.
+# se faltar algo o deploy aborta com o código anterior no ar — nunca sobe um broker que não partiria
+# (credencial do backend, certificado TLS) nem um compose que não valida.
+# As credenciais dos gateways NÃO são exigidas aqui: vêm do app (fm_server → volume mqtt-app, sincronizado
+# no cadastro de cada gateway); o $MQTT_GATEWAYS_DIR/gateways.conf do operador é opcional (gateways manuais/legados).
 preflight_mqtt() {
-  local errs=() user pw tls gw_dir cert_dir n
+  local errs=() user pw tls cert_dir
   user="$(env_get MQTT_USERNAME)"; pw="$(env_get MQTT_PASSWORD)"; tls="$(env_get MQTT_TLS_ENABLED)"
   [ -n "$user" ] || errs+=("MQTT_USERNAME ausente no .env (usuário do backend no broker)")
   [ "${#pw}" -ge 16 ] || errs+=("MQTT_PASSWORD ausente ou com menos de 16 caracteres no .env")
-  gw_dir="$(env_get MQTT_GATEWAYS_DIR)"; gw_dir="${gw_dir:-$APP_DIR/mqtt}"
-  n=0
-  if [ -f "$gw_dir/gateways.conf" ]; then
-    n="$(grep -cvE '^[[:space:]]*(#|$)' "$gw_dir/gateways.conf" || true)"
-  fi
-  if [ "$n" -lt 1 ] && [ "$(env_get MQTT_ALLOW_NO_GATEWAYS)" != 1 ]; then
-    errs+=("nenhum gateway em $gw_dir/gateways.conf: os gateways em campo seriam recusados (make mqtt-gateway-add; instalação sem gateways: MQTT_ALLOW_NO_GATEWAYS=1)")
-  fi
   if [ "$tls" = true ]; then
     cert_dir="$(env_get MQTT_TLS_CERT_DIR)"; cert_dir="${cert_dir:-$APP_DIR/mqtt/certs}"
     for f in fullchain.pem privkey.pem; do

@@ -24,7 +24,7 @@ REQUIRED = ("chave", "linha", "maquina", "papel", "fonte", "endereco")
 KNOWN = set(REQUIRED) | {"posicao", "unit_id", "tipo_registro", "tipo_dado", "ordem_palavras", "contador_max",
                          "unidade", "escala", "offset", "intervalo_ms"}
 PLC_TYPES = {"uint16", "int16", "uint32", "int32", "float32"}
-PROTO = {"opcua": ProtocolType.opc_ua, "modbus": ProtocolType.modbus_tcp}
+PROTO = {"opcua": ProtocolType.opc_ua, "modbus": ProtocolType.modbus_tcp, "ueapd": ProtocolType.http}
 BOOL_ROLES = {"run_state", "cycle_pulse"}
 INT_ROLES = {"cycle_counter", "part_counter_good", "part_counter_scrap", "part_counter_total", "fault_state"}
 STATUS_TEXT = {"ok": "ok", "update": "já existe — será atualizada"}

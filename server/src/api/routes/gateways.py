@@ -11,7 +11,7 @@ Admin (JWT of the tenant):
   POST   /api/gateways/{id}/revoke          invalidates the device token (admin)
   PUT    /api/gateways/{id}/tags            tag assignment + edge fields (admin)
   GET    /api/gateways/{id}/config-preview  the map the device would receive, with warnings (admin)
-  GET    /api/gateways/{id}/mqtt            MQTT user + gateways.conf line for the broker (admin)
+  GET    /api/gateways/{id}/mqtt            MQTT user + gateways.conf line for the broker + managed (admin)
 
 Device (no JWT):
   POST   /api/gateways/enroll               {code} → {gateway_id, token, mqtt{username, password, topic_prefix}}
@@ -42,6 +42,7 @@ from ...auth import get_current_user, require_roles
 from ...db import get_db
 from ...models import Gateway, GatewayCommand, Line, Machine, Plant, Tag, Tenant, User, UserRole
 from ...services import gateways as gs
+from ...services import mqtt_app_file
 from ...services.onboarding import commands as gcmd
 from ...services.usage.cache import topology_cache
 from ...services.validation import is_uuid
@@ -99,6 +100,8 @@ class GatewayOut(BaseModel):
     # are discarded; the broker line (gateways.conf) must still be removed by the operator of the broker
     mqtt_revoked: bool = False
     mqtt_action: Optional[str] = None
+    # the broker's gateway credentials are synchronized by the server (MQTT_APP_GATEWAYS_FILE): no manual line
+    mqtt_managed: bool = False
     created_at: datetime
 
 
@@ -172,7 +175,8 @@ async def _out(db: AsyncSession, gw: Gateway, counts: Optional[dict] = None, now
         enroll_expires_at=gw.enroll_expires_at, heartbeat_s=gw.heartbeat_s, pulse_poll_ms=gw.pulse_poll_ms,
         devices=list(gw.devices or []), tag_count=counts.get(gw.id, 0), last_heartbeat=gw.last_heartbeat,
         mqtt_username=gw.mqtt_username, mqtt_revoked=gs.mqtt_revoked(gw),
-        mqtt_action=gs.mqtt_revoke_action(gw) if gs.mqtt_revoked(gw) else None, created_at=gw.created_at)
+        mqtt_action=gs.mqtt_revoke_action(gw) if gs.mqtt_revoked(gw) else None, mqtt_managed=gs.mqtt_managed(),
+        created_at=gw.created_at)
 
 
 def _422(msg: str) -> HTTPException:
@@ -251,6 +255,7 @@ async def delete_gateway(gateway_id: str, user: CurrentUser, db: DB):
                      .values(gateway_id=None))
     await db.delete(gw)
     await db.commit()
+    await mqtt_app_file.sync_quietly("gateway.deleted")
 
 
 @router.post("/{gateway_id}/enroll-token", dependencies=ADMIN)
@@ -280,6 +285,7 @@ async def revoke(gateway_id: str, user: CurrentUser, db: DB):
     await audit(db, user.tenant_id, user.id, "gateway.revoked", "gateway", gw.id)
     await db.commit()
     topology_cache.invalidate()        # the MQTT hot path sees the revocation at the next reading
+    await mqtt_app_file.sync_quietly("gateway.revoked")      # the broker drops the credential (C1)
     await db.refresh(gw)
     return await _out(db, gw)
 
@@ -308,6 +314,13 @@ async def assign_tags(gateway_id: str, body: TagsIn, user: CurrentUser, db: DB):
             errors.append(f"tag {t.name}: não pertence a uma máquina da planta do gateway")
             continue
         edge = a.model_dump(exclude_none=True, exclude={"tag_id"})
+        prev = t.edge or {}
+        if "key" not in edge and prev.get("key"):
+            # keep the map key already set (template / CSV import): the edge keys counter state by it
+            edge["key"] = prev["key"]
+        if "source" not in edge and prev.get("source") in {
+                d.get("id") for d in (gw.devices or []) if d.get("protocol") == gs.EDGE_PROTOCOL.get(t.protocol)}:
+            edge["source"] = prev["source"]          # e.g. ueapd-m2 set by the line template
         try:
             t.edge = gs.validate_tag_edge(t, edge, list(gw.devices or []))
         except gs.ConfigError as e:
@@ -340,16 +353,23 @@ async def config_preview(gateway_id: str, user: CurrentUser, db: DB):
 async def mqtt_credentials(gateway_id: str, user: CurrentUser, db: DB):
     """MQTT user of the gateway and the `gateways.conf` line for the production broker (infra/mosquitto/prod:
     `<user> <tenant_uuid> <hash>` → ACL `topic readwrite factory/<tenant_uuid>/#`). The password itself was shown
-    once, to the device, at enrollment."""
+    once, to the device, at enrollment. `managed`: the server keeps the broker's app file in sync
+    (MQTT_APP_GATEWAYS_FILE) — the manual line is not needed."""
     gw = await _get(db, gateway_id, user.tenant_id)
     if not gw.mqtt_username:
         raise HTTPException(status_code=409, detail="Gateway ainda não cadastrado (sem credencial MQTT).")
+    managed = gs.mqtt_managed()
+    # managed = configured; sync_ok / sync_at / sync_error = what really happened at the last attempt of this
+    # process (null = never ran / disabled)
+    st = mqtt_app_file.status() if managed else {"ok": None, "at": None, "error": None}
+    sync = {"managed": managed, "sync_ok": st["ok"], "sync_at": st["at"], "sync_error": st["error"]}
     if gs.mqtt_revoked(gw):
         return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/", "revoked": True,
-                "acl": None, "gateways_conf_line": None, "action": gs.mqtt_revoke_action(gw)}
+                "acl": None, "gateways_conf_line": None, "action": gs.mqtt_revoke_action(gw), **sync}
     return {"username": gw.mqtt_username, "topic_prefix": f"factory/{gw.tenant_id}/",
             "acl": f"topic readwrite factory/{gw.tenant_id}/#",
-            "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}", "revoked": False}
+            "gateways_conf_line": f"{gw.mqtt_username} {gw.tenant_id} {gw.mqtt_password_hash}", "revoked": False,
+            **sync}
 
 
 @router.post("/{gateway_id}/browse", status_code=202, dependencies=ADMIN)
@@ -430,6 +450,7 @@ async def enroll(body: EnrollIn, request: Request, db: DB):
     await audit(db, gw.tenant_id, None, "gateway.enrolled", "gateway", gw.id, request=request)
     await db.commit()
     topology_cache.invalidate()
+    await mqtt_app_file.sync_quietly("gateway.enrolled")     # the broker accepts the new credential (C1)
     return {"gateway_id": gw.id, "tenant_id": gw.tenant_id, "token": token,
             "config_url": f"/api/gateways/{gw.id}/config", "heartbeat_url": f"/api/gateways/{gw.id}/heartbeat",
             "mqtt": {"username": gw.mqtt_username, "password": password, "topic_prefix": f"factory/{gw.tenant_id}/"}}

@@ -148,15 +148,20 @@ def test_missing_mqtt_credentials_abort_before_build(env):
     _assert_aborted_before_build(env, proc, "MQTT_USERNAME ausente", "MQTT_PASSWORD", "§6.4")
 
 
-def test_no_gateway_credentials_abort_unless_explicitly_allowed(env):
-    (env["app"] / "mqtt" / "gateways.conf").write_text("# vazio\n\n")
-    proc = _run(env, "ok")
-    _assert_aborted_before_build(env, proc, "nenhum gateway")
-    with (env["app"] / ".env").open("a") as f:
-        f.write("MQTT_ALLOW_NO_GATEWAYS=1\n")
-    env["calls"].write_text("")
+@pytest.mark.parametrize("operator_file", ["absent", "empty"])
+def test_deploy_does_not_require_operator_gateways(env, operator_file):
+    """Sprint C1: gateway MQTT credentials come from the app (fm_server writes the mqtt-app volume on enrollment),
+    so neither gateways.conf entries nor MQTT_ALLOW_NO_GATEWAYS are deploy prerequisites any more."""
+    gw = env["app"] / "mqtt" / "gateways.conf"
+    if operator_file == "absent":
+        gw.unlink()
+    else:
+        gw.write_text("# vazio\n\n")
+    assert "MQTT_ALLOW_NO_GATEWAYS" not in (env["app"] / ".env").read_text()
     proc = _run(env, "ok")
     assert proc.returncode == 0, proc.stderr
+    assert "nenhum gateway" not in proc.stderr
+    assert "up -d --remove-orphans" in env["calls"].read_text()
 
 
 def test_tls_enabled_without_certificate_aborts(env):

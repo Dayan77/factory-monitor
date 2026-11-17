@@ -13,7 +13,7 @@ PY          ?= python3
 .PHONY: help env dev up infra down stop ps logs config migrate seed \
         venv test test-server test-edge test-scripts test-golden test-web web-check \
         monitoring test-infra lint-infra backup restore backup-restore-test backup-restore-test-dev \
-        mqtt-gateway-add mqtt-gateway-remove mqtt-gateway-list mqtt-reload \
+        mqtt-gateway-add mqtt-gateway-remove mqtt-gateway-list mqtt-gateway-overlap mqtt-reload \
         security secrets-scan deps-audit headers-test release-check staging-config
 
 help: ## Lista os alvos
@@ -116,6 +116,9 @@ mqtt-gateway-remove: ## Revoga credencial MQTT: make mqtt-gateway-remove GATEWAY
 
 mqtt-gateway-list: ## Lista gateways com credencial MQTT
 	@MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh list
+
+mqtt-gateway-overlap: ## Gateways no gateways.conf manual que também estão no app (remova-os do manual)
+	@MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh overlap
 
 mqtt-reload: ## Re-renderiza passwd/acl no fm_mosquitto de produção e recarrega (SIGHUP)
 	MQTT_GATEWAYS_FILE="$(MQTT_GATEWAYS_FILE)" scripts/mqtt_gateway.sh reload

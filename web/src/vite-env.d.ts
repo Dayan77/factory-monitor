@@ -10,4 +10,6 @@ interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   /** Public site (manual / docs links from the KPI tooltips). Default https://factoryconnect.tech */
   readonly VITE_SITE_URL?: string;
+  /** Edge image of the gateway install command. Default ghcr.io/dayan77/factoryconnect-edge:0.7.0 */
+  readonly VITE_EDGE_IMAGE?: string;
 }
