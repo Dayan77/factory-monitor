@@ -27,6 +27,9 @@ NUM = re.compile(r"(?<![\w\-/.,])[−-]?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?(?![
 ISO_DT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
 ISO_D = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DIGITS_IN_STR = re.compile(r"\d+(?:[.,]\d+)?")
+# identificadores (UUID, hash hex): os dígitos soltos dentro deles não são valores — sem isto um UUID
+# "…a99f…" "comprovava" um 99 inventado
+UUID_LIKE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^[0-9a-fA-F]{24,}$")
 
 
 @dataclass
@@ -50,6 +53,8 @@ class Sources:
         self.dates.add((d.day, d.month, d.year))
 
     def add_text(self, s: str, tz: ZoneInfo) -> None:
+        if UUID_LIKE.match(s.strip()):
+            return
         if ISO_DT.match(s):
             try:
                 self.add_dt(datetime.fromisoformat(s.replace("Z", "+00:00")), tz)

@@ -429,3 +429,15 @@ async def test_sse_stream_without_provider_still_sends_the_system_reply(client, 
     done = events[-1][1]
     assert "não está configurado" in done["reply"] and done["answer_source"] == "system" and done["verified"] is False
     assert "".join(d["text"] for k, d in events if k == "delta") == done["reply"]
+
+
+async def test_verifier_ignores_digits_inside_identifiers():
+    """Regression: digits inside a UUID/hex id in a tool result used to 'ground' an invented number
+    (a random machine_id like 'a99f…' made "99 paradas" pass) — flaky test_verifier_accepts_grounded_retry."""
+    from zoneinfo import ZoneInfo
+    from src.services.ai import verifier
+    tz = ZoneInfo("America/Manaus")
+    src = verifier.collect({"machine_id": "3fa99bce-1a2b-4c3d-8e9f-0a1b2c3d4e5f",
+                            "event_id": "a99f" * 8, "count": 3}, tz)
+    assert [f.reason for f in verifier.check("Foram 99 paradas hoje [1]", src, "", 1)] == ["ungrounded"]
+    assert verifier.check("Foram 3 paradas hoje [1]", src, "", 1) == []
