@@ -146,6 +146,13 @@ Vazio (dev, testes) = desligado: a inclusão/remoção da linha no `gateways.con
 caso o servidor descarta as leituras das tags do gateway revogado. Limitação: depois de **remover** o gateway as tags
 perdem a atribuição e esse filtro deixa de valer — por isso a remoção exige revogar antes.
 
+**Revogar = descomissionar.** Enquanto o gateway está revogado, o servidor descarta as leituras das tags dele, mas os
+contadores acumulados do edge (ciclos, peças — base SQLite do gateway) continuam somando a produção. Se o **mesmo**
+gateway (mesma base de contadores) for cadastrado de novo, o primeiro valor aceito traz de uma vez tudo o que foi
+produzido durante a revogação: os totais ficam corretos, mas essa produção aparece no instante do novo cadastro
+(baldes de tempo deslocados — OEE/produção por hora daquele intervalo). Use a revogação para tirar um dispositivo de
+serviço; cadastrar de novo o mesmo dispositivo é recurso de recuperação (ex.: token vazado), não de pausa.
+
 ## Modelos de linha (Implantação, passo 2)
 
 `GET /api/onboarding/line-templates` (admin) →
