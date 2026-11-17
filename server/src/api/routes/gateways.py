@@ -318,7 +318,8 @@ async def assign_tags(gateway_id: str, body: TagsIn, user: CurrentUser, db: DB):
         if "key" not in edge and prev.get("key"):
             # keep the map key already set (template / CSV import): the edge keys counter state by it
             edge["key"] = prev["key"]
-        if "source" not in edge and prev.get("source") in {d.get("id") for d in (gw.devices or [])}:
+        if "source" not in edge and prev.get("source") in {
+                d.get("id") for d in (gw.devices or []) if d.get("protocol") == gs.EDGE_PROTOCOL.get(t.protocol)}:
             edge["source"] = prev["source"]          # e.g. ueapd-m2 set by the line template
         try:
             t.edge = gs.validate_tag_edge(t, edge, list(gw.devices or []))

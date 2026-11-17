@@ -106,7 +106,8 @@ Tag com `protocol = http` atribuída a um dispositivo `ueapd`: o mapa leva `sour
 O servidor replica a regra do edge em `server/src/services/onboarding/edge_rules.py` (`parse_ueapd_selector`); o
 teste `server/tests/test_ueapd_rules.py` roda o mesmo vetor de seletores/papéis no servidor e no edge e exige o mesmo
 resultado e a mesma mensagem. O CSV de tags (Implantação) aceita linhas com `fonte` = dispositivo ueapd. Na
-atribuição (`PUT /tags`) a `key` já gravada na tag (modelo de linha, CSV) é mantida quando não vem outra: o edge
+atribuição (`PUT /tags`) a `key` e a `source` já gravadas na tag (modelo de linha, CSV) são mantidas quando não vêm
+outras (a `source` só se ainda for um dispositivo do gateway com o protocolo da tag): o edge
 guarda o estado dos contadores por id do dispositivo + `key`.
 
 ## Credenciais MQTT (broker de produção)
