@@ -4,15 +4,15 @@
 # linux/arm64 (Raspberry Pi 4/5 com SO 64 bits, IPCs ARM). Mesma imagem serve a planta virtual e o provisionamento
 # (infra/docker-compose.yml, profile "sim").
 #
-#   docker buildx build --platform linux/amd64,linux/arm64 -t <registro>/factoryconnect-edge:0.7.0 \
-#       --build-arg EDGE_VERSION=0.7.0 --push edge/
+#   docker buildx build --platform linux/amd64,linux/arm64 -t <registro>/factoryconnect-edge:0.7.1 \
+#       --build-arg EDGE_VERSION=0.7.1 --push edge/
 #
 # Wheels binários (manylinux) para TODAS as dependências nas duas arquiteturas (--only-binary): o build não precisa
 # de gcc/apt nem de emulação para compilar nada (com QEMU/binfmt o buildx só roda o pip do arm64).
 ARG PYTHON_IMAGE=python:3.12.15-slim
 FROM ${PYTHON_IMAGE}
 
-ARG EDGE_VERSION=0.7.0
+ARG EDGE_VERSION=0.7.1
 ARG TARGETPLATFORM
 LABEL org.opencontainers.image.title="factoryconnect-edge" \
       org.opencontainers.image.description="Gateway de campo FactoryConnect (Modbus TCP, OPC UA, MQTT, buffer offline)" \

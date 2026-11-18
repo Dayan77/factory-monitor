@@ -3,7 +3,7 @@ Heartbeat do gateway para a gestão de frota do servidor (docs/gateways.md).
 
     POST {SERVER_URL}/api/gateways/{gateway_id}/heartbeat
     Authorization: Gateway <token>
-    {"version": "0.7.0", "uptime_s": 1234.5, "buffer_depth": 0, "errors": ["fonte modbus-plc desconectada"],
+    {"version": "0.7.1", "uptime_s": 1234.5, "buffer_depth": 0, "errors": ["fonte modbus-plc desconectada"],
      "config_version": 7}
     → 200 {"status": "online|degraded", "config_version": 8, "config_changed": true,
            "commands": [{"id": "...", "type": "opcua_browse", ...}]}

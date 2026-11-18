@@ -38,7 +38,7 @@ def test_demo_services_are_pinned_restarted_and_healthchecked():
     for name in ("demo-plant", "demo-gateway"):
         s = svc[name]
         # prefixo do registro (FM_IMAGE_PREFIX do .env) ou build local; a tag acompanha FM_VERSION do deploy
-        assert re.fullmatch(r"(factory-monitor|ghcr\.io/[a-z0-9-]+/factoryconnect)-edge:0\.7\.0", s["image"]), s["image"]
+        assert re.fullmatch(r"(factory-monitor|ghcr\.io/[a-z0-9-]+/factoryconnect)-edge:0\.7\.1", s["image"]), s["image"]
         assert s["restart"] == "always"
         assert "ports" not in s                                  # nada publicado no VPS
     hc = svc["demo-plant"]["healthcheck"]["test"]

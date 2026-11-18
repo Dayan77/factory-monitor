@@ -16,7 +16,23 @@ processo de release; não há tag nem imagem publicada delas).
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-11-17
+## [0.7.1] - 2026-11-18
+
+Correções do primeiro contato com a linha real (boxes ueaPowerDriver) e do chamado emergencial.
+
+### Corrigido
+- Chamado emergencial: "Ciente"/"Atender" agora marcam o chamado como lido no servidor e silenciam a sirene em
+  **todas** as abas, navegadores e aparelhos do mesmo usuário (WebSocket `notifications_read` e `BroadcastChannel`).
+  Quando alguém assume a OS do chamado, a sirene para para todos os destinatários. Antes, uma aba esquecida em outro
+  navegador continuava tocando.
+- Gateway (edge **0.7.1**): o desvio de relógio de um box ueapd passa a ser medido pela janela da requisição
+  (envio → resposta) contra o cabeçalho `Date` (resolução de 1 s). Uma resposta lenta do box não aparece mais como
+  "relógio atrasado" (`edge_gateway.clock_skew`); um desvio real continua detectado.
+- Assistente de IA: dígitos dentro de UUIDs/identificadores do resultado das ferramentas não "comprovam" mais um
+  número inventado na resposta.
+- Workflow de release: baixa só as notas e os SBOMs (os registros `*.dockerbuild` do buildx não são zip) e atualiza
+  uma release criada na interface do GitHub.
+
 
 Implantação sem passos manuais (PR #33 e #36).
 

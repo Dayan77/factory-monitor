@@ -293,12 +293,12 @@ services:
   # Imagem do edge com versão fixa (build local a partir de ../edge; base python:3.12.15-slim fixada no Dockerfile).
   demo-plant:
     profiles: ["demo"]
-    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.0}}
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.1}}
     build:
       context: ../edge
       dockerfile: Dockerfile
       args:
-        EDGE_VERSION: ${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.0}}
+        EDGE_VERSION: ${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.1}}
     container_name: fm_demo_plant
     restart: always
     logging: *logging
@@ -329,7 +329,7 @@ services:
 
   demo-gateway:
     profiles: ["demo"]
-    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.0}}
+    image: ${FM_IMAGE_PREFIX:-factory-monitor}-edge:${DEMO_EDGE_IMAGE_TAG:-${FM_VERSION:-0.7.1}}
     container_name: fm_demo_gateway
     restart: always
     logging: *logging

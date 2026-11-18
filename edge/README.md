@@ -240,7 +240,7 @@ cd infra/gateway && cp gateway.env.example gateway.env   # SERVER_URL, ENROLL_CO
 docker compose up -d && docker compose logs -f gateway  # "enrollment.done" → "edge_gateway.config"
 ```
 Construir/publicar a imagem das duas arquiteturas: `docker buildx build --platform linux/amd64,linux/arm64
---build-arg EDGE_VERSION=0.7.0 -t <registro>/factoryconnect-edge:0.7.0 --push edge/` (todas as dependências têm wheel
+--build-arg EDGE_VERSION=0.7.1 -t <registro>/factoryconnect-edge:0.7.1 --push edge/` (todas as dependências têm wheel
 manylinux para as duas arquiteturas: o build não compila nada). O container roda sem root, com sistema de arquivos
 somente leitura, sem capabilities, e o estado em `/data` (volume `gateway-data`, 0700). Saúde: `HEALTH_FILE` tocado
 a cada heartbeat (HEALTHCHECK da imagem).
