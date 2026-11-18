@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ...models import (Gateway, Line, Machine, MachineProduct, OnboardingProgress, Plant, Shift, Tag, User,
                        UserRole)
-from ...models.tag import COUNTER_ROLES, CYCLE_ROLES, PART_ROLES, SemanticRole
+from ...models.tag import COUNTER_ROLES, CYCLE_ROLES, PART_ROLES, ProtocolType, SemanticRole
 from ..gateways import effective_status
 from ..influx import influx
 from ..validation import ensure_uuid
@@ -179,8 +179,11 @@ async def evaluate(db: AsyncSession, tenant_id: str, plant: Plant, now: Optional
                             if influx_error is None else f"não foi possível consultar as leituras: {influx_error}"),
                       not_flowing, fix="/onboarding/6"))
 
+    # http (ueapd) counters are totals the gateway accumulates and persists itself: they never wrap, so a drop is a
+    # reset (C5 rule 3) and counter_max does not apply
     no_max = [f"{mname.get(t.machine_id, '?')} / {t.name}" for t in tags
-              if t.semantic_role in COUNTER_ROLES and t.semantic_role != SemanticRole.cycle_pulse and not t.counter_max]
+              if t.semantic_role in COUNTER_ROLES and t.semantic_role != SemanticRole.cycle_pulse and not t.counter_max
+              and t.protocol != ProtocolType.http]
     out.append(_check("counter_max_set", False, not no_max,
                       "contadores com counter_max" if not no_max else
                       f"contadores sem counter_max (rollover C5): {', '.join(no_max[:20])}", no_max))

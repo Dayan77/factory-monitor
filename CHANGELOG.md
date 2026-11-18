@@ -16,6 +16,11 @@ processo de release; não há tag nem imagem publicada delas).
 
 ## [Unreleased]
 
+### Corrigido
+- Implantação (passo 9): o aviso "contadores sem counter_max" não aparece mais para os contadores dos boxes
+  ueaPowerDriver (tags http). Eles são totais acumulados e persistidos pelo gateway, que nunca dão a volta;
+  continua valendo para contadores de CLP (Modbus/OPC UA/MQTT).
+
 ## [0.7.1] - 2026-11-18
 
 Correções do primeiro contato com a linha real (boxes ueaPowerDriver) e do chamado emergencial.

@@ -134,6 +134,27 @@ async def test_apply_twice_without_gateway_is_idempotent(client):
     assert (c["tags_created"], c["tags_updated"], c["tags_unchanged"]) == (0, 1, 17)
 
 
+async def test_template_counters_do_not_ask_for_counter_max(client):
+    """ueapd counters are totals the gateway accumulates and persists: they never wrap, so readiness does not warn
+    about counter_max for them (it still does for a PLC counter, which wraps at its register size)."""
+    t = await _tenant("LTC")
+    h = t.headers("admin")
+    plant = await api(client, "POST", "/api/plants/", h, 201, json={"name": "Planta LTC"})
+    a = await api(client, "POST", URL, h, json={"plant_id": plant["id"]})
+    rd = await api(client, "GET", "/api/onboarding/readiness", h, params={"plant_id": plant["id"]})
+    chk = {c["id"]: c for c in rd["checks"]}["counter_max_set"]
+    assert chk["ok"] and chk["items"] == [], chk
+
+    # a modbus counter on the same machine without counter_max is still flagged
+    m2 = a["machines"][1]
+    await api(client, "POST", "/api/tags/", h, 201, json={
+        "machine_id": m2["id"], "name": "Contador CLP", "protocol": "modbus_tcp", "address": "40001",
+        "data_type": "int", "semantic_role": "cycle_counter"})
+    rd = await api(client, "GET", "/api/onboarding/readiness", h, params={"plant_id": plant["id"]})
+    chk = {c["id"]: c for c in rd["checks"]}["counter_max_set"]
+    assert not chk["ok"] and chk["items"] == ["M2 ATS2 / Contador CLP"], chk
+
+
 async def test_apply_with_gateway_configures_the_devices_and_the_map(client):
     pm = edge_plant_map()
     from edge.src.remote_config import _extract_map, _validate
