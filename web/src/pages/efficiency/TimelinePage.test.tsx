@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import TimelinePage from "./TimelinePage";
@@ -14,7 +14,12 @@ vi.mock("@/services/api", () => ({
 }));
 
 describe("TimelinePage", () => {
+  // The fixtures place stops "2 h ago" inside the "today" window: between 00:00 and ~05:00 in the plant
+  // (America/Manaus) that is yesterday and the strip is empty. Pin only Date (timers stay real) to mid-day.
+  afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T16:00:00Z"));      // 12:00 em Manaus
     vi.mocked(plantsApi.tree).mockResolvedValue(ok(plantTree()));
     vi.mocked(shiftsApi.list).mockResolvedValue(ok([]));
     vi.mocked(reasonCodesApi.list).mockResolvedValue(ok(reasonCodes()));
