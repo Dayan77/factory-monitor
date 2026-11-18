@@ -126,6 +126,11 @@ leitura de QR code da posição/componente (etiqueta na máquina com o `id` da p
 - **Notificação** (push + som) quando uma parada `EQP-*` abre na área dele ou o supervisor chama: "Robô de Solda —
   falha 251 há 3 min". Um toque abre a parada com o `FailureRecord` rascunho já criado pelo motor (Decisão D3 do
   Sprint 3).
+- **Silenciar**: a sirene em tela cheia toca até o usuário confirmar ("Ciente" ou "Atender"). A confirmação marca o
+  chamado como lido no servidor e silencia **todas** as abas, navegadores e aparelhos do mesmo usuário (mesmo
+  navegador: `BroadcastChannel`; os demais: WebSocket `notifications_read`). Quando a OS do chamado sai de `open`
+  (alguém assumiu), o chamado vira lido para **todos** os destinatários e a sirene para em todos. Não há preferência
+  que desligue o chamado (`emergency_call` não é silenciável).
 - **Assumir**: cria/assume a OS corretiva emergencial e vai direto para `in_progress` (único atalho
   `open → in_progress`, S4-5).
 - **Ao terminar o reparo**: informa posição/componente que falhou, modo de falha ISO 14224 (lista curta por tipo de

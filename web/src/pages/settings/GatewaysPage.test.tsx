@@ -117,7 +117,7 @@ describe("Gateways", () => {
     expect(c.run).toContain("-v fm-gateway-data:/data");
     expect(c.run).toContain("MQTT_BROKER_PORT=8883 -e MQTT_TLS=true");
     expect(c.run.trim().endsWith(EDGE_IMAGE)).toBe(true);
-    expect(EDGE_IMAGE).toBe("ghcr.io/dayan77/factoryconnect-edge:0.7.0");
+    expect(EDGE_IMAGE).toBe("ghcr.io/dayan77/factoryconnect-edge:0.7.1");
     for (const secret of ["GATEWAY_TOKEN", "MQTT_PASSWORD", "MQTT_USERNAME", "curl"]) expect(c.run).not.toContain(secret);
     expect(c.compose).toContain("gateway.env");
   });
@@ -147,7 +147,7 @@ describe("Gateways", () => {
   it("install command: plain MQTT 1883 when the app is not on https; image configurable by VITE_EDGE_IMAGE", () => {
     const c = installCommands({ origin: "http://localhost:5173", code: "X", mqttHost: "localhost" });
     expect(c.run).toContain("MQTT_BROKER_PORT=1883 -e MQTT_TLS=false");
-    expect(DEFAULT_EDGE_IMAGE).toBe("ghcr.io/dayan77/factoryconnect-edge:0.7.0");
+    expect(DEFAULT_EDGE_IMAGE).toBe("ghcr.io/dayan77/factoryconnect-edge:0.7.1");
     expect(edgeImage(undefined)).toBe(DEFAULT_EDGE_IMAGE);
     expect(edgeImage("  ")).toBe(DEFAULT_EDGE_IMAGE);
     expect(edgeImage("registry.local/fc-edge:1.0")).toBe("registry.local/fc-edge:1.0");

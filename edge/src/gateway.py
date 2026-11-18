@@ -28,7 +28,7 @@ edge counter SQLite, run/fault state from /auto/state).
 
 Heartbeat MQTT (not buffered — a stale heartbeat is meaningless):
   topic   factory/{tenant_id}/gateways/{gateway_id}/heartbeat
-  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.7.0",
+  payload {"v": 1, "gateway_id": "...", "ts": "...Z", "uptime_s": 12.3, "tags": 46, "version": "0.7.1",
            "config_version": 7, "buffered": 0, "sources": {"opcua-plc": true, "modbus-plc": true},
            "clocks": {"opcua-plc": {"policy": "source", "configured": "source", "max_skew_s": 2.0,
                                     "skew_s": -0.12}}}

@@ -224,16 +224,22 @@ class UeapdDriver:
         return self._session
 
     async def _get(self, path: str, params: Optional[dict] = None) -> Any:
+        sent = datetime.now(timezone.utc)
         async with self._http().get(f"{self.base}{path}", params=params) as r:
             recv = datetime.now(timezone.utc)
             if r.status != 200:
                 raise UeapdError(f"GET {path} → HTTP {r.status}")
             body = await r.json(content_type=None)
-            self._clock_sample(r.headers.get("Date"), recv)
+            self._clock_sample(r.headers.get("Date"), recv, sent=sent)
             return body
 
-    def _clock_sample(self, date_hdr: Optional[str], recv: datetime) -> None:
-        """Desvio do relógio do box pelo cabeçalho Date (truncado ao segundo: +0,5 s centraliza o erro)."""
+    def _clock_sample(self, date_hdr: Optional[str], recv: datetime, sent: Optional[datetime] = None) -> None:
+        """Desvio do relógio do box pelo cabeçalho Date.
+
+        O Date é truncado ao segundo e carimbado em algum instante entre o envio do pedido (`sent`) e a chegada da
+        resposta (`recv`): com relógio certo, o intervalo [Date, Date + 1 s) cruza [sent, recv]. Só o que fica fora
+        disso é desvio — uma resposta lenta (pull grande, box ocupado) não vira "box atrasado". Sem `sent`, usa o
+        ponto médio do segundo (+0,5 s), como antes."""
         if self.clock is None or not date_hdr:
             return
         try:
@@ -242,7 +248,17 @@ class UeapdDriver:
             return
         if box.tzinfo is None:
             box = box.replace(tzinfo=timezone.utc)
-        self.clock.stamp(box + timedelta(seconds=0.5), now=recv, tag_id=f"{self.sid}:Date")
+        if sent is None:
+            est = box + timedelta(seconds=0.5)
+        else:
+            lo, hi = box, box + timedelta(seconds=1)          # o instante real do carimbo está em [lo, hi)
+            if hi < sent:                                     # atrás mesmo descontando a ida e volta
+                est = recv - (sent - hi)
+            elif lo > recv:                                   # à frente mesmo descontando a ida e volta
+                est = recv + (lo - recv)
+            else:
+                est = recv                                    # compatível com relógio certo
+        self.clock.stamp(est, now=recv, tag_id=f"{self.sid}:Date")
 
     # ── ciclo ───────────────────────────────────────────────────────────
     async def poll_once(self) -> dict:

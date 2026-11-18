@@ -16,11 +16,11 @@ services:
     # (amd64 ou arm64) a partir de ../../edge. Com registro (recomendado): imagem da release, multi-arch, com SBOM e
     # proveniência — EDGE_IMAGE=ghcr.io/dayan77/factoryconnect-edge:<X.Y.Z> (workflow Release, docs/operations.md §11;
     # verificar: gh attestation verify oci://ghcr.io/dayan77/factoryconnect-edge:<X.Y.Z> --owner Dayan77).
-    image: ${EDGE_IMAGE:-factoryconnect-edge:0.7.0}
+    image: ${EDGE_IMAGE:-factoryconnect-edge:0.7.1}
     build:
       context: ../../edge
       args:
-        EDGE_VERSION: "0.7.0"
+        EDGE_VERSION: "0.7.1"
     container_name: fc_gateway
     restart: unless-stopped
     env_file: gateway.env

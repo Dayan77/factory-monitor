@@ -62,6 +62,7 @@ KINDS: dict[str, KindSpec] = {
 }
 
 _PENDING_KEY = "fm_pending_notifications"
+_READS_KEY = "fm_pending_notification_reads"   # [(tenant_id, user_id, [ids])] → WS notifications_read
 
 
 def default_channels(kind: str) -> dict[str, bool]:
@@ -156,8 +157,41 @@ async def notify(db: AsyncSession, tenant_id: str, users: Iterable[User], kind: 
     return out
 
 
+async def resolve_emergency_calls(db: AsyncSession, tenant_id: str, work_order_id: str) -> int:
+    """The emergency call of a work order was taken (the WO left `open`): its `emergency_call` notifications are
+    marked read for every recipient, so the full-screen siren stops on all their tabs and devices (the
+    WebSocket `notifications_read` goes out in deliver_pending, after the commit)."""
+    rows = (await db.execute(update(Notification).where(
+        Notification.tenant_id == tenant_id, Notification.kind == "emergency_call", Notification.read_at.is_(None),
+        Notification.data["work_order_id"].astext == str(work_order_id),
+    ).values(read_at=clock.now()).returning(Notification.id, Notification.user_id))).all()
+    by_user: dict[str, list[str]] = {}
+    for nid, uid in rows:
+        by_user.setdefault(str(uid), []).append(str(nid))
+    for uid, ids in by_user.items():
+        db.info.setdefault(_READS_KEY, []).append((str(tenant_id), uid, ids))
+    return len(rows)
+
+
+async def publish_read(tenant_id: str, user_id: str, ids: Optional[list[str]] = None) -> None:
+    """Tells every socket of the user (other tabs, browsers, devices) that notifications were read — `ids` or,
+    with ids=None, all of them. Best effort: a live update lost is corrected by the next list refetch."""
+    from ..websocket.manager import manager
+    msg: dict = {"type": "notifications_read", "read_at": clock.iso(clock.now())}
+    if ids is None:
+        msg["all"] = True
+    else:
+        msg["ids"] = ids
+    try:
+        await manager.send_to_user(str(tenant_id), str(user_id), msg)
+    except Exception as e:  # noqa: BLE001
+        log.warning("notifications.read_publish_failed", error=str(e)[:200])
+
+
 async def deliver_pending(db: AsyncSession, push_client=None) -> int:
     """After commit: WebSocket + Web Push + immediate e-mail of what notify() queued."""
+    for tid, uid, ids in db.info.pop(_READS_KEY, []):
+        await publish_read(tid, uid, ids)
     pending = db.info.pop(_PENDING_KEY, [])
     from ..websocket.manager import manager
     from .webpush import send, vapid_from_settings

@@ -504,7 +504,7 @@ no banco: a planta virtual (`edge/virtual_plant`, modo `--demo`) alimenta o pipe
 | `demo-gateway` (`fm_demo_gateway`) | gateway da frota (`python -m src.gateway`): config e heartbeat em `http://server:8000`, MQTT em `mosquitto:1883` com usuário próprio | `fm-net` + `fm-demo` |
 | `server` | o demo-bot conclui a OS da troca e chama `POST http://demo-plant:7070/replace` | também em `fm-demo` |
 
-Imagem `factory-monitor-edge:0.7.0` (build local de `edge/`, base `python:3.12.15-slim` fixada; troque de propósito
+Imagem `factory-monitor-edge:0.7.1` (build local de `edge/`, base `python:3.12.15-slim` fixada; troque de propósito
 com `DEMO_EDGE_IMAGE_TAG`). `restart: always` nos dois; a planta tem healthcheck (`/health`), o gateway o
 healthcheck da imagem (arquivo de saúde tocado a cada heartbeat). Sem os segredos abaixo os containers **não sobem**
 (saem com código 2 e a mensagem do que falta — `docker logs fm_demo_plant`).
