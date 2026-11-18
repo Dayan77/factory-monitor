@@ -572,3 +572,65 @@ async def test_users_roles_lines_on_call_and_me(client, m):
     r = await client.patch(f"/api/machines/{m.machines['Robô de Solda']}", headers={"Authorization": f"Bearer {mm['token']}"},
                            json={"status": "maintenance"})
     assert r.status_code == 200
+
+
+# ── emergency siren silenced everywhere (another tab/browser/device; call taken) ─────────────────────────────
+
+class _WS:
+    def __init__(self):
+        self.sent = []
+
+    async def send_json(self, msg):
+        self.sent.append(msg)
+
+
+async def test_read_is_published_to_the_users_other_sockets_only(client, m):
+    from src.websocket.manager import manager
+    tech_id = m.users["technician"]["id"]
+    chrome, safari, other_user, other_tenant = _WS(), _WS(), _WS(), _WS()
+    ghost = "00000000-0000-0000-0000-000000000000"
+    for ws, t, u in ((chrome, m.id, tech_id), (safari, m.id, tech_id),
+                     (other_user, m.id, m.users["maintenance_planner"]["id"]), (other_tenant, ghost, tech_id)):
+        await manager.connect(ws, t, accept=False, user_id=u)
+    try:
+        wo = await api(client, "POST", "/api/work-orders/emergency-call", m.h("operator"), 201,
+                       json={"machine_id": m.machines["Robô de Solda"], "note": "parou"})
+        items = (await api(client, "GET", "/api/notifications/", m.h("technician")))["items"]
+        call = next(i for i in items if i["kind"] == "emergency_call" and i["data"]["work_order_id"] == wo["id"])
+        for ws in (chrome, safari, other_user, other_tenant):
+            ws.sent.clear()
+        await api(client, "POST", f"/api/notifications/{call['id']}/read", m.h("technician"))
+        for ws in (chrome, safari):
+            assert [x for x in ws.sent if x["type"] == "notifications_read"][0]["ids"] == [call["id"]]
+        assert not [x for x in other_user.sent + other_tenant.sent if x["type"] == "notifications_read"]
+        await api(client, "POST", "/api/notifications/read-all", m.h("technician"))
+        assert any(x.get("all") is True for x in chrome.sent if x["type"] == "notifications_read")
+    finally:
+        for ws, t in ((chrome, m.id), (safari, m.id), (other_user, m.id), (other_tenant, ghost)):
+            manager.disconnect(ws, t)
+
+
+async def test_taking_the_emergency_call_silences_every_recipient(client, m):
+    from src.websocket.manager import manager
+    tech_ws, sup_ws = _WS(), _WS()
+    await manager.connect(tech_ws, m.id, accept=False, user_id=m.users["technician"]["id"])
+    await manager.connect(sup_ws, m.id, accept=False, user_id=m.users["production_supervisor"]["id"])
+    try:
+        wo = await api(client, "POST", "/api/work-orders/emergency-call", m.h("operator"), 201,
+                       json={"machine_id": m.machines["Robô de Solda"]})
+        def calls(role):
+            return [i for i in client_items[role] if i["kind"] == "emergency_call" and i["data"]["work_order_id"] == wo["id"]]
+        client_items = {r: (await api(client, "GET", "/api/notifications/", m.h(r)))["items"]
+                        for r in ("technician", "production_supervisor")}
+        assert all(c["read"] is False for r in client_items for c in calls(r))
+        tech_ws.sent.clear(); sup_ws.sent.clear()                                           # noqa: E702
+        await api(client, "POST", f"/api/work-orders/{wo['id']}/transition", m.h("technician"), json={"to": "in_progress"})
+        client_items = {r: (await api(client, "GET", "/api/notifications/", m.h(r)))["items"]
+                        for r in ("technician", "production_supervisor")}
+        for r in client_items:
+            assert calls(r) and all(c["read"] is True for c in calls(r)), r
+        for ws in (tech_ws, sup_ws):
+            assert [x for x in ws.sent if x["type"] == "notifications_read"], ws
+    finally:
+        manager.disconnect(tech_ws, m.id)
+        manager.disconnect(sup_ws, m.id)

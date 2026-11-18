@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { isEmergency, useNotificationStore } from "@/store/notifications";
+import { acknowledge, isEmergency, listenToOtherTabs, useNotificationStore } from "@/store/notifications";
+import { notificationsApi } from "@/services/maintenanceApi";
 import { useAuthStore } from "@/store/auth";
 import { notificationTarget } from "@/utils/notifications";
 import { can } from "@/utils/maintenance";
@@ -62,11 +63,12 @@ export function canVibrate(nav: Navigator | undefined = typeof navigator === "un
  */
 export default function EmergencyAlert({ mobile = false }: { mobile?: boolean }) {
   const emergencies = useNotificationStore((s) => s.emergencies);
-  const dismiss = useNotificationStore((s) => s.dismiss);
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
   const current = emergencies[0];
   const actionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => listenToOtherTabs(), []);
 
   useEffect(() => {
     const unlock = () => unlockAudio();
@@ -79,7 +81,7 @@ export default function EmergencyAlert({ mobile = false }: { mobile?: boolean })
   }, []);
 
   useEffect(() => {
-    if (!current) return;
+    if (!current || !isEmergency(current)) return;     // never a siren without the screen that silences it
     siren();
     const t = setInterval(siren, 2500);
     actionRef.current?.focus();
@@ -110,12 +112,12 @@ export default function EmergencyAlert({ mobile = false }: { mobile?: boolean })
       </div>
       <div className="flex w-full max-w-md flex-col gap-3">
         <button ref={actionRef} type="button"
-          onClick={() => { dismiss(current.id); navigate(target); }}
+          onClick={() => { acknowledge(current.id, notificationsApi.read); navigate(target); }}
           style={{ color: "rgb(153 27 27)", backgroundColor: "#fff" }}
           className="min-h-16 w-full rounded-2xl px-6 text-xl font-bold shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60">
           {executor ? "Atender chamado" : "Ver chamado"}
         </button>
-        <button type="button" onClick={() => dismiss(current.id)}
+        <button type="button" onClick={() => acknowledge(current.id, notificationsApi.read)}
           className="min-h-14 w-full rounded-2xl border-2 border-white/70 px-6 text-lg font-semibold text-white focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60">
           Ciente — fechar alerta
         </button>

@@ -568,6 +568,9 @@ async def transition(db: AsyncSession, wo: WorkOrder, to: str, user: User, *, no
     wo.state = to
     await add_history(db, wo, at, user, frm, to, note)
     await db.flush()
+    if frm == "open" and to != "open" and wo.urgency == "emergency":
+        # the call was taken / handled: stop the siren of every recipient (workflows §3)
+        await notif.resolve_emergency_calls(db, wo.tenant_id, wo.id)
 
     if to == "completed":
         result["plans_reset"] = await _apply_replacements(db, wo, at, now)

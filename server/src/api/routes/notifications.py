@@ -58,7 +58,9 @@ async def list_notifications(user: CurrentUser, db: DB, unread: Optional[bool] =
 @router.post("/read-all")
 async def read_all(user: CurrentUser, db: DB):
     _human(user)
-    return {"updated": await notif.mark_read(db, user)}
+    updated = await notif.mark_read(db, user)
+    await notif.publish_read(user.tenant_id, user.id)        # other tabs / devices stop the emergency siren
+    return {"updated": updated}
 
 
 @router.post("/{notification_id}/read")
@@ -72,6 +74,7 @@ async def read_one(notification_id: str, user: CurrentUser, db: DB):
     if n is None:
         raise HTTPException(status_code=404, detail="Notificação não encontrada.")
     await notif.mark_read(db, user, notification_id)
+    await notif.publish_read(user.tenant_id, user.id, [notification_id])
     await db.refresh(n)
     return notif.notification_out(n)
 

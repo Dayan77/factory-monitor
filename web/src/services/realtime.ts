@@ -86,6 +86,13 @@ export function parseRealtimeMessage(raw: string): RealtimeMessage | null {
     return notification ? { type: "notification", notification } : null;
   }
 
+  if (data.type === "notifications_read") {
+    const ids = Array.isArray(data.ids) ? data.ids.filter((x): x is string => typeof x === "string") : [];
+    const all = data.all === true;
+    if (!all && ids.length === 0) return null;
+    return { type: "notifications_read", ids, all, read_at: optString(data.read_at) ?? undefined };
+  }
+
   if (data.type === "predictive_alert") {
     const a = data.alert;
     if (!isRecord(a) || typeof a.id !== "string") return null;

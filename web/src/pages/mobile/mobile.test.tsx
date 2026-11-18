@@ -8,7 +8,7 @@ import MyWorkOrdersPage from "./MyWorkOrdersPage";
 import CallMaintenanceButton from "@/components/maintenance/CallMaintenanceButton";
 import EmergencyAlert from "@/components/notifications/EmergencyAlert";
 import { plantsApi, positionsApi } from "@/services/api";
-import { workOrdersApi } from "@/services/maintenanceApi";
+import { notificationsApi, workOrdersApi } from "@/services/maintenanceApi";
 import { getQueue } from "@/services/offline";
 import { useAuthStore } from "@/store/auth";
 import { useNotificationStore } from "@/store/notifications";
@@ -25,6 +25,7 @@ vi.mock("@/services/maintenanceApi", () => ({
   workOrdersApi: { list: vi.fn(), get: vi.fn(), transition: vi.fn(), labor: vi.fn(), task: vi.fn(), emergencyCall: vi.fn(), replacement: vi.fn(), create: vi.fn() },
   usersApi: { technicians: vi.fn() },
   failuresApi: { get: vi.fn(), patch: vi.fn(), codes: vi.fn(), create: vi.fn() },
+  notificationsApi: { read: vi.fn().mockResolvedValue({}) },
 }));
 
 function setOnline(v: boolean) {
@@ -216,5 +217,6 @@ describe("Emergency alert", () => {
     await u.click(screen.getByRole("button", { name: "Atender chamado" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/m/work-orders/wo-9");
+    expect(notificationsApi.read).toHaveBeenCalledWith("n1");     // acknowledged on the server too
   });
 });

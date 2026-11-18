@@ -167,9 +167,17 @@ export interface PredictiveAlertRealtimeMessage {
   alert: { id: string; severity: string; state: string; position_id: string | null; machine_id: string | null };
 }
 
+/** Notifications read on another tab / browser / device of the same user (or an emergency call taken). */
+export interface NotificationsReadMessage {
+  type: "notifications_read";
+  ids: string[];
+  all: boolean;
+  read_at?: string;
+}
+
 export type RealtimeMessage =
   | SensorReadingMessage | MachineStatusMessage | UsageMessage | DowntimeMessage | NotificationMessage
-  | PredictiveAlertRealtimeMessage;
+  | PredictiveAlertRealtimeMessage | NotificationsReadMessage;
 
 // ── Assets & usage (Fase 1 — mirror server/src/api/schemas_assets.py) ──
 // Conventions: life_consumed_pct is a FRACTION (0..1, may exceed 1, never truncated);

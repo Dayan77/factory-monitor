@@ -38,6 +38,24 @@ describe("realtime notifications", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  it("notifications_read from another browser/device stops the siren and marks the bell list read", () => {
+    const client = makeQueryClient();
+    client.setQueryData(["notifications"], [N({ id: "e1", type: "emergency_call", severity: "emergency" }), N({ id: "x" })]);
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    renderHook(() => useRealtimeConnection("t1"), { wrapper });
+    const ws = FakeSocket.last!;
+    act(() => ws.onopen?.());
+    act(() => useNotificationStore.getState().raise(N({ id: "e1", type: "emergency_call", severity: "emergency" })));
+    expect(useNotificationStore.getState().emergencies.map((e) => e.id)).toContain("e1");
+    act(() => ws.emit({ type: "notifications_read", ids: ["e1"], read_at: "2026-12-01T10:05:00Z" }));
+    expect(useNotificationStore.getState().emergencies.map((e) => e.id)).not.toContain("e1");
+    const list = client.getQueryData<AppNotification[]>(["notifications"])!;
+    expect(list.find((n) => n.id === "e1")!.read_at).toBe("2026-12-01T10:05:00Z");
+    expect(list.find((n) => n.id === "x")!.read_at).toBeNull();
+    act(() => ws.emit({ type: "notifications_read", all: true }));
+    expect(client.getQueryData<AppNotification[]>(["notifications"])!.every((n) => n.read_at)).toBe(true);
+  });
+
   it("prepends to the bell list, raises emergency calls and refreshes maintenance queries", () => {
     const client = makeQueryClient();
     client.setQueryData(["notifications"], [N({ id: "old", read_at: "2026-12-01T09:00:00Z" })]);

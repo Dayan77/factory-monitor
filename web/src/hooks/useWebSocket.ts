@@ -180,6 +180,12 @@ export function useRealtimeConnection(tenantId: string | undefined) {
           applyDowntime(msg);
         } else if (msg.type === "notification") {
           applyNotification(msg.notification);
+        } else if (msg.type === "notifications_read") {
+          // read on another tab / browser / device (or the emergency call was taken): stop the siren here too
+          useNotificationStore.getState().resolve(msg.ids, msg.all);
+          const readAt = msg.read_at ?? new Date().toISOString();
+          qc.setQueryData<AppNotification[]>(["notifications"], (old) =>
+            old?.map((n) => (!n.read_at && (msg.all || msg.ids.includes(n.id)) ? { ...n, read_at: readAt } : n)));
         } else if (msg.type === "predictive_alert") {
           refreshMapSoon();
           // alert opened / escalated / closed: lists, details, monitors and the Raio-X card refetch
