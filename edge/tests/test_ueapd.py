@@ -584,3 +584,26 @@ def test_driver_clock_sample_uses_date_header():
     recv = datetime.now(timezone.utc)
     drv._clock_sample(formatdate(recv.timestamp() - 10, usegmt=True), recv)
     assert -10.6 < clock.offset_s < -9.4
+
+
+def test_driver_clock_sample_slow_response_is_not_skew():
+    """Resposta lenta (Date carimbado no início, chegada 3,4 s depois) com relógios certos: sem desvio, sem aviso;
+    um box atrasado/adiantado de verdade continua detectado mesmo descontando a ida e volta."""
+    from datetime import timedelta as td
+    pm = parse_plant_map(make_doc("http://127.0.0.1:1"), env={})
+    events = []
+
+    class Log:
+        def warning(self, event, **kw): events.append((event, kw))
+        error = info = warning
+
+    clock = DeviceClock("m2", "gateway", 2.0, log=Log())
+    drv = UeapdDriver(pm.sources["m1"], pm.tags_for("m1"), store=None, on_reading=None, clock=clock)
+    sent = datetime.now(timezone.utc).replace(microsecond=900_000)
+    recv = sent + td(seconds=3.4)
+    drv._clock_sample(formatdate(sent.timestamp(), usegmt=True), recv, sent=sent)      # carimbado logo no envio
+    assert clock.offset_s == 0 and not events
+    # box 10 s atrasado: continua fora mesmo com a ida e volta descontada (relógio novo: o estimador guarda o maior)
+    drv.clock = clock = DeviceClock("m2", "gateway", 2.0, log=Log())
+    drv._clock_sample(formatdate(sent.timestamp() - 10, usegmt=True), recv, sent=sent)
+    assert clock.offset_s < -8 and events and events[-1][0] == "edge_gateway.clock_skew"
